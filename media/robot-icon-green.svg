@@ -1,0 +1,39 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Green Background Circle -->
+  <defs>
+    <linearGradient id="greenGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00C853;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#009624;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <circle cx="64" cy="64" r="60" fill="url(#greenGradient)"/>
+  
+  <!-- Robot Head -->
+  <rect x="40" y="30" width="48" height="40" rx="8" fill="white" opacity="0.95"/>
+  
+  <!-- Robot Eyes -->
+  <circle cx="52" cy="45" r="6" fill="#00C853"/>
+  <circle cx="76" cy="45" r="6" fill="#00C853"/>
+  <circle cx="54" cy="43" r="2" fill="white"/>
+  <circle cx="78" cy="43" r="2" fill="white"/>
+  
+  <!-- Robot Mouth/Antenna -->
+  <rect x="58" y="55" width="12" height="3" rx="1" fill="#00C853"/>
+  <line x1="64" y1="30" x2="64" y2="22" stroke="white" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="64" cy="20" r="3" fill="white"/>
+  
+  <!-- Robot Body -->
+  <rect x="42" y="72" width="44" height="36" rx="6" fill="white" opacity="0.95"/>
+  
+  <!-- Robot Body Details -->
+  <rect x="50" y="80" width="28" height="20" rx="4" fill="#00C853" opacity="0.8"/>
+  <circle cx="55" cy="90" r="2" fill="white"/>
+  <circle cx="64" cy="90" r="2" fill="white"/>
+  <circle cx="73" cy="90" r="2" fill="white"/>
+  
+  <!-- Robot Arms -->
+  <rect x="30" y="78" width="12" height="4" rx="2" fill="white" opacity="0.95"/>
+  <rect x="86" y="78" width="12" height="4" rx="2" fill="white" opacity="0.95"/>
+  
+</svg>

@@ -1,0 +1,173 @@
+Loading svelte-check in workspace: c:\Users\Bekim Lika\Desktop\Agent\webview-ui
+Getting Svelte diagnostics...
+
+c:\Users\Bekim Lika\Desktop\Agent\webview-ui\[32msrc\components\auth\AuthView.svelte[39m:156:3
+[33mWarn[39m: Unused CSS selector ".animate-shake"
+https://svelte.dev/e/css_unused_selector (svelte)
+[36m
+  [35m.animate-shake[36m {
+    animation: shake 0.5s ease-in-out;[39m
+
+c:\Users\Bekim Lika\Desktop\Agent\webview-ui\[32msrc\components\session\SidebarHeader.svelte[39m:152:5
+[33mWarn[39m: Unused CSS selector ".search-icon-element"
+https://svelte.dev/e/css_unused_selector (svelte)
+[36m
+    [35m.search-icon-element[36m {
+        position: absolute;[39m
+
+c:\Users\Bekim Lika\Desktop\Agent\webview-ui\[32msrc\components\session\SessionItem.svelte[39m:22:25
+[33mWarn[39m: This reference only captures the initial value of `session`. Did you mean to reference it inside a derived instead?
+https://svelte.dev/e/state_referenced_locally (svelte)
+[36m  let isRenaming = $state(false);
+  let newTitle = $state([35msession[36m.title);
+  let actionFeedback = $state<string | null>(null);[39m
+
+c:\Users\Bekim Lika\Desktop\Agent\webview-ui\[32msrc\components\chat\ChatInputArea.svelte[39m:47:9
+[31mError[39m: Cannot use 'bind:' with this property. It is declared as non-bindable inside the component.
+To mark a property as bindable: 'let { externalFileReferences = $bindable() } = $props()' (ts)
+[36m        bind:value={message}
+        [35mbind:externalFileReferences={pendingFileReferences}[36m
+        disabled={isGenerating}[39m
+
+c:\Users\Bekim Lika\Desktop\Agent\webview-ui\[32msrc\components\ui\Dropdown.svelte[39m:123:9
+[33mWarn[39m: Elements with the 'listbox' interactive role must have a tabindex value
+https://svelte.dev/e/a11y_interactive_supports_focus (svelte)
+[36m        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        [35m<div
+            class="dropdown-menu {dropdownClassName}"
+            transition:slide={{ duration: 150 }}
+            role="listbox"
+            onclick={(e) => e.stopPropagation()}
+        >
+            {#if showSearch}
+                <div class="search-wrapper">
+                    <Search size={14} class="search-icon" />
+                    <input
+                        type="text"
+                        class="search-input"
+                        placeholder={searchPlaceholder}
+                        bind:value={searchQuery}
+                        onclick={(e) => e.stopPropagation()}
+                    />
+                </div>
+            {/if}
+
+            <div class="items-list">
+                {#each filteredItems as item}
+                    {@const itemValue =
+                        typeof item === "object" ? item[valueKey] : item}
+                    {@const itemLabel =
+                        typeof item === "object" ? item[labelKey] : item}
+                    <button
+                        type="button"
+                        class="item-option"
+                        class:selected={itemValue === value}
+                        onclick={() => select(item)}
+                        role="option"
+                        aria-selected={itemValue === value}
+                    >
+                        <div class="item-info">
+                            <div class="item-main">
+                                {#if typeof item === "object" && item[iconKey]}
+                                    <span class="item-icon"
+                                        >{item[iconKey]}</span
+                                    >
+                                {/if}
+                                <span class="item-label">{itemLabel}</span>
+                            </div>
+                            {#if typeof item === "object" && item[descriptionKey]}
+                                <span class="item-description"
+                                    >{item[descriptionKey]}</span
+                                >
+                            {/if}
+                        </div>
+                        {#if itemValue === value}
+                            <span class="selected-indicator">Ô£ô</span>
+                        {/if}
+                    </button>
+                {/each}
+                {#if filteredItems.length === 0}
+                    <div class="no-results">No items found</div>
+                {/if}
+            </div>
+        </div>[36m
+    {/if}[39m
+
+c:\Users\Bekim Lika\Desktop\Agent\webview-ui\[32msrc\components\ui\Dropdown.svelte[39m:123:9
+[33mWarn[39m: Visible, non-interactive elements with a click event must be accompanied by a keyboard event handler. Consider whether an interactive element such as `<button type="button">` or `<a>` might be more appropriate
+https://svelte.dev/e/a11y_click_events_have_key_events (svelte)
+[36m        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        [35m<div
+            class="dropdown-menu {dropdownClassName}"
+            transition:slide={{ duration: 150 }}
+            role="listbox"
+            onclick={(e) => e.stopPropagation()}
+        >
+            {#if showSearch}
+                <div class="search-wrapper">
+                    <Search size={14} class="search-icon" />
+                    <input
+                        type="text"
+                        class="search-input"
+                        placeholder={searchPlaceholder}
+                        bind:value={searchQuery}
+                        onclick={(e) => e.stopPropagation()}
+                    />
+                </div>
+            {/if}
+
+            <div class="items-list">
+                {#each filteredItems as item}
+                    {@const itemValue =
+                        typeof item === "object" ? item[valueKey] : item}
+                    {@const itemLabel =
+                        typeof item === "object" ? item[labelKey] : item}
+                    <button
+                        type="button"
+                        class="item-option"
+                        class:selected={itemValue === value}
+                        onclick={() => select(item)}
+                        role="option"
+                        aria-selected={itemValue === value}
+                    >
+                        <div class="item-info">
+                            <div class="item-main">
+                                {#if typeof item === "object" && item[iconKey]}
+                                    <span class="item-icon"
+                                        >{item[iconKey]}</span
+                                    >
+                                {/if}
+                                <span class="item-label">{itemLabel}</span>
+                            </div>
+                            {#if typeof item === "object" && item[descriptionKey]}
+                                <span class="item-description"
+                                    >{item[descriptionKey]}</span
+                                >
+                            {/if}
+                        </div>
+                        {#if itemValue === value}
+                            <span class="selected-indicator">Ô£ô</span>
+                        {/if}
+                    </button>
+                {/each}
+                {#if filteredItems.length === 0}
+                    <div class="no-results">No items found</div>
+                {/if}
+            </div>
+        </div>[36m
+    {/if}[39m
+
+c:\Users\Bekim Lika\Desktop\Agent\webview-ui\[32msrc\components\layout\ChatLayout.svelte[39m:58:7
+[33mWarn[39m: Non-interactive element `<div>` should not be assigned mouse or keyboard event listeners
+https://svelte.dev/e/a11y_no_noninteractive_element_interactions (svelte)
+[36m      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      [35m<div
+        class="resize-handle"
+        onmousedown={startResize}
+        role="separator"
+      ></div>[36m
+    </div>[39m
+
+====================================
+[31msvelte-check found 1 error and 6 warnings in 6 files
+[39m

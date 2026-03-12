@@ -1,0 +1,25 @@
+{
+  "name": "git",
+  "version": "1.0.0",
+  "description": "Provides Git commands and tools for the VS Code Agent",
+  "author": "VS Code Agent Team",
+  "entry": "GitPlugin.js",
+  "permissions": [
+    {
+      "type": "tool.execute",
+      "description": "Register Git tools"
+    },
+    {
+      "type": "command.execute",
+      "description": "Register Git commands"
+    },
+    {
+      "type": "file.read",
+      "description": "Read Git configuration files"
+    },
+    {
+      "type": "network.request",
+      "description": "Access remote Git repositories"
+    }
+  ]
+}

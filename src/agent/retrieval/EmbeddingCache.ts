@@ -1,0 +1,207 @@
+import { Level } from 'level';
+import { LRUCache } from 'lru-cache';
+import { XXHash64 } from 'xxhash-addon';
+import * as path from 'path';
+import * as fs from 'fs/promises';
+
+export interface CacheOptions {
+    persistenceDir: string;
+    maxMemoryEntries?: number;
+    ttlDays?: number;
+}
+
+export class EmbeddingCache {
+    private db: Level<string, string> | null = null;
+    private memoryCache: LRUCache<string, number[]>;
+    private initialized: boolean = false;
+    private initPromise: Promise<void> | null = null;
+    private readonly ttlMs: number;
+    private readonly hasher = new XXHash64(Buffer.from('gentlyv1')); // Exactly 8 bytes
+
+    constructor(options: CacheOptions) {
+        this.ttlMs = (options.ttlDays || 30) * 24 * 60 * 60 * 1000;
+
+        this.memoryCache = new LRUCache<string, number[]>({
+            max: options.maxMemoryEntries || 2000,
+            ttl: this.ttlMs,
+            updateAgeOnGet: true
+        });
+
+        this.initPromise = this.initialize(options.persistenceDir);
+    }
+
+    private async initialize(persistenceDir: string): Promise<void> {
+        const dbPath = path.join(persistenceDir, 'embeddings.db');
+        try {
+            await fs.mkdir(persistenceDir, { recursive: true });
+            this.db = new Level<string, string>(dbPath);
+            await this.db.open();
+            this.initialized = true;
+            console.log(`[EmbeddingCache] Initialized at ${dbPath}`);
+        } catch (error) {
+            console.warn('[EmbeddingCache] First open failed, trying recovery...', error);
+
+            try {
+                // LevelDB-style LOCK file removal
+                const lockPath = path.join(dbPath, 'LOCK');
+                if (await this.fileExists(lockPath)) {
+                    try {
+                        await fs.unlink(lockPath);
+                        console.log('[EmbeddingCache] Stale LOCK file removed, retrying...');
+                    } catch (unlinkErr: any) {
+                        if (unlinkErr.code === 'EBUSY' || unlinkErr.code === 'EPERM') {
+                            console.warn(`[EmbeddingCache] LOCK file is busy/locked by another process (${unlinkErr.code}). Falling back to memory-only mode.`);
+                            throw unlinkErr; // Re-throw to trigger memory fallback
+                        } else if (unlinkErr.code !== 'ENOENT') {
+                            console.error(`[EmbeddingCache] Unexpected error removing LOCK file:`, unlinkErr);
+                            throw unlinkErr;
+                        }
+                    }
+                }
+                
+                // Second attempt after cleanup
+                this.db = new Level<string, string>(dbPath);
+                await this.db.open();
+                this.initialized = true;
+                console.log('[EmbeddingCache] Recovered successfully');
+            } catch (recoveryErr) {
+                console.error('[EmbeddingCache] Recovery failed → falling back to memory-only mode', recoveryErr);
+                this.db = null;
+                this.initialized = true;
+            }
+        }
+    }
+
+    private async fileExists(p: string): Promise<boolean> {
+        try {
+            await fs.access(p);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Generates a fast hash key for the content
+     */
+    private generateKey(content: string, modelName: string): string {
+        this.hasher.update(Buffer.from(content));
+        const hash = this.hasher.digest().toString('hex');
+        return `${modelName}:${hash}`;
+    }
+
+    /**
+     * Get embedding from cache
+     */
+    async get(content: string, modelName: string): Promise<number[] | null> {
+        if (!this.initialized) await this.initPromise;
+
+        const key = this.generateKey(content, modelName);
+
+        // 1. Memory check
+        const cached = this.memoryCache.get(key);
+        if (cached) return cached;
+
+        // 2. Disk check
+        if (this.db) {
+            try {
+                const data = await this.db.get(key);
+                const { embedding, timestamp } = JSON.parse(data);
+
+                // Check TTL
+                if (Date.now() - timestamp > this.ttlMs) {
+                    await this.db.del(key);
+                    return null;
+                }
+
+                this.memoryCache.set(key, embedding);
+                return embedding;
+            } catch (error: any) {
+                if (error.code !== 'LEVEL_NOT_FOUND') {
+                    console.warn('[EmbeddingCache] Disk get error:', error.message);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Set embedding in cache
+     */
+    async set(content: string, modelName: string, embedding: number[]): Promise<void> {
+        if (!this.initialized) await this.initPromise;
+
+        const key = this.generateKey(content, modelName);
+        const data = JSON.stringify({
+            embedding,
+            timestamp: Date.now()
+        });
+
+        // 1. Memory set
+        this.memoryCache.set(key, embedding);
+
+        // 2. Disk set
+        if (this.db) {
+            try {
+                await this.db.put(key, data);
+            } catch (error: any) {
+                console.warn('[EmbeddingCache] Disk put error:', error.message);
+            }
+        }
+    }
+
+    /**
+     * Batch set embeddings
+     */
+    async setBatch(items: Array<{ content: string; embedding: number[] }>, modelName: string): Promise<void> {
+        if (!this.initialized) await this.initPromise;
+
+        if (!this.db) {
+            for (const item of items) {
+                await this.set(item.content, modelName, item.embedding);
+            }
+            return;
+        }
+
+        const ops = items.map(item => {
+            const key = this.generateKey(item.content, modelName);
+            this.memoryCache.set(key, item.embedding);
+            return {
+                type: 'put' as const,
+                key,
+                value: JSON.stringify({
+                    embedding: item.embedding,
+                    timestamp: Date.now()
+                })
+            };
+        });
+
+        try {
+            await this.db.batch(ops);
+        } catch (error: any) {
+            console.warn('[EmbeddingCache] Disk batch error:', error.message);
+        }
+    }
+
+    /**
+     * Clear all cache entries
+     */
+    async clear(): Promise<void> {
+        if (!this.initialized) await this.initPromise;
+
+        this.memoryCache.clear();
+        if (this.db) {
+            await this.db.clear();
+        }
+    }
+
+    /**
+     * Close the cache
+     */
+    async close(): Promise<void> {
+        if (this.db) {
+            await this.db.close();
+        }
+    }
+}

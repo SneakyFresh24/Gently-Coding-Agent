@@ -1,0 +1,4 @@
+
+> gently@0.1.72 compile
+> tsc -p ./
+

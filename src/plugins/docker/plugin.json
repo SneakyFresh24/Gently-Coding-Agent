@@ -1,0 +1,25 @@
+{
+  "name": "docker",
+  "version": "1.0.0",
+  "description": "Provides Docker commands and tools for the VS Code Agent",
+  "author": "VS Code Agent Team",
+  "entry": "DockerPlugin.js",
+  "permissions": [
+    {
+      "type": "tool.execute",
+      "description": "Register Docker tools"
+    },
+    {
+      "type": "command.execute",
+      "description": "Register Docker commands"
+    },
+    {
+      "type": "file.read",
+      "description": "Read Docker configuration files"
+    },
+    {
+      "type": "network.request",
+      "description": "Access Docker registries"
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Green Background Circle -->
+  <defs>
+    <linearGradient id="greenGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00C853;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#009624;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <circle cx="64" cy="64" r="60" fill="url(#greenGradient)"/>
+  
+  <!-- Robot Head (Centered) -->
+  <rect x="36" y="36" width="56" height="56" rx="12" fill="white" opacity="0.95"/>
+  
+  <!-- Robot Eyes -->
+  <circle cx="52" cy="58" r="8" fill="#00C853"/>
+  <circle cx="76" cy="58" r="8" fill="#00C853"/>
+  <circle cx="54" cy="56" r="3" fill="white"/>
+  <circle cx="78" cy="56" r="3" fill="white"/>
+  
+  <!-- Robot Mouth/Antenna -->
+  <rect x="56" y="72" width="16" height="4" rx="2" fill="#00C853"/>
+  <line x1="64" y1="36" x2="64" y2="26" stroke="white" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="64" cy="23" r="4" fill="white"/>
+</svg>

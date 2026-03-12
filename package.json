@@ -1,0 +1,390 @@
+{
+  "name": "gently",
+  "displayName": "Gently - AI Coding Agent",
+  "description": "AI-powered coding assistant — Bring Your Own Key via OpenRouter",
+  "version": "0.5.1",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning",
+    "Snippets"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "views": {
+      "gently": [
+        {
+          "id": "gently.chatView",
+          "name": "Chat",
+          "type": "webview",
+          "icon": "$(comment-discussion)",
+          "contextualTitle": "Gently AI Assistant"
+        },
+        {
+          "id": "gently.guardianView",
+          "name": "Guardian",
+          "type": "webview",
+          "icon": "$(shield)",
+          "contextualTitle": "Gently Guardian - Code Health Monitor"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "gently",
+          "title": "Gently",
+          "icon": "$(robot)"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "gently.openChat",
+        "title": "Open Gently Chat",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "gently.clearHistory",
+        "title": "Clear Chat History"
+      },
+      {
+        "command": "gently.toggleAgentMode",
+        "title": "Toggle Agent Mode",
+        "icon": "$(robot)"
+      },
+      {
+        "command": "gently.openFile",
+        "title": "Open File"
+      },
+      {
+        "command": "gently.guardian.start",
+        "title": "Start Guardian",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "gently.guardian.stop",
+        "title": "Stop Guardian",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "gently.guardian.analyzeWorkspace",
+        "title": "Analyze Workspace",
+        "icon": "$(search)"
+      },
+      {
+        "command": "gently.guardian.analyzeFile",
+        "title": "Analyze Current File",
+        "icon": "$(file-code)"
+      },
+      {
+        "command": "gently.guardian.showIssues",
+        "title": "Show Code Issues",
+        "icon": "$(warning)"
+      },
+      {
+        "command": "gently.guardian.dismissAllIssues",
+        "title": "Dismiss All Issues",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "gently.guardian.openSettings",
+        "title": "Open Guardian Settings",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "gently.guardian.fixAllIssues",
+        "title": "Fix All Issues",
+        "icon": "$(lightbulb)"
+      },
+      {
+        "command": "gently.configureApiKey",
+        "title": "Configure OpenRouter API Key",
+        "icon": "$(key)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "gently.clearHistory",
+          "when": "view == gently.chatView",
+          "group": "navigation"
+        },
+        {
+          "command": "gently.toggleAgentMode",
+          "when": "view == gently.chatView",
+          "group": "navigation"
+        },
+        {
+          "command": "gently.guardian.analyzeWorkspace",
+          "when": "view == gently.guardianView",
+          "group": "navigation"
+        },
+        {
+          "command": "gently.guardian.start",
+          "when": "view == gently.guardianView",
+          "group": "navigation"
+        },
+        {
+          "command": "gently.guardian.stop",
+          "when": "view == gently.guardianView",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "gently.openFile",
+          "when": "view == gently.chatView && viewItem == file",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "gently.openChat",
+          "when": "true"
+        },
+        {
+          "command": "gently.guardian.start",
+          "when": "true"
+        },
+        {
+          "command": "gently.guardian.stop",
+          "when": "true"
+        },
+        {
+          "command": "gently.guardian.analyzeWorkspace",
+          "when": "true"
+        },
+        {
+          "command": "gently.guardian.analyzeFile",
+          "when": "true"
+        },
+        {
+          "command": "gently.guardian.showIssues",
+          "when": "true"
+        },
+        {
+          "command": "gently.guardian.dismissAllIssues",
+          "when": "true"
+        },
+        {
+          "command": "gently.guardian.openSettings",
+          "when": "true"
+        },
+        {
+          "command": "gently.guardian.fixAllIssues",
+          "when": "true"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Gently",
+      "properties": {
+        "gently.temperature": {
+          "type": "number",
+          "default": 0.7,
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Temperature for AI responses (0.0 = deterministic, 2.0 = creative)"
+        },
+        "gently.maxTokens": {
+          "type": "number",
+          "default": 8000,
+          "minimum": 1,
+          "maximum": 64000,
+          "description": "Maximum tokens for AI responses"
+        },
+        "gently.agentMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable autonomous agent mode with tool access"
+        },
+        "gently.selectedModel": {
+          "type": "string",
+          "default": "deepseek/deepseek-chat",
+          "description": "OpenRouter model slug (e.g. deepseek/deepseek-chat, anthropic/claude-3.5-sonnet, openai/gpt-4o)"
+        },
+        "gently.validation.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable code validation and linting"
+        },
+        "gently.validation.strictMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable strict validation mode"
+        },
+        "gently.guardian.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Guardian code health monitoring"
+        },
+        "gently.guardian.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start Guardian when extension activates"
+        },
+        "gently.guardian.showNotifications": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show notifications for Guardian findings"
+        },
+        "gently.guardian.statusBarItem": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Guardian status in status bar"
+        },
+        "gently.guardian.outputChannel": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Guardian output in dedicated channel"
+        },
+        "gently.guardian.autoAnalysis": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable automatic code analysis"
+        },
+        "gently.guardian.analysisInterval": {
+          "type": "number",
+          "default": 300000,
+          "minimum": 60000,
+          "maximum": 3600000,
+          "description": "Analysis interval in milliseconds (default: 5 minutes)"
+        },
+        "gently.guardian.maxIssuesPerFile": {
+          "type": "number",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Maximum issues to report per file"
+        },
+        "gently.guardian.severityThreshold": {
+          "type": "string",
+          "default": "medium",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ],
+          "description": "Minimum severity level for issues"
+        },
+        "gently.guardian.enabledIssueTypes": {
+          "type": "array",
+          "default": [
+            "code_duplication",
+            "dead_code",
+            "architectural_drift",
+            "security_pattern",
+            "performance_issue"
+          ],
+          "items": {
+            "type": "string",
+            "enum": [
+              "code_duplication",
+              "dead_code",
+              "architectural_drift",
+              "security_pattern",
+              "performance_issue",
+              "maintainability",
+              "test_coverage"
+            ]
+          },
+          "description": "Types of issues to detect"
+        },
+        "gently.guardian.excludePatterns": {
+          "type": "array",
+          "default": [
+            "**/node_modules/**",
+            "**/dist/**",
+            "**/build/**",
+            "**/.git/**",
+            "**/coverage/**"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "File patterns to exclude from analysis"
+        },
+        "gently.guardian.includePatterns": {
+          "type": "array",
+          "default": [
+            "**/*.ts",
+            "**/*.js",
+            "**/*.tsx",
+            "**/*.jsx",
+            "**/*.py"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "File patterns to include in analysis"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "npm run build:extension && npm run build:webview",
+    "build:extension": "node esbuild.js --production",
+    "build:webview": "cd webview-ui && npm run build",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js",
+    "test:unit": "vitest run src/agent/tools/ToolRegistry.test.ts src/commands/CommandRegistry.test.ts src/modes/tests/ModeManager.test.ts src/performance/cache.test.ts src/performance/performanceOptimizer.test.ts src/performance/sessionManagerIntegration.test.ts src/plugins/tests/PluginManager.test.ts src/session/SessionManager.test.ts src/terminal/TerminalManagerRefactored.test.ts src/utils/constants.test.ts src/utils/errorHandler.test.ts",
+    "test:guardian": "vitest run src/guardian/tests/",
+    "test:toolcall": "vitest run src/views/chat/toolcall/__tests__/",
+    "test:toolcall:watch": "vitest watch src/views/chat/toolcall/__tests__/",
+    "test:toolcall:coverage": "vitest run --coverage src/views/chat/toolcall/__tests__/",
+    "package": "npm run build && vsce package",
+    "rebuild": "electron-rebuild -v 39.2.3 --arch x64",
+    "rollout:phase3": "node scripts/rollout-toolcall-system-phase3.js",
+    "cleanup:legacy": "node scripts/cleanup-legacy-files.js",
+    "benchmark:retrieval": "vitest run scripts/benchmark-retrieval.test.ts"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.7.2",
+    "@types/lru-cache": "^7.10.9",
+    "@types/node": "18.x",
+    "@types/uuid": "^9.0.7",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "@vscode/vsce": "^3.2.1",
+    "eslint": "^8.54.0",
+    "typescript": "^5.3.0",
+    "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "@types/minimatch": "^5.1.2",
+    "@xenova/transformers": "^2.10.0",
+    "dotenv": "^17.3.1",
+    "hnswlib-node": "^3.0.0",
+    "level": "^10.0.0",
+    "lru-cache": "^11.2.6",
+    "minimatch": "^10.2.4",
+    "uuid": "^9.0.1",
+    "web-tree-sitter": "^0.20.8",
+    "xxhash-addon": "^2.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SneakyFresh24/Gently-Coding-Agent.git"
+  },
+  "keywords": [
+    "ai",
+    "coding",
+    "assistant",
+    "vscode",
+    "extension",
+    "deepseek",
+    "agent"
+  ],
+  "author": "Gently Team",
+  "publisher": "gently",
+  "icon": "media/icon.png"
+}

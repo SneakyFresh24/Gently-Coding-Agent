@@ -1,0 +1,128 @@
+/* ============================================
+   DESIGN TOKENS - Gently Chat UI
+   ============================================ */
+
+:root {
+   /* ============================================
+     FARBEN
+     ============================================ */
+
+   /* Primärfarben */
+   --color-primary: rgb(59, 130, 246);
+   --color-primary-hover: rgb(37, 99, 235);
+   --color-primary-bg: rgba(59, 130, 246, 0.15);
+   --color-primary-border: rgba(59, 130, 246, 0.3);
+
+   /* Textfarben */
+   --color-text-primary: #ffffff;
+   --color-text-secondary: rgba(255, 255, 255, 0.7);
+   --color-text-muted: rgba(255, 255, 255, 0.5);
+   --color-text-accent: rgb(59, 130, 246);
+
+   /* Oberflächen (Surface) */
+   --color-surface-1: rgba(255, 255, 255, 0.04);
+   --color-surface-2: rgba(255, 255, 255, 0.08);
+   --color-surface: rgba(255, 255, 255, 0.05);
+   --color-surface-hover: rgba(255, 255, 255, 0.08);
+   --color-surface-active: rgba(255, 255, 255, 0.1);
+   --color-surface-elevated: rgba(255, 255, 255, 0.08);
+
+   /* Rahmen (Border) */
+   --color-border: rgba(255, 255, 255, 0.08);
+   /* Sophisticated subtle border */
+   --color-border-hover: rgba(255, 255, 255, 0.12);
+   --color-border-focus: rgba(59, 130, 246, 0.5);
+
+   /* Saturn Ring (Double Border) Highlights */
+   --color-ring-inner: rgba(255, 255, 255, 0.05);
+   --color-ring-outer: rgba(0, 0, 0, 0.3);
+
+   /* Statusfarben */
+   --color-success: rgb(34, 197, 94);
+   --color-warning: rgb(251, 191, 36);
+   --color-error: rgb(239, 68, 68);
+   --color-info: rgb(59, 130, 246);
+
+   /* Nachrichtentypen */
+   --color-user-message-bg: rgba(59, 130, 246, 0.2);
+   --color-assistant-message-bg: rgba(255, 255, 255, 0.05);
+   --color-system-message-bg: rgba(251, 191, 36, 0.1);
+
+   /* ============================================
+     BORDER RADIUS
+     ============================================ */
+   --radius-none: 0;
+   --radius-sm: 0.25rem;
+   /* 4px - kleine Elemente */
+   --radius-md: 0.5rem;
+   /* 8px - Pills, Tags */
+   --radius-lg: 0.75rem;
+   /* 12px - Cards, Inputs */
+   --radius-xl: 1rem;
+   /* 16px - Container */
+   --radius-full: 9999px;
+   /* Buttons, Avatare */
+
+   /* ============================================
+     ABSTÄNDE (Spacing)
+     ============================================ */
+   --space-0: 0;
+   --space-xs: 0.25rem;
+   /* 4px */
+   --space-sm: 0.5rem;
+   /* 8px */
+   --space-md: 1rem;
+   /* 16px */
+   --space-lg: 1.5rem;
+   /* 24px */
+   --space-xl: 2rem;
+   /* 32px */
+   --space-2xl: 3rem;
+   /* 48px */
+
+   /* ============================================
+     TYPOGRAFIE
+     ============================================ */
+   --font-xs: 0.6875rem;
+   /* 11px */
+   --font-sm: 0.75rem;
+   /* 12px */
+   --font-base: 0.875rem;
+   /* 14px */
+   --font-md: 1rem;
+   /* 16px */
+   --font-lg: 1.125rem;
+   /* 18px */
+   --font-xl: 1.25rem;
+   /* 20px */
+
+   --font-weight-normal: 400;
+   --font-weight-medium: 500;
+   --font-weight-semibold: 600;
+   --font-weight-bold: 700;
+
+   /* ============================================
+     SCHATTEN
+     ============================================ */
+   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
+   --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
+   --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.15);
+   --shadow-xl: 0 20px 25px rgba(0, 0, 0, 0.2);
+
+   /* ============================================
+     TRANSITIONEN (Spring Physics Inspired)
+     ============================================ */
+   --transition-fast: 120ms cubic-bezier(0.2, 0.8, 0.2, 1);
+   --transition-base: 250ms cubic-bezier(0.2, 0.8, 0.2, 1);
+   --transition-slow: 450ms cubic-bezier(0.15, 0.85, 0.35, 1.15);
+   /* Springy feel */
+   --transition-bounce: 500ms cubic-bezier(0.34, 1.56, 0.64, 1);
+
+   /* ============================================
+     LAYOUT
+     ============================================ */
+   --sidebar-width: 280px;
+   --header-height: 48px;
+   --input-height: 120px;
+   --toolbar-height: 40px;
+}
