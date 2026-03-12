@@ -5,19 +5,44 @@ import { Cache, sessionCache, chatCache, workspaceCache } from './cache';
  * Performance configuration
  */
 export interface PerformanceConfig {
-  memoryCheckInterval: number; // ms
   metricsReportInterval: number; // ms
   pacingThreshold: number; // % heap usage
   criticalThreshold: number; // % heap usage
   scaleThreshold: number; // % heap usage
+  adaptiveCaching?: boolean;
+  memoryOptimization?: boolean;
+  autoCleanup?: boolean;
+  maxMemoryUsage?: number;
+}
+
+export interface MemoryStats {
+  heapUsed: number;
+  heapTotal: number;
+  heapUsedPct: number;
+  external: number;
+  rss: number;
+}
+
+export interface PerformanceStats {
+  session: any;
+  chat: any;
+  workspace: any;
+  pacingActive: boolean;
+}
+
+export interface MemoryOptimizationOptions {
+  aggressive?: boolean;
+  targetSaving?: number; // %
 }
 
 const DEFAULT_CONFIG: PerformanceConfig = {
-  memoryCheckInterval: 30000,
-  metricsReportInterval: 300000,
-  pacingThreshold: 75,
-  criticalThreshold: 85,
-  scaleThreshold: 80
+  metricsReportInterval: 60000,
+  pacingThreshold: 80,
+  criticalThreshold: 90,
+  scaleThreshold: 70,
+  adaptiveCaching: true,
+  memoryOptimization: true,
+  autoCleanup: true
 };
 
 /**
@@ -42,7 +67,7 @@ export class PerformanceOptimizer implements Disposable {
     this.disposables.push({ dispose: () => clearInterval(reportInterval) });
 
     // Memory monitoring
-    const memoryInterval = setInterval(() => this.checkMemoryUsage(), this.config.memoryCheckInterval);
+    const memoryInterval = setInterval(() => this.checkMemoryUsage(), this.config.metricsReportInterval);
     this.disposables.push({ dispose: () => clearInterval(memoryInterval) });
   }
 
@@ -69,12 +94,25 @@ export class PerformanceOptimizer implements Disposable {
   /**
    * Optimize memory usage
    */
-  async optimizeMemory(): Promise<void> {
+  /**
+   * Optimize memory usage
+   */
+  async optimizeMemory(options: any = {}): Promise<void> {
     const memory = process.memoryUsage();
     const heapUsedPct = (memory.heapUsed / memory.heapTotal) * 100;
 
-    if (heapUsedPct > this.config.criticalThreshold) {
-      this.log('Critical memory pressure: clearing non-essential caches');
+    if (options.forceGC !== false) {
+      if (typeof global.gc === 'function') {
+        try {
+          global.gc();
+        } catch (e) {
+          this.log('GC call failed');
+        }
+      }
+    }
+
+    if (heapUsedPct > this.config.criticalThreshold || options.clearCaches) {
+      this.log('Memory pressure: clearing non-essential caches');
       sessionCache.clear();
     }
 
@@ -123,6 +161,60 @@ export class PerformanceOptimizer implements Disposable {
       // Restore scale if memory is healthy
       Cache.setGlobalTtlScale(1.0);
     }
+  }
+
+  /**
+   * Get current memory statistics
+   */
+  public getMemoryStats(): any {
+    const memory = process.memoryUsage();
+    return {
+      usedHeapSize: Math.round(memory.heapUsed / 1024 / 1024),
+      totalHeapSize: Math.round(memory.heapTotal / 1024 / 1024),
+      externalMemory: Math.round(memory.external / 1024 / 1024),
+      rssMemory: Math.round(memory.rss / 1024 / 1024)
+    };
+  }
+
+  /**
+   * Get current performance statistics across all caches
+   */
+  public getPerformanceStats(): any {
+    return {
+      session: sessionCache.getStats(),
+      chat: chatCache.getStats(),
+      workspace: workspaceCache.getStats(),
+      pacingActive: this.pacingResult,
+      cacheStats: {},
+      memoryStats: this.getMemoryStats(),
+      lazyLoaderStats: {}
+    };
+  }
+
+  /**
+   * Create a new managed cache (legacy support)
+   */
+  public createCache<V>(options: any = {}): Cache<V> {
+    return new Cache<V>({
+      defaultTtl: options.defaultTtl || options.ttl,
+      maxSize: options.maxSize,
+      storageKey: options.keyPrefix
+    });
+  }
+
+  /**
+   * Register a module for lazy loading (legacy support/mock)
+   */
+  public registerLazyModule(name: string, loader: () => Promise<any>, options: any = {}): any {
+    this.log(`Lazy module registered: ${name}`);
+    return { name, loader, options };
+  }
+
+  /**
+   * Get a cached value (legacy support/mock)
+   */
+  public async getCachedValue<T>(cache: Cache<T>, key: string, factory: () => Promise<T>): Promise<T> {
+    return cache.getOrSet(key, factory);
   }
 
   dispose(): void {

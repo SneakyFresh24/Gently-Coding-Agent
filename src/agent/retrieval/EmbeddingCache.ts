@@ -16,7 +16,8 @@ export class EmbeddingCache {
     private initialized: boolean = false;
     private initPromise: Promise<void> | null = null;
     private readonly ttlMs: number;
-    private readonly hasher = new XXHash64(Buffer.from('gentlyv1')); // Exactly 8 bytes
+    private nativeHasherClass: any = null;
+    private hasNativeHasher: boolean = false;
 
     constructor(options: CacheOptions) {
         this.ttlMs = (options.ttlDays || 30) * 24 * 60 * 60 * 1000;
@@ -26,6 +27,16 @@ export class EmbeddingCache {
             ttl: this.ttlMs,
             updateAgeOnGet: true
         });
+
+        // Try load native hasher
+        try {
+            const mod = require('xxhash-addon');
+            this.nativeHasherClass = mod.XXHash64;
+            this.hasNativeHasher = true;
+            console.log('[EmbeddingCache] Native XXHash64 loaded ✓');
+        } catch (e) {
+            console.warn('[EmbeddingCache] Native XXHash64 NOT found. Falling back to simple hash.');
+        }
 
         this.initPromise = this.initialize(options.persistenceDir);
     }
@@ -85,9 +96,27 @@ export class EmbeddingCache {
      * Generates a fast hash key for the content
      */
     private generateKey(content: string, modelName: string): string {
-        this.hasher.update(Buffer.from(content));
-        const hash = this.hasher.digest().toString('hex');
-        return `${modelName}:${hash}`;
+        if (this.hasNativeHasher && this.nativeHasherClass) {
+            try {
+                // Create fresh instance per digest to avoid state corruption/reuse issues
+                const hasher = new this.nativeHasherClass(Buffer.from('gentlyv1')); 
+                hasher.update(Buffer.from(content));
+                const hash = hasher.digest().toString('hex');
+                return `${modelName}:${hash}`;
+            } catch (e) {
+                // Fallback on instance error
+                this.hasNativeHasher = false;
+            }
+        }
+        
+        // Simple fallback hash (non-native)
+        let hash = 0;
+        for (let i = 0; i < content.length; i++) {
+            const char = content.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash |= 0; // Convert to 32bit integer
+        }
+        return `${modelName}:fb-${hash.toString(16)}`;
     }
 
     /**
@@ -117,7 +146,7 @@ export class EmbeddingCache {
                 this.memoryCache.set(key, embedding);
                 return embedding;
             } catch (error: any) {
-                if (error.code !== 'LEVEL_NOT_FOUND') {
+                if (error.code !== 'LEVEL_NOT_FOUND' && error.code !== 'LEVEL_NOT_OPEN') {
                     console.warn('[EmbeddingCache] Disk get error:', error.message);
                 }
             }
@@ -144,9 +173,12 @@ export class EmbeddingCache {
         // 2. Disk set
         if (this.db) {
             try {
+                // LevelDB 10+ might throw if closed
                 await this.db.put(key, data);
             } catch (error: any) {
-                console.warn('[EmbeddingCache] Disk put error:', error.message);
+                if (error.code !== 'LEVEL_NOT_OPEN') {
+                    console.warn('[EmbeddingCache] Disk put error:', error.message);
+                }
             }
         }
     }

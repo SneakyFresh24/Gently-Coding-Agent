@@ -19,7 +19,8 @@ describe('ToolCallValidator', () => {
       const toolCalls = [
         {
           id: 'test-1',
-          type: 'function',
+          type: 'function' as const,
+          status: 'pending' as const,
           function: {
             name: 'read_file',
             arguments: '{"path": "test.txt"}'
@@ -43,22 +44,21 @@ describe('ToolCallValidator', () => {
     });
 
     it('should reject tool calls with missing id', () => {
-      const toolCalls = [
-        {
-          type: 'function',
-          function: {
-            name: 'read_file',
-            arguments: '{"path": "test.txt"}'
-          }
-        }
-      ];
-
       const context: ToolCallMessageContext = {
         conversationHistory: [],
         messageId: 'msg-123'
       };
 
-      const result = validator.validateToolCalls(toolCalls, context);
+      const result = validator.validateToolCalls([
+        {
+          type: 'function',
+          status: 'pending',
+          function: {
+            name: 'read_file',
+            arguments: '{"path": "test.txt"}'
+          }
+        }
+      ] as any, context);
 
       expect(result.valid).toBe(false);
       expect(result.errors).toContain('Tool call 0 missing id');
@@ -66,46 +66,44 @@ describe('ToolCallValidator', () => {
     });
 
     it('should reject tool calls with invalid type', () => {
-      const toolCalls = [
-        {
-          id: 'test-1',
-          type: 'invalid',
-          function: {
-            name: 'read_file',
-            arguments: '{"path": "test.txt"}'
-          }
-        }
-      ];
-
       const context: ToolCallMessageContext = {
         conversationHistory: [],
         messageId: 'msg-123'
       };
 
-      const result = validator.validateToolCalls(toolCalls, context);
+      const result = validator.validateToolCalls([
+        {
+          id: 'test-1',
+          type: 'invalid',
+          status: 'pending',
+          function: {
+            name: 'read_file',
+            arguments: '{"path": "test.txt"}'
+          }
+        }
+      ] as any, context);
 
       expect(result.valid).toBe(false);
       expect(result.errors).toContain('Tool call 0 has invalid type: invalid');
     });
 
     it('should reject tool calls with invalid JSON arguments', () => {
-      const toolCalls = [
-        {
-          id: 'test-1',
-          type: 'function',
-          function: {
-            name: 'read_file',
-            arguments: '{"path": "test.txt"'  // Missing closing brace
-          }
-        }
-      ];
-
       const context: ToolCallMessageContext = {
         conversationHistory: [],
         messageId: 'msg-123'
       };
 
-      const result = validator.validateToolCalls(toolCalls, context);
+      const result = validator.validateToolCalls([
+        {
+          id: 'test-1',
+          type: 'function' as const,
+          status: 'pending' as const,
+          function: {
+            name: 'read_file',
+            arguments: '{"path": "test.txt"'  // Missing closing brace
+          }
+        }
+      ] as any, context);
 
       expect(result.valid).toBe(false);
       expect(result.errors.some(e => e.includes('invalid JSON arguments'))).toBe(true);
@@ -134,7 +132,7 @@ describe('ToolCallValidator', () => {
           role: 'assistant',
           content: 'I will read the file',
           tool_calls: [
-            { id: 'tc-1', type: 'function', function: { name: 'read_file', arguments: '{}' } }
+            [{ id: 'tc-1', type: 'function' as const, status: 'pending' as const, function: { name: 'read_file', arguments: '{}' } }] as any
           ]
         },
         { role: 'tool', content: 'File content', tool_call_id: 'tc-1' },
@@ -154,7 +152,7 @@ describe('ToolCallValidator', () => {
           role: 'assistant',
           content: 'I will read the file',
           tool_calls: [
-            { id: 'tc-1', type: 'function', function: { name: 'read_file', arguments: '{}' } }
+            { id: 'tc-1', type: 'function', status: 'pending', function: { name: 'read_file', arguments: '{}' } }
           ]
         },
         { role: 'assistant', content: 'Here is the file content' }  // Missing tool message
@@ -185,7 +183,7 @@ describe('ToolCallValidator', () => {
           role: 'assistant',
           content: 'I will read the file',
           tool_calls: [
-            { id: 'tc-1', type: 'function', function: { name: 'read_file', arguments: '{}' } }
+            { id: 'tc-1', type: 'function', status: 'pending', function: { name: 'read_file', arguments: '{}' } }
           ]
         },
         { role: 'tool', content: 'File content', tool_call_id: 'invalid-id' }  // Invalid tool_call_id
@@ -216,8 +214,8 @@ describe('ToolCallValidator', () => {
           role: 'assistant',
           content: 'I will read two files',
           tool_calls: [
-            { id: 'tc-1', type: 'function', function: { name: 'read_file', arguments: '{"path": "file1.txt"}' } },
-            { id: 'tc-2', type: 'function', function: { name: 'read_file', arguments: '{"path": "file2.txt"}' } }
+            { id: 'tc-1', type: 'function', status: 'pending', function: { name: 'read_file', arguments: '{"path": "file1.txt"}' } },
+            { id: 'tc-2', type: 'function', status: 'pending', function: { name: 'read_file', arguments: '{"path": "file2.txt"}' } }
           ]
         },
         { role: 'tool', content: 'File 1 content', tool_call_id: 'tc-1' },
@@ -238,8 +236,8 @@ describe('ToolCallValidator', () => {
           role: 'assistant',
           content: 'I will read two files',
           tool_calls: [
-            { id: 'tc-1', type: 'function', function: { name: 'read_file', arguments: '{"path": "file1.txt"}' } },
-            { id: 'tc-2', type: 'function', function: { name: 'read_file', arguments: '{"path": "file2.txt"}' } }
+            { id: 'tc-1', type: 'function', status: 'pending', function: { name: 'read_file', arguments: '{"path": "file1.txt"}' } },
+            { id: 'tc-2', type: 'function', status: 'pending', function: { name: 'read_file', arguments: '{"path": "file2.txt"}' } }
           ]
         },
         { role: 'tool', content: 'File 2 content', tool_call_id: 'tc-2' },  // Out of order

@@ -7,6 +7,9 @@ yarn-error.log*
 # Build output
 out/
 dist/
+# Build artifacts
+compile_errors.txt
+repro_*.js
 *.vsix
 
 # Environment variables

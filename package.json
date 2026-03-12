@@ -2,7 +2,7 @@
   "name": "gently",
   "displayName": "Gently - AI Coding Agent",
   "description": "AI-powered coding assistant — Bring Your Own Key via OpenRouter",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -355,21 +355,25 @@
     "@typescript-eslint/eslint-plugin": "^6.13.0",
     "@typescript-eslint/parser": "^6.13.0",
     "@vscode/vsce": "^3.2.1",
+    "@types/sinon": "^17.0.3",
     "eslint": "^8.54.0",
+    "sinon": "^17.0.1",
     "typescript": "^5.3.0",
     "vitest": "^3.2.4"
   },
   "dependencies": {
     "@types/minimatch": "^5.1.2",
-    "@xenova/transformers": "^2.10.0",
     "dotenv": "^17.3.1",
-    "hnswlib-node": "^3.0.0",
     "level": "^10.0.0",
     "lru-cache": "^11.2.6",
     "minimatch": "^10.2.4",
     "uuid": "^9.0.1",
-    "web-tree-sitter": "^0.20.8",
-    "xxhash-addon": "^2.1.0"
+    "web-tree-sitter": "^0.20.8"
+  },
+  "optionalDependencies": {
+    "hnswlib-node": "^3.0.0",
+    "xxhash-addon": "^2.1.0",
+    "@xenova/transformers": "^2.10.0"
   },
   "repository": {
     "type": "git",

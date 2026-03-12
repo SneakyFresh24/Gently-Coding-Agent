@@ -35,6 +35,14 @@ export class TerminalManager {
   }
 
   /**
+   * Set the Guardian service for security checks
+   */
+  public setGuardianService(guardian: GuardianService): void {
+    this.guardian = guardian;
+    console.log('[TerminalManager] Guardian service bridged');
+  }
+
+  /**
    * Execute a command with approval handling
    */
   async executeCommand(

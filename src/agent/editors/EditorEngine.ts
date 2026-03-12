@@ -8,7 +8,11 @@
  * 4. Fuzzy fallback
  */
 
+import * as path from 'path';
 import { fileExists, readFileAsync, copyFileAsync } from '../../utils/persistenceUtils';
+import { FileOperations } from '../fileOperations';
+import { ASTAnalyzer } from '../ASTAnalyzer';
+import { GuardianService } from '../../guardian/GuardianService';
 
 export interface EditRequest {
     filePath: string;

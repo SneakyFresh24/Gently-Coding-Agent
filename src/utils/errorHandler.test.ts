@@ -8,7 +8,7 @@ import {
   ValidationError,
   NetworkError,
   handleErrors,
-  safeExecute,
+  safeExecuteResult,
   retry
 } from './errorHandler';
 
@@ -213,12 +213,12 @@ describe('Error Utilities', () => {
     });
   });
 
-  describe('safeExecute', () => {
+  describe('safeExecuteResult', () => {
     it('should execute function safely', async () => {
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       
       const fn = async () => { throw new Error('Test error'); };
-      const result = await safeExecute(fn, 'fallback', 'test-context');
+      const result = await safeExecuteResult(fn, 'fallback', 'test-context');
       
       expect(result).toBe('fallback');
       expect(consoleSpy).toHaveBeenCalledWith(

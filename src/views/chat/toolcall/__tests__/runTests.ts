@@ -8,7 +8,7 @@ import { ToolCallValidator } from '../ToolCallValidator';
 import { ToolCallTracker } from '../ToolCallTracker';
 // LegacyToolCallAdapter wurde entfernt - Migration ist abgeschlossen
 import { AgentManager } from '../../../../agent/agentManager/AgentManager';
-import { ToolExecutionHandler } from '../../handlers/ToolExecutionHandler';
+import { ToolExecutionHandler } from '../../handlers/ExecutionDispatchers';
 import { ChatMessage } from '../../../../services/OpenRouterService';
 
 // Mock implementations
@@ -78,10 +78,11 @@ describe('Tool Call System Validation', () => {
 
   describe('System Integration Validation', () => {
     it('should validate complete tool call workflow', async () => {
-      const toolCalls = [
+      const toolCalls: any[] = [
         {
           id: 'tc-read-1',
-          type: 'function',
+          type: 'function' as const,
+          status: 'pending' as const,
           function: {
             name: 'read_file',
             arguments: JSON.stringify({ path: 'test.txt' })
@@ -89,7 +90,8 @@ describe('Tool Call System Validation', () => {
         },
         {
           id: 'tc-write-1',
-          type: 'function',
+          type: 'function' as const,
+          status: 'pending' as const,
           function: {
             name: 'write_file',
             arguments: JSON.stringify({ path: 'output.txt', content: 'Hello World' })
@@ -139,7 +141,7 @@ describe('Tool Call System Validation', () => {
           role: 'assistant' as const,
           content: 'I will analyze the project structure',
           tool_calls: [
-            { id: 'tc-1', type: 'function', function: { name: 'analyze_project_structure', arguments: '{}' } }
+            { id: 'tc-1', type: 'function' as const, status: 'pending' as const, function: { name: 'analyze_project_structure', arguments: '{}' } }
           ]
         },
         { role: 'tool' as const, content: '{"structure": "found"}', tool_call_id: 'tc-1' },
@@ -148,8 +150,8 @@ describe('Tool Call System Validation', () => {
           role: 'assistant' as const,
           content: 'I will read the main files',
           tool_calls: [
-            { id: 'tc-2', type: 'function', function: { name: 'read_file', arguments: '{"path": "package.json"}' } },
-            { id: 'tc-3', type: 'function', function: { name: 'read_file', arguments: '{"path": "README.md"}' } }
+            { id: 'tc-2', type: 'function' as const, status: 'pending' as const, function: { name: 'read_file', arguments: '{"path": "package.json"}' } },
+            { id: 'tc-3', type: 'function' as const, status: 'pending' as const, function: { name: 'read_file', arguments: '{"path": "README.md"}' } }
           ]
         },
         { role: 'tool' as const, content: '{"content": "package.json content"}', tool_call_id: 'tc-2' },
@@ -170,7 +172,7 @@ describe('Tool Call System Validation', () => {
           role: 'assistant' as const,
           content: 'I will use tools',
           tool_calls: [
-            { id: 'tc-problem', type: 'function', function: { name: 'read_file', arguments: '{}' } }
+            { id: 'tc-problem', type: 'function' as const, status: 'pending' as const, function: { name: 'read_file', arguments: '{}' } }
           ]
         },
         { role: 'assistant' as const, content: 'Missing tool message - this would cause API error' }
@@ -191,9 +193,10 @@ describe('Tool Call System Validation', () => {
 
   describe('Performance and Reliability', () => {
     it('should handle concurrent tool execution efficiently', async () => {
-      const toolCalls = Array.from({ length: 10 }, (_, i) => ({
+      const toolCalls: any[] = Array.from({ length: 10 }, (_, i) => ({
         id: `tc-concurrent-${i}`,
-        type: 'function',
+        type: 'function' as const,
+        status: 'pending' as const,
         function: {
           name: 'read_file',
           arguments: JSON.stringify({ path: `file${i}.txt` })
@@ -242,7 +245,8 @@ describe('Tool Call System Validation', () => {
       const toolCalls = [
         {
           id: 'tc-error',
-          type: 'function',
+          type: 'function' as const,
+          status: 'pending' as const,
           function: {
             name: 'error_tool',
             arguments: '{}'
@@ -250,7 +254,8 @@ describe('Tool Call System Validation', () => {
         },
         {
           id: 'tc-success',
-          type: 'function',
+          type: 'function' as const,
+          status: 'pending' as const,
           function: {
             name: 'success_tool',
             arguments: '{}'
@@ -313,7 +318,8 @@ describe('Tool Call System Validation', () => {
       const toolCalls = [
         {
           id: 'tc-large',
-          type: 'function',
+          type: 'function' as const,
+          status: 'pending' as const,
           function: {
             name: 'write_file',
             arguments: JSON.stringify({ path: 'large.txt', content: largeContent })

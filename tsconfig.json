@@ -20,6 +20,8 @@
     "webview-ui",
     "dist",
     "test",
+    "scripts",
+    "repro_*.js",
     "vitest.config.ts"
   ]
 }

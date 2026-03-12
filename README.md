@@ -1,6 +1,7 @@
-# Gently - AI Coding Agent for VS Code
+# Gently 🧠 (v0.5.3)
 
-[![Version](https://img.shields.io/badge/version-0.5.1-blue)](https://marketplace.visualstudio.com/items?itemName=gently.gently)
+> The privacy-first AI agent for VS Code with integrated semantic search, architectural guardrails, and deterministic code analysis.
+[![Version](https://img.shields.io/badge/version-0.5.3-blue)](https://marketplace.visualstudio.com/items?itemName=gently.gently)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![VS Code](https://img.shields.io/badge/vscode-^1.85.0-007ACC)](https://code.visualstudio.com/)
 
@@ -53,7 +54,7 @@
 
 **From VSIX:**
 ```bash
-code --install-extension gently-0.5.1.vsix
+code --install-extension gently-0.5.3.vsix
 ```
 
 ### 2. Configuration
@@ -87,45 +88,18 @@ Ctrl+Shift+P → "Open Gently Chat"
 
 ## 🏗️ Architecture
 
-### System Overview
+### Architecture Overview
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    VS Code Extension Host                    │
-├─────────────────────────────────────────────────────────────┤
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │   Agent      │  │   Guardian   │  │    Mode      │      │
-│  │   Manager    │  │   Service    │  │   Service    │      │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘      │
-│         │                 │                 │               │
-│  ┌──────▼─────────────────▼─────────────────▼───────┐      │
-│  │              DI Container (ServiceProvider)        │      │
-│  └──────┬─────────────────┬─────────────────┬───────┘      │
-│         │                 │                 │               │
-│  ┌──────▼───────┐  ┌──────▼───────┐  ┌──────▼───────┐      │
-│  │    Tools     │  │   Retrieval  │  │    Memory    │      │
-│  │   Registry   │  │   System     │  │   Manager    │      │
-│  └──────────────┘  └──────────────┘  └──────────────┘      │
-├─────────────────────────────────────────────────────────────┤
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │    Chat      │  │   Guardian   │  │   Plugin     │      │
-│  │   Webview    │  │   Webview    │  │   Manager    │      │
-│  └──────────────┘  └──────────────┘  └──────────────┘      │
-└─────────────────────────────────────────────────────────────┘
-```
+Gently is built with a modular, service-oriented architecture:
 
-### Core Components
-
-| Component | Description | Key Files |
-|-----------|-------------|----------|
-| **Agent Manager** | Orchestrates AI agent functionality | `src/agent/agentManager/AgentManager.ts` |
-| **DI Container** | Dependency injection for loose coupling | `src/agent/container.ts` |
-| **Tool Registry** | Extensible tool system | `src/agent/tools/ToolRegistry.ts` |
-| **Guardian Service** | Code health monitoring | `src/guardian/GuardianService.ts` |
-| **Hybrid Retriever** | Semantic + lexical search | `src/agent/retrieval/HybridRetriever.ts` |
-| **Memory Manager** | Persistent context storage | `src/agent/memory/MemoryManager.ts` |
-| **Plugin Manager** | Extensible plugin system | `src/plugins/PluginManager.ts` |
-| **Mode Service** | AI mode management | `src/modes/ModeService.ts` |
+- **Agent Core**: [src/agent/agentManager](file:///c:/Users/Bekim%20Lika/Desktop/Agent/src/agent/agentManager)
+- **Guardian System**: [src/guardian](file:///c:/Users/Bekim%20Lika/Desktop/Agent/src/guardian)
+- **Retrieval Engine**: [src/agent/retrieval](file:///c:/Users/Bekim%20Lika/Desktop/Agent/src/agent/retrieval)
+- **DI Container**: [src/agent/ServiceProvider.ts](file:///c:/Users/Bekim%20Lika/Desktop/Agent/src/agent/ServiceProvider.ts)
+- **Tool Registry**: Extensible tool system | `src/agent/tools/ToolRegistry.ts`
+- **Memory Manager**: Persistent context storage | `src/agent/memory/MemoryManager.ts`
+- **Plugin Manager**: Extensible plugin system | `src/plugins/PluginManager.ts`
+- **Mode Service**: AI mode management | `src/modes/ModeService.ts`
 
 ### Retrieval Pipeline
 
@@ -316,8 +290,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 📞 Support
 
 - **Email**: info@illiria.eu
-- **GitHub Issues**: [Report a bug](https://github.com/gently-ai/gently-vscode-extension/issues)
-- **Documentation**: [Wiki](https://github.com/gently-ai/gently-vscode-extension/wiki)
+- **Gently VS Code Extension**: [SneakyFresh24/Gently-Coding-Agent](https://github.com/SneakyFresh24/Gently-Coding-Agent)
+- **Gently Retrieval Engine**: [SneakyFresh24/Gently-Coding-Agent](https://github.com/SneakyFresh24/Gently-Coding-Agent) (Integrated)
+- **Gently Guardian System**: [SneakyFresh24/Gently-Coding-Agent](https://github.com/SneakyFresh24/Gently-Coding-Agent) (Integrated)
 
 ## 🙏 Acknowledgments
 

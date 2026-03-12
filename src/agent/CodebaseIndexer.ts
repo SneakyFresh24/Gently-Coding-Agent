@@ -283,7 +283,7 @@ export class CodebaseIndexer {
       }
 
       // NEW: Index call and import relationships
-      await this.relationshipGraph.indexFile(filePath, fileInfo.content, fileInfo.language);
+      await this.relationshipGraph.indexFile(filePath as any, fileInfo.content, fileInfo.language);
     } catch (error: any) {
       if (error.message?.includes('File not found') || error.message?.includes('not found')) {
         return;
@@ -301,7 +301,7 @@ export class CodebaseIndexer {
   public async removeFile(filePath: string): Promise<void> {
     this.index.delete(filePath);
     await this.hybridRetriever.removeFile(filePath);
-    this.relationshipGraph.removeFile(filePath);
+    this.relationshipGraph.removeFile(filePath as any);
   }
 
   /**

@@ -4,15 +4,9 @@
 
 // Core performance modules
 export { LazyLoader, LazyModule, LazyLoaderOptions, lazyLoader } from './lazyLoader';
-export { Cache, CacheEntry, CacheOptions, CacheStats, sessionCache, chatCache, workspaceCache } from './cache';
-export {
-  PerformanceOptimizer,
-  PerformanceConfig,
-  MemoryStats,
-  PerformanceStats,
-  MemoryOptimizationOptions,
-  performanceOptimizer
-} from './performanceOptimizer';
+export * from './cache';
+export * from './performanceOptimizer';
+
 export {
   ChatMemoryOptimizer,
   ChatMessage,

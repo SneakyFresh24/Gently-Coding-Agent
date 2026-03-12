@@ -27,7 +27,7 @@ import {
   safeExecute,
   agentLogger,
   PerformanceLogger
-} from '../../utils';
+} from '../../utils/Logger';
 import { ensureDir } from '../../utils/persistenceUtils';
 import * as path from 'path';
 
@@ -208,8 +208,8 @@ export class AgentManager {
 
     // Bridge GuardianService if it already exists
     const guardianService = this.container.resolve<any>('guardianService');
-    if (guardianService && terminalManager.setGuardianService) {
-      terminalManager.setGuardianService(guardianService);
+    if (guardianService && (terminalManager as any).setGuardianService) {
+      (terminalManager as any).setGuardianService(guardianService);
     }
 
     agentLogger.info('Terminal manager updated in DI container and bridged');

@@ -1,6 +1,6 @@
+import { describe, it, beforeEach, afterEach, vi, expect } from 'vitest';
 import * as vscode from 'vscode';
 import * as assert from 'assert';
-import * as sinon from 'sinon';
 import { EventEmitter } from 'events';
 import { ShellIntegrationExecutor } from '../ShellIntegrationExecutor';
 import { ExecutionOptions, OutputChunk } from './types/ExecutionTypes';
@@ -12,7 +12,7 @@ describe('ShellIntegrationExecutor', () => {
 
     beforeEach(() => {
         webviewCommunicator = {
-            sendFallbackModeUsed: sinon.stub()
+            sendFallbackModeUsed: vi.fn()
         };
         executor = new ShellIntegrationExecutor(webviewCommunicator);
         // Mock child_process
@@ -20,7 +20,7 @@ describe('ShellIntegrationExecutor', () => {
     });
 
     afterEach(() => {
-        sinon.restore();
+        vi.restoreAllMocks();
         executor.dispose();
     });
 
@@ -62,16 +62,16 @@ describe('ShellIntegrationExecutor', () => {
             const mockProcess = new EventEmitter() as any;
             mockProcess.stdout = new EventEmitter();
             mockProcess.stderr = new EventEmitter();
-            mockProcess.kill = sinon.stub();
+            mockProcess.kill = vi.fn();
 
-            const spawnStub = sinon.stub(cp, 'spawn').returns(mockProcess);
+            const spawnSpy = vi.spyOn(cp, 'spawn').mockReturnValue(mockProcess);
 
             const mockTerminal = {
-                sendText: sinon.stub(),
+                sendText: vi.fn(),
                 creationOptions: {}
             } as any;
 
-            const onChunk = sinon.stub();
+            const onChunk = vi.fn();
             const commandId = 'test-cmd-123';
             const command = 'echo "hello worlds"';
 
@@ -100,26 +100,26 @@ describe('ShellIntegrationExecutor', () => {
             assert.ok(result.output.includes('hello worlds'));
 
             // Verify chunks were called
-            assert.ok(onChunk.called);
-            const chunks = onChunk.getCalls().map(c => c.args[0] as OutputChunk);
-            assert.ok(chunks.some(c => c.data === 'hello'));
-            assert.ok(chunks.some(c => c.data === 'worlds\n'));
+            expect(onChunk).toHaveBeenCalled();
+            const chunks = onChunk.mock.calls.map((c: any) => c[0] as OutputChunk);
+            assert.ok(chunks.some((c: any) => c.data === 'hello'));
+            assert.ok(chunks.some((c: any) => c.data === 'worlds\n'));
         });
 
         it('should handle process errors and kill command', async () => {
             const mockProcess = new EventEmitter() as any;
             mockProcess.stdout = new EventEmitter();
             mockProcess.stderr = new EventEmitter();
-            mockProcess.kill = sinon.stub();
+            mockProcess.kill = vi.fn();
 
-            const spawnStub = sinon.stub(cp, 'spawn').returns(mockProcess);
+            const spawnSpy = vi.spyOn(cp, 'spawn').mockReturnValue(mockProcess);
 
             const mockTerminal = {
-                sendText: sinon.stub(),
+                sendText: vi.fn(),
                 creationOptions: {}
             } as any;
 
-            const onChunk = sinon.stub();
+            const onChunk = vi.fn();
             const commandId = 'test-kill-123';
 
             const executionPromise = (executor as any).executeLegacyMethod(
@@ -136,7 +136,7 @@ describe('ShellIntegrationExecutor', () => {
 
             // Kill the command
             executor.killCommand(commandId);
-            assert.ok(mockProcess.kill.called);
+            expect(mockProcess.kill).toHaveBeenCalled();
 
             // Simulate exit after kill
             mockProcess.emit('close', 1);
@@ -150,12 +150,12 @@ describe('ShellIntegrationExecutor', () => {
             const mockProcess = new EventEmitter() as any;
             mockProcess.stdout = new EventEmitter();
             mockProcess.stderr = new EventEmitter();
-            mockProcess.kill = sinon.stub();
+            mockProcess.kill = vi.fn();
 
-            sinon.stub(cp, 'spawn').returns(mockProcess);
+            vi.spyOn(cp, 'spawn').mockReturnValue(mockProcess);
 
-            const mockTerminal = { sendText: sinon.stub(), creationOptions: {} } as any;
-            const onChunk = sinon.stub();
+            const mockTerminal = { sendText: vi.fn(), creationOptions: {} } as any;
+            const onChunk = vi.fn();
 
             const executionPromise = (executor as any).executeLegacyMethod(
                 'err-cmd', 'cmd', mockTerminal, {}, onChunk, Date.now()
@@ -167,7 +167,7 @@ describe('ShellIntegrationExecutor', () => {
             const result = await executionPromise;
             assert.strictEqual(result.exitCode, 1);
             assert.ok(result.output.includes('error occurred'));
-            assert.ok(onChunk.calledWith(sinon.match({ type: 'stderr', data: 'error occurred' })));
+            expect(onChunk).toHaveBeenCalledWith(expect.objectContaining({ type: 'stderr', data: 'error occurred' }));
         });
     });
 });

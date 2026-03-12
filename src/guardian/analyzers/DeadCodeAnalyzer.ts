@@ -149,7 +149,7 @@ export class DeadCodeAnalyzer extends BaseAnalyzer {
   private getAllSymbols(context: GuardianAnalysisContext): SymbolDefinition[] {
     const symbols: SymbolDefinition[] = [];
     for (const filePath of context.changedFiles) {
-      symbols.push(...this.relationshipGraph.getSymbolsInFile(filePath));
+      symbols.push(...this.relationshipGraph.getSymbolsInFile(filePath as any));
     }
     return symbols;
   }
@@ -165,7 +165,7 @@ export class DeadCodeAnalyzer extends BaseAnalyzer {
    * Get imports for a specific file
    */
   private async getImportsForFile(filePath: string): Promise<ImportRelationship[]> {
-    return this.relationshipGraph.getImportedSymbols(filePath).map(res => res.relationship);
+    return this.relationshipGraph.getImportedSymbols(filePath as any).map(res => res.relationship);
   }
 
   /**

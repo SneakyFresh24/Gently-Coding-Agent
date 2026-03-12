@@ -17,9 +17,9 @@ describe('ToolCallTracker', () => {
     it('should track a new tool call', () => {
       const toolCall: ToolCall = {
         id: 'tc-1',
-        type: 'function',
+        type: 'function' as const,
         function: { name: 'read_file', arguments: '{}' },
-        status: 'pending'
+        status: 'pending' as const
       };
 
       const groupId = 'group-1';
@@ -51,16 +51,16 @@ describe('ToolCallTracker', () => {
     it('should add multiple tool calls to the same group', () => {
       const toolCall1: ToolCall = {
         id: 'tc-1',
-        type: 'function',
+        type: 'function' as const,
         function: { name: 'read_file', arguments: '{}' },
-        status: 'pending'
+        status: 'pending' as const
       };
 
       const toolCall2: ToolCall = {
         id: 'tc-2',
-        type: 'function',
+        type: 'function' as const,
         function: { name: 'write_file', arguments: '{}' },
-        status: 'pending'
+        status: 'pending' as const
       };
 
       const groupId = 'group-1';
@@ -75,9 +75,9 @@ describe('ToolCallTracker', () => {
     it('should create a new group if it does not exist', () => {
       const toolCall: ToolCall = {
         id: 'tc-1',
-        type: 'function',
+        type: 'function' as const,
         function: { name: 'read_file', arguments: '{}' },
-        status: 'pending'
+        status: 'pending' as const
       };
 
       const groupId = 'new-group';
@@ -94,9 +94,9 @@ describe('ToolCallTracker', () => {
     beforeEach(() => {
       const toolCall: ToolCall = {
         id: 'tc-1',
-        type: 'function',
+        type: 'function' as const,
         function: { name: 'read_file', arguments: '{}' },
-        status: 'pending'
+        status: 'pending' as const
       };
 
       tracker.trackToolCall(toolCall, 'group-1');
@@ -180,16 +180,16 @@ describe('ToolCallTracker', () => {
     beforeEach(() => {
       const toolCall1: ToolCall = {
         id: 'tc-1',
-        type: 'function',
+        type: 'function' as const,
         function: { name: 'read_file', arguments: '{}' },
-        status: 'pending'
+        status: 'pending' as const
       };
 
       const toolCall2: ToolCall = {
         id: 'tc-2',
-        type: 'function',
+        type: 'function' as const,
         function: { name: 'write_file', arguments: '{}' },
-        status: 'pending'
+        status: 'pending' as const
       };
 
       tracker.trackToolCall(toolCall1, 'group-1');
@@ -249,17 +249,17 @@ describe('ToolCallTracker', () => {
       // Create active group
       tracker.trackToolCall({
         id: 'tc-1',
-        type: 'function',
+        type: 'function' as const,
         function: { name: 'read_file', arguments: '{}' },
-        status: 'pending'
+        status: 'pending' as const
       }, 'active-group');
 
       // Create completed group
       tracker.trackToolCall({
         id: 'tc-2',
-        type: 'function',
+        type: 'function' as const,
         function: { name: 'write_file', arguments: '{}' },
-        status: 'pending'
+        status: 'pending' as const
       }, 'completed-group');
 
       tracker.updateToolCallStatus('tc-2', 'completed');
@@ -275,9 +275,9 @@ describe('ToolCallTracker', () => {
       // Create old completed group
       tracker.trackToolCall({
         id: 'tc-old',
-        type: 'function',
+        type: 'function' as const,
         function: { name: 'read_file', arguments: '{}' },
-        status: 'pending'
+        status: 'pending' as const
       }, 'old-group');
 
       tracker.updateToolCallStatus('tc-old', 'completed');
@@ -291,9 +291,9 @@ describe('ToolCallTracker', () => {
       // Create recent completed group
       tracker.trackToolCall({
         id: 'tc-recent',
-        type: 'function',
+        type: 'function' as const,
         function: { name: 'write_file', arguments: '{}' },
-        status: 'pending'
+        status: 'pending' as const
       }, 'recent-group');
 
       tracker.updateToolCallStatus('tc-recent', 'completed');
@@ -327,9 +327,9 @@ describe('ToolCallTracker', () => {
 
       const toolCall: ToolCall = {
         id: 'tc-1',
-        type: 'function',
+        type: 'function' as const,
         function: { name: 'read_file', arguments: '{}' },
-        status: 'pending'
+        status: 'pending' as const
       };
 
       tracker.trackToolCall(toolCall, 'group-1');
@@ -341,9 +341,9 @@ describe('ToolCallTracker', () => {
 
       tracker.trackToolCall({
         id: 'tc-2',
-        type: 'function',
+        type: 'function' as const,
         function: { name: 'write_file', arguments: '{}' },
-        status: 'pending'
+        status: 'pending' as const
       }, 'group-1');
 
       expect(listener1).toHaveBeenCalledTimes(1); // Still only called once
@@ -360,9 +360,9 @@ describe('ToolCallTracker', () => {
 
       const toolCall: ToolCall = {
         id: 'tc-1',
-        type: 'function',
+        type: 'function' as const,
         function: { name: 'read_file', arguments: '{}' },
-        status: 'pending'
+        status: 'pending' as const
       };
 
       expect(() => {
@@ -383,9 +383,9 @@ describe('ToolCallTracker', () => {
       // Create completed tool call
       tracker.trackToolCall({
         id: 'tc-1',
-        type: 'function',
+        type: 'function' as const,
         function: { name: 'read_file', arguments: '{}' },
-        status: 'pending'
+        status: 'pending' as const
       }, 'group-1');
 
       tracker.updateToolCallStatus('tc-1', 'completed');
@@ -393,9 +393,9 @@ describe('ToolCallTracker', () => {
       // Create failed tool call
       tracker.trackToolCall({
         id: 'tc-2',
-        type: 'function',
+        type: 'function' as const,
         function: { name: 'write_file', arguments: '{}' },
-        status: 'pending'
+        status: 'pending' as const
       }, 'group-2');
 
       tracker.updateToolCallStatus('tc-2', 'failed');
@@ -403,9 +403,9 @@ describe('ToolCallTracker', () => {
       // Create active tool call
       tracker.trackToolCall({
         id: 'tc-3',
-        type: 'function',
+        type: 'function' as const,
         function: { name: 'list_files', arguments: '{}' },
-        status: 'executing'
+        status: 'executing' as const
       }, 'group-3');
 
       const stats = tracker.getStats();

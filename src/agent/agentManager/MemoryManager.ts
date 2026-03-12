@@ -72,21 +72,21 @@ export class MemoryManager implements IAgentService {
    * Get a specific memory by ID
    */
   getMemory(id: string): Memory | undefined {
-    return this.baseMemoryManager.getMemory(id);
+    return this.baseMemoryManager.getMemory(id as any);
   }
 
   /**
    * Delete a memory
    */
   async deleteMemory(id: string): Promise<boolean> {
-    return await this.baseMemoryManager.deleteMemory(id);
+    return await this.baseMemoryManager.deleteMemory(id as any);
   }
 
   /**
    * Update a memory
    */
   async updateMemory(id: string, content: string, category?: any): Promise<Memory | null> {
-    return await this.baseMemoryManager.updateMemory(id, content, category);
+    return await this.baseMemoryManager.updateMemory(id as any, content, category);
   }
 
   /**
@@ -107,7 +107,14 @@ export class MemoryManager implements IAgentService {
    * Deprecate a memory
    */
   async deprecateMemory(id: string, reason?: string, supersededBy?: string): Promise<Memory | null> {
-    return await this.baseMemoryManager.deprecateMemory(id, reason, supersededBy);
+    return await this.baseMemoryManager.deprecateMemory(id as any, reason, supersededBy as any);
+  }
+
+  /**
+   * Detect potential conflicts with existing memories
+   */
+  async detectConflicts(content: string, category?: any): Promise<any[]> {
+    return await (this.baseMemoryManager as any).detectConflicts(content, category);
   }
 
   // ==================== MEMORY PROMPT UTILITIES ====================

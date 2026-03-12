@@ -42,7 +42,8 @@ describe('ToolCallManager Integration Tests', () => {
       const toolCalls = [
         {
           id: 'tc-1',
-          type: 'function',
+          type: 'function' as const,
+          status: 'pending' as const,
           function: {
             name: 'read_file',
             arguments: '{"path": "test.txt"}'
@@ -50,7 +51,8 @@ describe('ToolCallManager Integration Tests', () => {
         },
         {
           id: 'tc-2',
-          type: 'function',
+          type: 'function' as const,
+          status: 'pending' as const,
           function: {
             name: 'write_file',
             arguments: '{"path": "output.txt", "content": "Hello World"}'
@@ -99,7 +101,8 @@ describe('ToolCallManager Integration Tests', () => {
       const toolCalls = [
         {
           id: 'tc-1',
-          type: 'function',
+          type: 'function' as const,
+          status: 'pending' as const,
           function: {
             name: 'read_file',
             arguments: '{"path": "nonexistent.txt"}'
@@ -138,7 +141,8 @@ describe('ToolCallManager Integration Tests', () => {
 
       const toolCalls = Array.from({ length: 4 }, (_, i) => ({
         id: `tc-${i + 1}`,
-        type: 'function',
+        type: 'function' as const,
+        status: 'pending' as const,
         function: {
           name: 'read_file',
           arguments: `{"path": "file${i + 1}.txt"}`
@@ -172,7 +176,7 @@ describe('ToolCallManager Integration Tests', () => {
           role: 'assistant',
           content: 'I will read the file',
           tool_calls: [
-            { id: 'tc-1', type: 'function', function: { name: 'read_file', arguments: '{}' } }
+            { id: 'tc-1', type: 'function', status: 'pending', function: { name: 'read_file', arguments: '{}' } }
           ]
         },
         { role: 'tool', content: 'File content', tool_call_id: 'tc-1' },
@@ -192,7 +196,7 @@ describe('ToolCallManager Integration Tests', () => {
           role: 'assistant',
           content: 'I will read the file',
           tool_calls: [
-            { id: 'tc-1', type: 'function', function: { name: 'read_file', arguments: '{}' } }
+            { id: 'tc-1', type: 'function', status: 'pending', function: { name: 'read_file', arguments: '{}' } }
           ]
         },
         { role: 'assistant', content: 'Missing tool message' }  // No tool message
@@ -217,7 +221,8 @@ describe('ToolCallManager Integration Tests', () => {
       const toolCalls = [
         {
           id: 'tc-1',
-          type: 'function',
+          type: 'function' as const,
+          status: 'pending' as const,
           function: {
             name: 'read_file',
             arguments: '{"path": "test.txt"}'
@@ -266,12 +271,13 @@ describe('ToolCallManager Integration Tests', () => {
       const invalidToolCalls = [
         {
           // Missing id
-          type: 'function',
+          type: 'function' as const,
+          status: 'pending' as const,
           function: {
             name: 'read_file',
             arguments: '{"path": "test.txt"}'
           }
-        }
+        } as any
       ];
 
       const context: ToolCallMessageContext = {
@@ -296,7 +302,8 @@ describe('ToolCallManager Integration Tests', () => {
       const toolCalls = [
         {
           id: 'tc-1',
-          type: 'function',
+          type: 'function' as const,
+          status: 'pending' as const,
           function: {
             name: 'read_file',
             arguments: '{"path": "test.txt"}'
@@ -333,7 +340,8 @@ describe('ToolCallManager Integration Tests', () => {
       const toolCalls = [
         {
           id: 'tc-1',
-          type: 'function',
+          type: 'function' as const,
+          status: 'pending' as const,
           function: {
             name: 'read_file',
             arguments: '{"path": "test.txt"}'

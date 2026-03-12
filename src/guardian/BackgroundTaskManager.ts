@@ -67,10 +67,10 @@ const DEFAULT_CONFIG: BackgroundTaskConfig = {
   enabled: true,
   maxConcurrentTasks: 2,
   taskTimeout: 300000, // 5 minutes
-  retryDelay: 5000, // 5 seconds
+  retryDelay: 10000, // 10 seconds (increased for stability)
   resourceLimits: {
-    maxMemoryUsage: 512, // MB
-    maxCpuUsage: 80 // percentage
+    maxMemoryUsage: 512, // MB (base)
+    maxCpuUsage: 50 // percentage (reduced for better background behavior)
   },
   scheduling: {
     idleTimeThreshold: 1000, // 1 second
@@ -338,6 +338,8 @@ export class BackgroundTaskManager extends EventEmitter {
 
     // Check if it's a good time to run the task
     if (!this.scheduler.shouldRunTask(nextTask)) {
+      // Re-queue at original priority if scheduler delays it
+      this.taskQueue[nextTask.priority].push(nextTask);
       return;
     }
 
@@ -420,8 +422,12 @@ export class BackgroundTaskManager extends EventEmitter {
    */
   private async executeTask(task: Task): Promise<GuardianAnalysisResult> {
     return new Promise((resolve, reject) => {
+      let isSettled = false;
       const timeout = setTimeout(() => {
-        reject(new Error(`Task ${task.id} timed out after ${task.timeout}ms`));
+        if (!isSettled) {
+          isSettled = true;
+          reject(new Error(`Task ${task.id} timed out after ${task.timeout}ms`));
+        }
       }, task.timeout);
 
       this.guardianService.performAnalysis(
@@ -429,12 +435,18 @@ export class BackgroundTaskManager extends EventEmitter {
         task.context.fullAnalysis
       )
         .then(result => {
-          clearTimeout(timeout);
-          resolve(result);
+          if (!isSettled) {
+            isSettled = true;
+            clearTimeout(timeout);
+            resolve(result);
+          }
         })
         .catch(error => {
-          clearTimeout(timeout);
-          reject(error);
+          if (!isSettled) {
+            isSettled = true;
+            clearTimeout(timeout);
+            reject(error);
+          }
         });
     });
   }

@@ -140,6 +140,13 @@ export class RelationshipGraph {
   }
 
   /**
+   * Get all symbols defined in a specific file
+   */
+  getSymbolsInFile(filePath: FilePath): SymbolDefinition[] {
+    return this.callGraph.getSymbolsInFile(filePath);
+  }
+
+  /**
    * Clear all data
    */
   clear(): void {

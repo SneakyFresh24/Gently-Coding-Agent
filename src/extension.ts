@@ -5,6 +5,7 @@
 
 import * as vscode from 'vscode';
 import { ChatViewProvider } from './views/chat/ChatViewProvider';
+import { Logger, agentLogger } from './utils/Logger';
 import { AgentManager } from './agent/agentManager/AgentManager';
 import { Container } from './agent/container';
 import { configureServices } from './agent/ServiceProvider';
@@ -108,42 +109,31 @@ export async function activate(context: vscode.ExtensionContext) {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (workspaceFolders && workspaceFolders.length > 0) {
       const workspaceRoot = workspaceFolders[0].uri.fsPath;
-      console.log('[Guardian Init] Starting Guardian initialization...');
+      agentLogger.info('Starting Guardian initialization...', 'Extension');
 
-      const { RelationshipGraph } = await import('./agent/graph/RelationshipGraph');
-
-      // Resolve deps from the DI container (not from AgentManager properties)
+      // Resolve deps from the DI container
       const memoryManager = agentManager.baseMemoryManager;
       const validationManager = agentManager.validationManager;
-
-      // 'indexer' is the DI key for CodebaseIndexer (see ServiceProvider.ts)
       const codebaseIndexer = container.resolve<any>('indexer');
       const hybridRetriever = container.resolve<any>('hybridRetriever');
 
-      console.log('[Guardian Init] Dependencies resolved:', {
-        memoryManager: !!memoryManager,
-        validationManager: !!validationManager,
-        codebaseIndexer: !!codebaseIndexer,
-        hybridRetriever: !!hybridRetriever
-      });
-
       if (!memoryManager) {
-        console.error('[Guardian Init] CRITICAL: memoryManager is undefined – skipping Guardian');
+        agentLogger.error('CRITICAL: memoryManager is undefined – skipping Guardian', null, 'Extension');
       } else {
+        const { RelationshipGraph } = await import('./agent/graph/RelationshipGraph');
         const relationshipGraph = new RelationshipGraph({ workspaceRoot });
 
         guardianIntegration = new GuardianIntegration(
           workspaceRoot,
           relationshipGraph,
           memoryManager,
-          validationManager as any, // may be undefined – GuardianService handles gracefully
+          validationManager as any,
           hybridRetriever,
           codebaseIndexer,
           agentManager,
           context.extensionUri
         );
 
-        // GuardianIntegration.initialize() already registers the webview provider internally
         await guardianIntegration.initialize();
 
         const gs = guardianIntegration.getGuardianService();
@@ -151,15 +141,12 @@ export async function activate(context: vscode.ExtensionContext) {
           agentManager.setGuardianService(gs);
         }
         context.subscriptions.push(guardianIntegration);
-        (global as any).guardianIntegration = guardianIntegration;
-
-        console.log('[Guardian Init] Guardian integration initialized successfully ✓');
+        
+        agentLogger.info('Guardian integration initialized successfully ✓', 'Extension');
       }
-    } else {
-      console.log('[Guardian Init] No workspace folders – Guardian skipped');
     }
   } catch (error) {
-    console.error('[Guardian Init] FAILED to initialize Guardian integration:', error);
+    agentLogger.error('FAILED to initialize Guardian integration', error, 'Extension');
   }
 }
 

@@ -80,7 +80,7 @@ export class ArchitecturalDriftAnalyzer extends BaseAnalyzer {
     const files = context.changedFiles.length > 0 ? context.changedFiles : [];
 
     for (const filePath of files) {
-      const imports = this.relationshipGraph.getImportedSymbols(filePath);
+      const imports = this.relationshipGraph.getImportedSymbols(filePath as any);
 
       for (const imp of imports) {
         const sourceLayer = this.getLayerFromPath(filePath);

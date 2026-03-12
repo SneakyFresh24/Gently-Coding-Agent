@@ -170,6 +170,22 @@ export class MemoryManager {
   }
 
   /**
+   * Detect potential conflicts with existing memories
+   */
+  async detectConflicts(content: string, category?: MemoryCategory): Promise<MemoryConflict[]> {
+    return await this.conflictResolver.detectConflicts(
+      content,
+      category || this.detectCategory(content),
+      this.getAllMemories().filter(m => m.status === 'active'),
+      async (c1, c2) => {
+        const e1 = await this.embeddingProvider.embed(c1);
+        const e2 = await this.embeddingProvider.embed(c2);
+        return this.cosineSimilarity(e1, e2);
+      }
+    );
+  }
+
+  /**
    * Get relevant memories for a given context
    */
   async getRelevantMemories(

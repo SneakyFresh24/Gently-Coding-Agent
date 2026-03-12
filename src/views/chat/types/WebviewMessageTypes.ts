@@ -9,7 +9,7 @@ import {
   ApprovalRequest,
   TerminalMode,
   QuickPattern
-} from '../../../terminal/approval/types/ApprovalTypes';
+} from '../../../terminal/HybridApprovalManager';
 import { OutputChunk } from '../../../terminal/execution/types/ExecutionTypes';
 
 // =====================================================

@@ -32,5 +32,4 @@ export type {
 
 // Provider modules
 export { ChatSessionProvider } from './providers/ChatSessionProvider';
-export { AuthSessionProvider } from './providers/AuthSessionProvider';
 export { WorkspaceSessionProvider } from './providers/WorkspaceSessionProvider';

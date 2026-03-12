@@ -79,6 +79,12 @@ export class HNSWIndex {
     await this.ensurePersistenceDir();
 
     const space = this.options.space === 'cosine' ? 'cosine' : (this.options.space === 'l2' ? 'l2' : 'ip');
+    
+    // Safety check for native module
+    if (!hnswlib || typeof hnswlib.HierarchicalNSW !== 'function') {
+        throw new Error('Native hnswlib module not loaded. Search will be disabled or running in BM25-only fallback.');
+    }
+
     this.index = new hnswlib.HierarchicalNSW(space as any, this.options.dimensions);
 
     if (this.indexPath && await this.fileExists(this.indexPath)) {
@@ -99,7 +105,9 @@ export class HNSWIndex {
     }
 
     if (this.options.efSearch) {
-      this.index.setEf(this.options.efSearch);
+      if (typeof this.index.setEf === 'function') {
+        this.index.setEf(this.options.efSearch);
+      }
     }
 
     this.isInitialized = true;
@@ -129,7 +137,25 @@ export class HNSWIndex {
     }
 
     console.log(`[HNSWIndex] Initializing fresh index with m=${m}, efConstruction=${efC} (Size Profile)`);
-    this.index.initIndex(this.options.maxElements!, m, efC, 100);
+    
+    // Fix for hnswlib-node 3.0.0 initIndex call
+    // The repro script confirmed that the version we use supports (maxElements, m, efConstruction, randomSeed)
+    try {
+        this.index.initIndex(this.options.maxElements!, m, efC, 100);
+    } catch (e) {
+        console.warn('[HNSWIndex] initIndex failed with positional args, falling back to object-based init...');
+        try {
+            (this.index as any).initIndex({
+                maxElements: this.options.maxElements!,
+                m,
+                efConstruction: efC,
+                randomSeed: 100
+            });
+        } catch (e2) {
+            console.error('[HNSWIndex] All HNSW init attempts failed.', e2);
+            throw e2;
+        }
+    }
   }
 
   /**
