@@ -65,7 +65,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
   if (!isWebviewProviderRegistered) {
     context.subscriptions.push(
-      vscode.window.registerWebviewViewProvider('gently.chatView', chatViewProvider)
+      vscode.window.registerWebviewViewProvider('gently.chatView', chatViewProvider, {
+        webviewOptions: { retainContextWhenHidden: true }
+      })
     );
     isWebviewProviderRegistered = true;
   }

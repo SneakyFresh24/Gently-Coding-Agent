@@ -207,7 +207,8 @@ export class GuardianIntegration extends EventEmitter {
     this.disposables.push(
       vscode.window.registerWebviewViewProvider(
         GuardianViewProvider.viewType,
-        this.guardianViewProvider
+        this.guardianViewProvider,
+        { webviewOptions: { retainContextWhenHidden: true } }
       )
     );
   }
