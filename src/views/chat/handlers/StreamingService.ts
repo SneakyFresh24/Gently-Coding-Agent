@@ -55,29 +55,65 @@ export class StreamingService {
                 this.sendMessageToWebview({ type: 'processingEnd' });
             }
         } else {
-            for await (const chunk of this.openRouterService.streamChatMessage({
-                messages,
-                stream: true,
-                temperature: options.temperature,
-                max_tokens: options.maxTokens,
-                tools: options.tools,
-                model: options.model,
-                response_format: options.responseFormat
-            })) {
-                if (options.shouldStopRef.current) break;
+            try {
+                for await (const chunk of this.openRouterService.streamChatMessage({
+                    messages,
+                    stream: true,
+                    temperature: options.temperature,
+                    max_tokens: options.maxTokens,
+                    tools: options.tools,
+                    model: options.model,
+                    response_format: options.responseFormat
+                })) {
+                    if (options.shouldStopRef.current) break;
 
-                if (assistantMessage === '') {
-                    this.sendMessageToWebview({ type: 'processingEnd' });
-                    this.sendMessageToWebview({ type: 'generatingStart' });
-                }
+                    switch (chunk.type) {
+                        case 'text':
+                            if (assistantMessage === '') {
+                                this.sendMessageToWebview({ type: 'processingEnd' });
+                                this.sendMessageToWebview({ type: 'generatingStart' });
+                            }
+                            assistantMessage += chunk.text;
+                            this.sendMessageToWebview({ type: 'assistantMessageChunk', chunk: chunk.text });
+                            break;
 
-                const chunkData = chunk as any;
-                if (typeof chunkData === 'object' && chunkData.tool_calls) {
-                    toolCalls = chunkData.tool_calls;
-                } else if (typeof chunkData === 'string') {
-                    assistantMessage += chunkData;
-                    this.sendMessageToWebview({ type: 'assistantMessageChunk', chunk: chunkData });
+                        case 'reasoning':
+                            // Reasoning chunks (Thinking tokens)
+                            this.sendMessageToWebview({ type: 'activityUpdate', label: `Thinking...` });
+                            // We could also send these to the webview for a "Thinking" block in the UI
+                            break;
+
+                        case 'tool_call_start':
+                            this.sendMessageToWebview({ 
+                                type: 'activityUpdate', 
+                                label: `Preparing ${chunk.toolName}...` 
+                            });
+                            break;
+
+                        case 'tool_call_delta':
+                            // Optional: update a specific tool's progress in UI
+                            break;
+
+                        case 'tool_call_ready':
+                            toolCalls.push(chunk.toolCall);
+                            this.sendMessageToWebview({ 
+                                type: 'activityUpdate', 
+                                label: `Ready: ${chunk.toolCall.function.name}` 
+                            });
+                            break;
+
+                        case 'error':
+                            throw chunk.error;
+
+                        case 'usage':
+                            // Handle usage info if needed
+                            break;
+                    }
                 }
+            } catch (error) {
+                log.error('Streaming failed:', error);
+                this.sendMessageToWebview({ type: 'error', message: error instanceof Error ? error.message : String(error) });
+                this.sendMessageToWebview({ type: 'processingEnd' });
             }
         }
 

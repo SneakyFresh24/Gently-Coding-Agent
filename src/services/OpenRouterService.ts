@@ -3,8 +3,12 @@
 // Compatible interface for direct model orchestration
 // =====================================================
 
-import { ApiKeyManager } from './ApiKeyManager';
 import * as vscode from 'vscode';
+import { ApiKeyManager } from './ApiKeyManager';
+import { StreamingToolCallProcessor } from '../core/streaming/StreamingToolCallProcessor';
+import { StreamChunk, ToolCall as CoreToolCall } from '../core/streaming/types';
+
+export type ToolCall = CoreToolCall;
 
 export interface ChatMessage {
     role: 'system' | 'user' | 'assistant' | 'tool';
@@ -12,15 +16,6 @@ export interface ChatMessage {
     tool_call_id?: string;
     tool_calls?: any[];
     name?: string;
-}
-
-export interface ToolCall {
-    id: string;
-    type: 'function';
-    function: {
-        name: string;
-        arguments: string;
-    };
 }
 
 export interface ChatRequest {
@@ -48,6 +43,8 @@ const APP_SITE = 'https://github.com/gently-ai/gently-vscode-extension';
 const APP_TITLE = 'Gently - AI Coding Agent';
 
 export class OpenRouterService {
+    private toolCallProcessor = new StreamingToolCallProcessor();
+
     constructor(private readonly apiKeyManager: ApiKeyManager) { }
 
     // ─── Core request ──────────────────────────────────────────────────────────
@@ -123,9 +120,33 @@ export class OpenRouterService {
 
     // ─── Streaming ─────────────────────────────────────────────────────────────
 
-    async *streamChatMessage(
+    async *streamChatMessage(request: ChatRequest): AsyncGenerator<StreamChunk, void, unknown> {
+        let lastError: any;
+        const maxRetries = 3;
+        const delay = 1000;
+
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+                const generator = this.internalStreamChatMessage(request);
+                for await (const chunk of generator) {
+                    yield chunk;
+                }
+                return; // Success
+            } catch (error) {
+                lastError = error;
+                if (attempt < maxRetries) {
+                    console.warn(`[OpenRouterService] Stream attempt ${attempt + 1} failed, retrying in ${delay}ms...`, error);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            }
+        }
+        throw lastError;
+    }
+
+    private async *internalStreamChatMessage(
         request: ChatRequest
-    ): AsyncGenerator<string | { tool_calls: any[] } | { type: string; index: number; tool_call: any }, void, unknown> {
+    ): AsyncGenerator<StreamChunk, void, unknown> {
+        this.toolCallProcessor.reset();
         const response = await this.sendChatMessage({ ...request, stream: true });
 
         if (!response.body) throw new Error('No response body from OpenRouter');
@@ -133,9 +154,6 @@ export class OpenRouterService {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
-
-        // Tracks streaming tool call construction
-        const toolCallMap: Map<number, any> = new Map();
 
         try {
             while (true) {
@@ -152,45 +170,56 @@ export class OpenRouterService {
                     if (!trimmed.startsWith('data: ')) continue;
 
                     let chunk: any;
-                    try { chunk = JSON.parse(trimmed.slice(6)); } catch { continue; }
-
-                    const delta = chunk.choices?.[0]?.delta;
-                    if (!delta) continue;
-
-                    // Regular text content
-                    if (typeof delta.content === 'string' && delta.content) {
-                        yield delta.content;
+                    try { 
+                        chunk = JSON.parse(trimmed.slice(6)); 
+                    } catch (e) { 
+                        console.error('[OpenRouterService] Failed to parse SSE chunk:', trimmed, e);
+                        continue; 
                     }
 
-                    // Streaming tool calls
+                    // 1. Explicit Error Handling
+                    if (chunk.error) {
+                        yield { type: 'error', error: new Error(`OpenRouter API Error: ${chunk.error.message || 'Unknown error'}`) };
+                        return;
+                    }
+
+                    const choice = chunk.choices?.[0];
+                    if (!choice) continue;
+
+                    // 2. Mid-stream error detection
+                    if (choice.finish_reason === "error") {
+                        yield { type: 'error', error: new Error(`Stream Error Choice: ${choice.message || 'The model encountered an error during generation.'}`) };
+                        return;
+                    }
+
+                    const delta = choice.delta;
+                    if (!delta) continue;
+
+                    // 3. Reasoning support (Thinking Tokens)
+                    if (delta.reasoning) {
+                        yield { type: 'reasoning', reasoning: delta.reasoning };
+                    }
+
+                    // 4. Regular text content
+                    if (typeof delta.content === 'string' && delta.content) {
+                        yield { type: 'text', text: delta.content };
+                    }
+
+                    // 5. Tool calls with processor
                     if (delta.tool_calls) {
-                        for (const tc of delta.tool_calls) {
-                            const idx = tc.index ?? 0;
-                            if (!toolCallMap.has(idx)) {
-                                toolCallMap.set(idx, {
-                                    id: tc.id ?? '',
-                                    type: 'function',
-                                    function: { name: tc.function?.name ?? '', arguments: tc.function?.arguments ?? '' },
-                                });
-                                // Notify frontend that a tool call started
-                                yield { type: 'tool_call_start', index: idx, tool_call: toolCallMap.get(idx) };
-                            } else {
-                                const existing = toolCallMap.get(idx)!;
-                                if (tc.id) existing.id = tc.id;
-                                if (tc.function?.name) existing.function.name += tc.function.name;
-                                if (tc.function?.arguments) existing.function.arguments += tc.function.arguments;
-                            }
-                        }
+                        yield* this.toolCallProcessor.processToolCallDeltas(delta.tool_calls);
                     }
                 }
             }
+
+            // 6. Emit completed tool calls when the stream is finished
+            const completedTools = this.toolCallProcessor.getCompletedToolCalls();
+            for (const toolCall of completedTools) {
+                yield { type: 'tool_call_ready', toolCall, index: 0 };
+            }
+
         } finally {
             reader.releaseLock();
-        }
-
-        // Emit completed tool calls
-        if (toolCallMap.size > 0) {
-            yield { tool_calls: Array.from(toolCallMap.values()) };
         }
     }
 
@@ -217,9 +246,21 @@ export class OpenRouterService {
         });
         const data: any = await response.json();
         const choice = data.choices?.[0];
+        
+        // Convert to our ToolCall type if needed
+        const rawToolCalls = choice?.message?.tool_calls || [];
+        const toolCalls: ToolCall[] = rawToolCalls.map((tc: any) => ({
+            id: tc.id,
+            type: 'function',
+            function: {
+                name: tc.function.name,
+                arguments: tc.function.arguments
+            }
+        }));
+
         return {
             content: choice?.message?.content ?? '',
-            tool_calls: choice?.message?.tool_calls,
+            tool_calls: toolCalls,
         };
     }
 

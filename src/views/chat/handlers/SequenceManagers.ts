@@ -171,15 +171,16 @@ export class MessageSequenceHandler {
 
             toolCallIds.forEach(toolCallId => {
                 if (!existingToolMessages.has(toolCallId)) {
-                    const toolCall = this.toolCallManager.getToolCall(toolCallId);
+                    // In the new architecture, we expect the executor to have added these.
+                    // If missing, we add a placeholder to keep the sequence valid.
                     repairedHistory.push({
                         id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                         timestamp: Date.now(),
                         role: 'tool',
-                        content: toolCall?.result ? JSON.stringify(toolCall.result) : '{}',
+                        content: JSON.stringify({ error: "Missing tool result in history" }),
                         tool_call_id: toolCallId
                     });
-                    log.info(`Added missing tool message for ${toolCallId}`);
+                    log.info(`Added fallback tool message for ${toolCallId}`);
                 }
             });
             return repairedHistory;
@@ -227,12 +228,11 @@ export class FollowUpHandler {
 
                 for (const toolCallId of toolCallIds) {
                     if (!existingToolMessages.some(msg => msg.tool_call_id === toolCallId)) {
-                        const toolCall = this.toolCallManager.getToolCall(toolCallId);
                         const toolMessage: Message = {
                             id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                             timestamp: Date.now(),
                             role: 'tool',
-                            content: toolCall?.result ? JSON.stringify(toolCall.result) : '{}',
+                            content: JSON.stringify({ error: "Missing tool result" }),
                             tool_call_id: toolCallId
                         };
                         context.conversationHistory.push(toolMessage);

@@ -229,11 +229,23 @@ export class ToolExecutionHandler {
  * High-level dispatcher for tool calls.
  */
 export class ToolCallDispatcher {
+    private executionHandler: ToolExecutionHandler;
+
     constructor(
         private toolCallManager: ToolCallManager,
         private followUp: FollowUpHandler,
-        private sendMessageToWebview: (message: OutboundWebviewMessage) => void
-    ) { }
+        private sendMessageToWebview: (message: OutboundWebviewMessage) => void,
+        agentManager: AgentManager,
+        updateConversationHistory: (message: Message) => void,
+        triggerFollowUpMessage: (message?: string) => Promise<void>
+    ) { 
+        this.executionHandler = new ToolExecutionHandler(
+            agentManager, 
+            sendMessageToWebview, 
+            updateConversationHistory, 
+            triggerFollowUpMessage
+        );
+    }
 
     async handleToolCalls(toolCalls: ToolCall[], messageId: string, context: ChatViewContext): Promise<void> {
         try {
@@ -242,6 +254,7 @@ export class ToolCallDispatcher {
                 return;
             }
 
+            // 1. Validate via ToolCallManager
             const mappedToolCalls = toolCalls.map(tc => ({
                 id: tc.id,
                 type: tc.type,
@@ -249,15 +262,18 @@ export class ToolCallDispatcher {
                 status: 'pending' as const
             }));
 
-            const result = await this.toolCallManager.processToolCalls(mappedToolCalls, {
+            const validationResult = await this.toolCallManager.processToolCalls(mappedToolCalls, {
                 conversationHistory: context.conversationHistory.map(msg => ({ role: msg.role as any, content: msg.content, tool_calls: msg.tool_calls, tool_call_id: msg.tool_call_id })),
                 messageId, flowId: context.currentFlowId, selectedMode: context.selectedMode
             } as any);
 
-            if (result.valid) {
-                await this.followUp.sendFollowUpMessage(context, '');
+            if (validationResult.valid) {
+                // 2. Execute via ToolExecutionHandler
+                log.info(`Validation successful, executing ${toolCalls.length} tool calls`);
+                await this.executionHandler.handleToolCalls(toolCalls, messageId, context);
             } else {
-                this.sendMessageToWebview({ type: 'error', message: `Validation failed: ${result.errors.join(', ')}` });
+                log.error(`Validation failed: ${validationResult.errors.join(', ')}`);
+                this.sendMessageToWebview({ type: 'error', message: `Validation failed: ${validationResult.errors.join(', ')}` });
             }
         } catch (error: any) {
             log.error('Dispatch failed:', error);

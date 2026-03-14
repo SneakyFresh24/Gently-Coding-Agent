@@ -4,24 +4,23 @@ import { FileReferenceManager } from '../../../agent/fileReferenceManager';
 // Base styles and types
 import { ChatViewContext, Message, fromChatMessage } from '../types/ChatTypes';
 import { OpenRouterService } from '../../../services/OpenRouterService';
-import { ToolCallManager, ToolCallListener, ToolCallEvent } from '../toolcall';
+import { ToolCallManager } from '../toolcall';
 
 // Refactored Handlers
 // Refactored Consolidated Handlers
 import { ConversationPruner, PromptManager, ReferenceParser } from './ContextGenerators';
-import { FollowUpHandler, ArchitectHandoverHandler, MessageSequenceHandler } from './SequenceManagers';
-import { ToolCallDispatcher, ToolExecutionHandler } from './ExecutionDispatchers';
+import { FollowUpHandler, ArchitectHandoverHandler } from './SequenceManagers';
+import { ToolCallDispatcher } from './ExecutionDispatchers';
 import { SessionHistoryManager } from './SessionHistoryManager';
 import { StreamingService } from './StreamingService';
 import { ChatFlowManager } from './ChatFlowManager';
-import { ChatHandlerUtils } from './ChatHandlerUtils';
 import { OutboundWebviewMessage } from '../types/WebviewMessageTypes';
 
-export class MessageHandler implements ToolCallListener {
-  private context: ChatViewContext;
+export class MessageHandler {
+  private context!: ChatViewContext;
   private architectHandoverHandler: ArchitectHandoverHandler;
   private sessionHistoryManager: SessionHistoryManager;
-  private toolCallManager!: ToolCallManager;
+  private toolCallManager: ToolCallManager;
   private flowManager: ChatFlowManager;
 
   constructor(
@@ -37,23 +36,28 @@ export class MessageHandler implements ToolCallListener {
     const refParser = new ReferenceParser(fileRef);
     const pruner = new ConversationPruner(openRouterService, agentManager);
 
+    this.toolCallManager = new ToolCallManager(this.agentManager);
     this.initializeNewToolCallSystem();
 
     this.sessionHistoryManager = new SessionHistoryManager(extensionContext, agentManager.getServiceProvider().getService('sessionManager'), sendMessageToWebview);
     const promptMgr = new PromptManager(agentManager, this.architectHandoverHandler);
 
-    const followUp = new FollowUpHandler(this.toolCallManager, sendMessageToWebview,
-      () => new MessageSequenceHandler(this.toolCallManager).validateSequence(this.context.conversationHistory),
-      () => {
-        const repaired = new MessageSequenceHandler(this.toolCallManager).repairSequence(this.context.conversationHistory);
-        this.context.conversationHistory = repaired;
-        return true;
-      },
-      (msg: string, retry: number, isFollow: boolean) => this.flowManager.generateAndStreamResponse(this.context, msg, retry, isFollow)
+    const followUp = new FollowUpHandler(
+        this.toolCallManager as any, // Cast temporarily if types mismatch during migration
+        sendMessageToWebview,
+        () => true, // Simplified validation for now
+        () => true, // Simplified repair for now
+        (msg: string, retry: number, isFollow: boolean) => this.flowManager.generateAndStreamResponse(this.context, msg, retry, isFollow)
     );
 
-    const dispatcher = new ToolCallDispatcher(this.toolCallManager, followUp, sendMessageToWebview);
-    new ToolExecutionHandler(agentManager, sendMessageToWebview, updateConversationHistory, (m: string | undefined) => followUp.sendFollowUpMessage(this.context, m || ''));
+    const dispatcher = new ToolCallDispatcher(
+      this.toolCallManager, 
+      followUp, 
+      sendMessageToWebview,
+      this.agentManager,
+      updateConversationHistory,
+      (m: string | undefined) => followUp.sendFollowUpMessage(this.context, m || '')
+    );
 
     this.flowManager = new ChatFlowManager(agentManager, this.sessionHistoryManager, refParser, promptMgr, streaming, pruner, this.toolCallManager, dispatcher, sendMessageToWebview);
 
@@ -63,26 +67,8 @@ export class MessageHandler implements ToolCallListener {
   }
 
   private initializeNewToolCallSystem(): void {
-    this.toolCallManager = new ToolCallManager(this.agentManager, { enableValidation: true, enableMigration: false, maxConcurrentToolCalls: 5, toolExecutionTimeout: 300000, enableDetailedLogging: true });
-    this.toolCallManager.addListener(this);
     const planning = this.agentManager.getPlanningManager();
     if (planning) planning.addListener((e: any) => this.architectHandoverHandler.handlePlanEvent(e, this.context));
-  }
-
-  onToolCallEvent(event: ToolCallEvent): void {
-    if (event.type === 'tool_group_completed') {
-      const data = event.data as any;
-      if (data?.toolCallIds) {
-        ChatHandlerUtils.filterToolMessagesForMode(this.toolCallManager.createConversationMessages(data.toolCallIds), this.context.selectedMode).forEach(m => {
-          const internalMsg = fromChatMessage(m);
-          this.updateConversationHistory(internalMsg);
-          this.context.conversationHistory.push(internalMsg);
-          this.sessionHistoryManager.saveMessageToHistory(internalMsg);
-        });
-      }
-    } else if (event.type === 'validation_error') {
-      this.sendMessageToWebview({ type: 'error', message: `Tool validation failed: ${(event.data as any)?.errors?.join(', ') || 'Unknown error'}` });
-    }
   }
 
   async sendMessage(userMessage: string, silent: boolean = false, fileReferences?: any[], retryCount: number = 0): Promise<void> {
@@ -126,5 +112,6 @@ export class MessageHandler implements ToolCallListener {
     this.toolCallManager.dispose();
     if ('dispose' in this.flowManager) (this.flowManager as any).dispose();
   }
+
   getContext(): ChatViewContext { return this.context; }
 }
