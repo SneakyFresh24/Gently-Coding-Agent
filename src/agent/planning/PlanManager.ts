@@ -44,6 +44,7 @@ export class PlanManager {
 
   setEventCallback(cb: (event: PlanEvent) => void) {
     this.eventCallback = cb;
+    this.executor.setEventCallback(cb);  // Forward an executor!
   }
 
   setToolManager(tm: IToolManager) { this.toolManager = tm; }
@@ -57,7 +58,7 @@ export class PlanManager {
     this.state.addPlan(plan);
     this.validator.validate(plan);
     this.persistence.persistPlan(plan);
-    this.startAutoExecution(plan.id);
+    // Auto-execution removed — caller (PlanningTools) decides based on mode
     return plan;
   }
 

@@ -54,6 +54,20 @@ export class ArchitectHandoverHandler {
                     result: event.result
                 } as any);
                 return;
+
+            case 'iterativePlanCompleted':
+                this.sendMessageToWebview({
+                    type: 'iterativePlanCompleted',
+                    goal: event.goal,
+                    totalSteps: event.totalSteps,
+                    totalTime: event.totalTime
+                } as any);
+                // Reset activity label
+                this.sendMessageToWebview({
+                    type: 'activityUpdate',
+                    label: null
+                } as any);
+                return;
         }
 
         // Architect-only events below
@@ -75,6 +89,11 @@ export class ArchitectHandoverHandler {
                             }))
                         }
                     });
+                    // Set activity label for plan creation
+                    this.sendMessageToWebview({
+                        type: 'activityUpdate',
+                        label: 'Erstellt Plan...'
+                    } as any);
                 }
                 break;
 

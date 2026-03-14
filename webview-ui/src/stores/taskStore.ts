@@ -141,6 +141,20 @@ function createTaskStore() {
       set({ plans, currentPlanId, isLoading: false, hasError: false });
     },
 
+    /** Update a single plan from backend (replace if exists, add if new) */
+    updatePlan(plan: ExecutionPlan) {
+      updateAndSync(state => {
+        const exists = state.plans.some(p => p.id === plan.id);
+        return {
+          ...state,
+          plans: exists
+            ? state.plans.map(p => p.id === plan.id ? plan : p)
+            : [...state.plans, plan],
+          currentPlanId: plan.id,
+        };
+      });
+    },
+
     /** Set loading state */
     setLoading(isLoading: boolean) {
       update(state => ({ ...state, isLoading }));

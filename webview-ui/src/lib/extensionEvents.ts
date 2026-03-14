@@ -67,7 +67,12 @@ const handleMessage = (event: MessageEvent) => {
                     break;
 
                 case "iterativePlanCompleted":
+                    realtimeStore.setActivity(null);
+                    realtimeStore.setGenerating(false);
                     realtimeStore.setTaskRunning(false);
+                    if (msg.plan) {
+                        taskStore.updatePlan(msg.plan);
+                    }
                     break;
 
                 case "planCreated":
@@ -81,6 +86,8 @@ const handleMessage = (event: MessageEvent) => {
                 case "planStatusUpdate":
                     taskStore.updatePlanStatus(msg.planId, msg.status);
                     if (msg.status === "completed" || msg.status === "failed") {
+                        realtimeStore.setActivity(null);
+                        realtimeStore.setGenerating(false);
                         realtimeStore.setTaskRunning(false);
                     }
                     break;
@@ -114,6 +121,12 @@ const handleMessage = (event: MessageEvent) => {
                 case "sessionLoadError":
                     taskStore.setLoading(false);
                     taskStore.setHasError(true);
+                    break;
+
+                case "planUpdated":
+                    if (msg.plan) {
+                        taskStore.updatePlan(msg.plan);
+                    }
                     break;
 
                 case "checkpointCreated":

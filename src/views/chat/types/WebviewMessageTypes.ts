@@ -1095,6 +1095,36 @@ export interface AssistantThinkingMessage {
   content: string;
 }
 
+/**
+ * Plan status update (plan executing/completed/failed)
+ */
+export interface PlanStatusUpdateMessage {
+  type: 'planStatusUpdate';
+  planId: string;
+  status: string;
+  completedSteps?: number;
+}
+
+/**
+ * Step status update (step pending/in-progress/completed/failed)
+ */
+export interface StepStatusUpdateMessage {
+  type: 'stepStatusUpdate';
+  planId: string;
+  stepId: string;
+  status: string;
+  result?: unknown;
+  error?: string;
+}
+
+/**
+ * Full plan state update (sent after each step change for UI sync)
+ */
+export interface PlanUpdatedMessage {
+  type: 'planUpdated';
+  plan: any;
+}
+
 // =====================================================
 // DISCRIMINATED UNIONS
 // =====================================================
@@ -1236,7 +1266,10 @@ export type OutboundWebviewMessage =
   | { type: 'planLoaded'; plan: any; planId: string }
   | { type: 'checkpointRestored'; checkpointId: string; messageId: string; checkpointNumber: number; filesRestored: string[] }
   | { type: 'checkpoints'; messageId: string; checkpoints: any[] }
-  | { type: 'activityUpdate'; label: string | null };
+  | { type: 'activityUpdate'; label: string | null }
+  | PlanStatusUpdateMessage
+  | StepStatusUpdateMessage
+  | PlanUpdatedMessage;
 
 /**
  * Combined webview message type (bidirectional)

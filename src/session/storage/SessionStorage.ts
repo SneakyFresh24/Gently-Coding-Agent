@@ -92,7 +92,27 @@ export class SessionStorageImpl implements ISessionStorage {
 
       // Read file
       const data = await fs.readFile(filePath, 'utf8');
-      const session: Session = JSON.parse(data);
+
+      let session: Session;
+      try {
+        session = JSON.parse(data);
+      } catch (parseError) {
+        console.error(`[SessionStorage] Corrupted session file: ${sessionId}`, parseError);
+
+        // Attempt recovery: truncate to last valid closing brace
+        const recovered = this.attemptSessionRecovery(data);
+        if (recovered) {
+          console.log(`[SessionStorage] Recovered corrupted session: ${sessionId}`);
+          session = recovered;
+          // Overwrite with recovered data
+          await fs.writeFile(filePath, JSON.stringify(session, null, 2), 'utf8');
+        } else {
+          // Recovery failed — delete the corrupted file
+          console.error(`[SessionStorage] Recovery failed, deleting corrupted session: ${sessionId}`);
+          try { await fs.unlink(filePath); } catch { /* ignore */ }
+          return null;
+        }
+      }
 
       // Update last accessed time
       session.lastAccessedAt = Date.now();
@@ -116,6 +136,20 @@ export class SessionStorageImpl implements ISessionStorage {
       });
       return null;
     }
+  }
+
+  /**
+   * Attempt to recover a corrupted session by truncating at last valid JSON
+   */
+  private attemptSessionRecovery(data: string): Session | null {
+    try {
+      const lastBrace = data.lastIndexOf('}');
+      if (lastBrace > 0) {
+        const truncated = data.substring(0, lastBrace + 1);
+        return JSON.parse(truncated);
+      }
+    } catch { /* truncation didn't help */ }
+    return null;
   }
 
   /**
@@ -454,6 +488,17 @@ export class SessionStorageImpl implements ISessionStorage {
         throw error;
       }
     }
+
+    // Clean up orphaned .tmp files from interrupted atomic writes
+    try {
+      const files = await fs.readdir(this.config.storagePath);
+      for (const file of files) {
+        if (file.endsWith('.tmp')) {
+          await fs.unlink(path.join(this.config.storagePath, file));
+          console.log(`[SessionStorage] Cleaned up orphaned temp file: ${file}`);
+        }
+      }
+    } catch { /* ignore cleanup errors */ }
   }
 
   /**

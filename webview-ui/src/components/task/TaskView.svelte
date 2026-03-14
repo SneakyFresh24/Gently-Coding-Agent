@@ -24,14 +24,8 @@
     AlertCircle,
   } from "lucide-svelte";
 
-  // Reactive state from stores
-  $: plan = $currentPlan;
-  $: details = $planDetails;
-  $: hasPlans = $taskStore.plans.length > 0;
-
-  // Use store subscribers directly in template or keep them lean here
-  $: isLoadingState = $isLoading;
-  $: hasErrorState = $hasError;
+  // Svelte 5: Use store auto-subscriptions directly in templates
+  // No intermediate reactive variables needed
 
   function getStatusIcon(status: string) {
     switch (status) {
@@ -65,12 +59,12 @@
 </script>
 
 <div class="task-view">
-  {#if isLoadingState}
+  {#if $isLoading}
     <div class="loading-state">
       <Loader2 class="spinning" size={32} />
       <p>Synchronizing plan status...</p>
     </div>
-  {:else if hasErrorState}
+  {:else if $hasError}
     <div class="error-state">
       <AlertCircle size={48} class="error-icon" />
       <p class="error-title">Sync Error</p>
@@ -79,7 +73,7 @@
         Retry Sync
       </button>
     </div>
-  {:else if !hasPlans}
+  {:else if $taskStore.plans.length === 0}
     <div class="empty-state">
       <div class="empty-content">
         <ListTodo size={48} class="empty-icon" />
@@ -89,22 +83,22 @@
         </p>
       </div>
     </div>
-  {:else if plan}
+  {:else if $currentPlan}
     <div class="plan-container">
       <!-- Plan Header -->
       <div class="plan-header">
         <div class="plan-title">
           <ListTodo size={20} />
-          <h3>{plan.goal}</h3>
+          <h3>{$currentPlan?.goal}</h3>
         </div>
         <div class="header-actions">
-          <div class="plan-status {getStatusClass(plan.status)}">
-            {plan.status}
+          <div class="plan-status {getStatusClass($currentPlan?.status ?? '')}">
+            {$currentPlan?.status}
           </div>
-          {#if plan.status === "executing"}
+          {#if $currentPlan?.status === "executing"}
             <button
               class="icon-btn abort-btn"
-              on:click={() => abortPlan(plan.id)}
+              on:click={() => $currentPlan && abortPlan($currentPlan.id)}
               title="Abort Plan"
             >
               <Ban size={16} />
@@ -114,19 +108,19 @@
       </div>
 
       <!-- Progress Bar -->
-      {#if details}
+      {#if $planDetails}
         <div class="progress-section">
           <div class="progress-bar">
             <div
               class="progress-fill"
-              class:has-errors={details.hasErrors}
-              style="width: {details.percentage}%"
+              class:has-errors={$planDetails?.hasErrors}
+              style="width: {$planDetails?.percentage ?? 0}%"
             ></div>
           </div>
           <div class="progress-text">
-            {details.completed} / {details.total} steps completed ({details.percentage}%)
-            {#if details.failed > 0}
-              <span class="failed-count">({details.failed} failed)</span>
+            {$planDetails?.completed} / {$planDetails?.total} steps completed ({$planDetails?.percentage}%)
+            {#if ($planDetails?.failed ?? 0) > 0}
+              <span class="failed-count">({$planDetails?.failed} failed)</span>
             {/if}
           </div>
         </div>
@@ -134,7 +128,7 @@
 
       <!-- Steps List -->
       <div class="steps-list">
-        {#each plan.steps as step, index}
+        {#each $currentPlan?.steps ?? [] as step, index}
           <div class="step-item {getStatusClass(step.status)}">
             <div class="step-header">
               <div class="step-icon">
@@ -156,7 +150,7 @@
                       <button
                         class="icon-btn"
                         on:click={() =>
-                          showStepResult(plan.id, step.id, String(step.result))}
+                          $currentPlan && showStepResult($currentPlan.id, step.id, String(step.result))}
                         title="Show Result"
                       >
                         <Eye size={14} />
@@ -165,7 +159,7 @@
                     {#if step.status === "failed" || step.status === "completed"}
                       <button
                         class="icon-btn"
-                        on:click={() => retryStep(plan.id, step.id)}
+                        on:click={() => $currentPlan && retryStep($currentPlan.id, step.id)}
                         title="Retry Step"
                       >
                         <Play size={14} />
@@ -174,7 +168,7 @@
                     {#if step.status === "pending"}
                       <button
                         class="icon-btn"
-                        on:click={() => skipStep(plan.id, step.id)}
+                        on:click={() => $currentPlan && skipStep($currentPlan.id, step.id)}
                         title="Skip Step"
                       >
                         <FastForward size={14} />
@@ -199,7 +193,7 @@
       <div class="plan-footer">
         <div class="plan-meta">
           <Clock size={14} />
-          <span>Created {new Date(plan.createdAt).toLocaleTimeString()}</span>
+          <span>Created {new Date($currentPlan?.createdAt ?? 0).toLocaleTimeString()}</span>
         </div>
       </div>
     </div>

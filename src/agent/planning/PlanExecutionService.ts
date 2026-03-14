@@ -12,11 +12,17 @@ const log = new LogService('PlanExecutionService');
  * Orchestrates the automatic execution of plans.
  */
 export class PlanExecutionService {
+    private eventCallback?: (event: PlanEvent) => void;
+
     constructor(
         private state: PlanStateManager,
         private validator: PlanValidator,
         private persistence: PlanPersistenceService
     ) { }
+
+    setEventCallback(cb: (event: PlanEvent) => void): void {
+        this.eventCallback = cb;
+    }
 
     async startAutoExecution(
         planId: string,
@@ -27,6 +33,7 @@ export class PlanExecutionService {
         if (!plan) return;
 
         this.state.updatePlanStatus(planId, 'executing');
+        this.eventCallback?.({ type: 'planStatusUpdate', planId, status: 'executing' });
         log.info(`Starting auto-execution for ${planId}`);
 
         while (this.isPlanExecutable(planId)) {
@@ -35,10 +42,12 @@ export class PlanExecutionService {
 
             log.info(`Executing step ${step.id}: ${step.description}`);
             this.state.updateStepStatus(planId, step.id, 'in-progress');
+            this.eventCallback?.({ type: 'stepStatusUpdate', planId, stepId: step.id, status: 'in-progress' });
 
             try {
                 const result = await toolManager.executeTool(step.tool, step.parameters || {});
                 this.state.updateStepStatus(planId, step.id, 'completed', result);
+                this.eventCallback?.({ type: 'stepStatusUpdate', planId, stepId: step.id, status: 'completed', result });
 
                 if (checkpointManager) {
                     try {
@@ -49,11 +58,23 @@ export class PlanExecutionService {
                 const errorMsg = error instanceof Error ? error.message : String(error);
                 log.error(`Step ${step.id} failed:`, error);
                 this.state.updateStepStatus(planId, step.id, 'failed', undefined, errorMsg);
+                this.eventCallback?.({ type: 'stepStatusUpdate', planId, stepId: step.id, status: 'failed', error: errorMsg });
                 this.state.updatePlanStatus(planId, 'failed');
+                this.eventCallback?.({ type: 'planStatusUpdate', planId, status: 'failed' });
                 return;
             }
 
             await this.persistence.persistPlan(plan);
+        }
+
+        // Mark plan as completed after all steps finish
+        const updatedPlan = this.state.getPlan(planId);
+        if (updatedPlan && updatedPlan.status === 'executing') {
+            const allDone = updatedPlan.steps.every(s => s.status === 'completed' || s.status === 'skipped');
+            if (allDone) {
+                this.state.updatePlanStatus(planId, 'completed');
+                this.eventCallback?.({ type: 'planStatusUpdate', planId, status: 'completed' });
+            }
         }
 
         this.validator.validate(plan);

@@ -41,6 +41,7 @@ export class ChatFlowManager {
         }
 
         try {
+            this.sendMessageToWebview({ type: 'activityUpdate', label: 'Denkt nach...' });
             this.sendMessageToWebview({ type: 'activityUpdate', label: 'Analyzing project...' });
             const { enhancedMessage, loadedReferences } = await this.referenceParser.processMessageWithReferences(userMessage, silent, fileReferences);
             this.sendMessageToWebview({ type: 'activityUpdate', label: 'Pruning conversation...' });
@@ -69,6 +70,7 @@ export class ChatFlowManager {
         } catch (error: unknown) {
             const errorMsg = error instanceof Error ? error.message : String(error);
             log.error('Error in chat flow:', error);
+            this.sendMessageToWebview({ type: 'activityUpdate', label: null });
             this.sendMessageToWebview({ type: 'processingEnd' });
             this.sendMessageToWebview({ type: 'generatingEnd' });
             this.sendMessageToWebview({ type: 'error', message: `Error: ${errorMsg}` });
