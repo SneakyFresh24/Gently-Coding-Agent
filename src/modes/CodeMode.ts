@@ -33,7 +33,6 @@ You are the Implementation Expert. You bridge the gap between architectural desi
 
   readonly availableTools = [
     'safe_edit_file',
-    'text_editor_20250728',
     'write_file',
     'read_file',
     'find_files',

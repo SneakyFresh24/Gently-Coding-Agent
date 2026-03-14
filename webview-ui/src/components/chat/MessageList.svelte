@@ -4,12 +4,11 @@
     import ContextTracker from "../context/ContextTracker.svelte";
     import type { Message } from "../../stores/chatStore";
 
-    export let messages: Message[] = [];
-    export let selectedMode: string = "architect";
+    let { messages = [], selectedMode = "architect" } = $props();
 
     let messagesContainer: HTMLElement;
     let isUserScrolling = false;
-    let scrollTimeout: NodeJS.Timeout | null = null;
+    let scrollTimeout: ReturnType<typeof setTimeout> | null = null;
     let contextTrackerExpanded = false;
 
     function toggleContextTracker() {
@@ -33,9 +32,11 @@
         }
     }
 
-    $: if (messages.length > 0) {
-        scrollToBottom();
-    }
+    $effect(() => {
+        if (messages.length > 0) {
+            scrollToBottom();
+        }
+    });
 
     // Exposure for external forcing of scroll (e.g. on new user message)
     export function forceScrollToBottom() {

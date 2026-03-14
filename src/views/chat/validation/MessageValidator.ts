@@ -309,6 +309,12 @@ const MessageSchemas: Record<string, any> = {
       modeId: { type: 'string', maxLength: 50 }
     }
   },
+  'setMode': {
+    required: ['modeId'],
+    fields: {
+      modeId: { type: 'string', maxLength: 50 }
+    }
+  },
   'settingChanged': {
     required: ['key', 'value'],
     fields: {

@@ -178,7 +178,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             await this.initializeWebviewData();
             return;
           }
-          if (data.type === 'modeChanged') {
+          if (data.type === 'modeChanged' || data.type === 'setMode') {
             await this.setSelectedMode(data.modeId);
             return;
           }

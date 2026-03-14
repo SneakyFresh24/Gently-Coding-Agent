@@ -66,6 +66,10 @@ const handleMessage = (event: MessageEvent) => {
                     realtimeStore.setTaskRunning(false);
                     break;
 
+                case "iterativePlanCompleted":
+                    realtimeStore.setTaskRunning(false);
+                    break;
+
                 case "planCreated":
                     if (msg.plan) {
                         taskStore.addPlan(msg.plan);
@@ -222,7 +226,6 @@ const handleMessage = (event: MessageEvent) => {
 
                 case "handover_to_coder":
                     settingsStore.setSelectedMode("code");
-                    extensionSync.send("setMode", { modeId: "code" });
                     setTimeout(() => {
                         extensionSync.send("sendMessage", {
                             message: msg.message + "\n\n(Execute Plan ID: " + msg.planId + ")",

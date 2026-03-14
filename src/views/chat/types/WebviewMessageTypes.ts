@@ -127,6 +127,14 @@ export interface ModeChangedMessage {
 }
 
 /**
+ * Chat mode set (alias for modeChanged)
+ */
+export interface SetModeMessage {
+  type: 'setMode';
+  modeId: string;
+}
+
+/**
  * Request context update
  */
 export interface RequestContextUpdateMessage {
@@ -1109,6 +1117,7 @@ export type InboundWebviewMessage =
   | ToggleAgentModeMessage
   | ModelChangedMessage
   | ModeChangedMessage
+  | SetModeMessage
   | RequestContextUpdateMessage
   | AddFilesToContextMessage
   | TogglePinFileMessage

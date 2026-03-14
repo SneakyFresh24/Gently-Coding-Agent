@@ -100,7 +100,7 @@ export class TerminalManager {
       }
 
       // Send toolExecutionStart AFTER approval
-      this.webviewCommunicator.sendExecutionStart('execute_command');
+      this.webviewCommunicator.sendExecutionStart('run_command');
 
       // Execute command with streaming
       const result = await this.executor.executeStreaming(
