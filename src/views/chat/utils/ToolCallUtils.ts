@@ -125,22 +125,8 @@ export class ToolCallUtils {
         return `Editing file ${filePath || 'unknown'}...`;
       case 'safe_edit_file':
         return `Editing file ${filePath || toolArgs.file_path || 'unknown'}...`;
-      case 'text_editor_20250728':
-        // User-friendly name for different text_editor_20250728 commands
-        const command = toolArgs.command;
-        if (command === 'view') {
-          return `Reading file ${filePath || 'unknown'}...`;
-        } else if (command === 'create') {
-          return `Creating file ${filePath || 'unknown'}...`;
-        } else if (command === 'str_replace') {
-          return `Editing file ${filePath || 'unknown'}...`;
-        } else if (command === 'insert') {
-          return `Füge Text ein in ${filePath || 'unknown'}...`;
-        } else if (command === 'undo_edit') {
-          return `Mache Änderungen rückgängig in ${filePath || 'unknown'}...`;
-        } else {
-          return `Editing file ${filePath || 'unknown'}...`;
-        }
+      case 'apply_block_edit':
+        return `Applying edits to ${toolArgs.file_path || 'unknown'}...`;
       case 'list_files':
         return `Listing files...`;
       case 'find_files':
@@ -153,7 +139,7 @@ export class ToolCallUtils {
         return `Analysiere Projektstruktur...`;
       case 'check_dev_server':
         return `Prüfe Entwicklungsserver...`;
-      case 'execute_command':
+      case 'run_command':
         return `Executing command: ${toolArgs.command}`;
       // Memory tools
       case 'remember':
@@ -233,25 +219,18 @@ export class ToolCallUtils {
           path: toolArgs.path || toolArgs.file_path
         });
         break;
-      case 'text_editor_20250728':
-        const command = toolArgs.command;
-        if (command === 'view') {
-          comment.text = 'Viewed file';
-        } else if (command === 'create') {
-          comment.text = 'Created file';
-        } else if (command === 'str_replace') {
-          comment.text = 'Edited file';
-        } else if (command === 'insert') {
-          comment.text = 'Inserted text';
-        } else if (command === 'undo_edit') {
-          comment.text = 'Undo changes';
-        } else {
-          comment.text = 'Modified file';
-        }
+      case 'apply_block_edit':
+        comment.text = 'Applied block edits';
         comment.details.push({
           type: 'file',
-          path: toolArgs.path || toolArgs.file_path
+          path: toolArgs.file_path
         });
+        if (result && result.appliedCount) {
+          comment.details.push({
+            type: 'info',
+            text: `${result.appliedCount} hunks applied`
+          });
+        }
         break;
 
       case 'apply_changes':
@@ -268,7 +247,7 @@ export class ToolCallUtils {
         }
         break;
 
-      case 'execute_command':
+      case 'run_command':
         comment.text = 'Ran command';
         comment.details.push({
           type: 'command',
@@ -329,10 +308,10 @@ export class ToolCallUtils {
     const modifyingTools = [
       'write_file',
       'edit_file',
-      'text_editor_20250728',
       'safe_edit_file',
+      'apply_block_edit',
       'apply_changes',
-      'execute_command',
+      'run_command',
       'remember',
       'update_memory',
       'deprecate_memory',
@@ -350,7 +329,7 @@ export class ToolCallUtils {
    * Get tool category
    */
   static getToolCategory(toolName: string): 'file' | 'search' | 'memory' | 'execution' | 'planning' | 'other' {
-    if (['read_file', 'write_file', 'edit_file', 'text_editor_20250728', 'safe_edit_file', 'apply_changes', 'list_files'].includes(toolName)) {
+    if (['read_file', 'write_file', 'edit_file', 'safe_edit_file', 'apply_block_edit', 'apply_changes', 'list_files'].includes(toolName)) {
       return 'file';
     }
     if (['find_files', 'search_codebase', 'get_context', 'analyze_project_structure'].includes(toolName)) {
@@ -359,7 +338,7 @@ export class ToolCallUtils {
     if (['remember', 'recall_memories', 'update_memory', 'deprecate_memory', 'record_correction'].includes(toolName)) {
       return 'memory';
     }
-    if (['execute_command', 'check_dev_server'].includes(toolName)) {
+    if (['run_command', 'check_dev_server'].includes(toolName)) {
       return 'execution';
     }
     if (['create_plan', 'execute_plan'].includes(toolName)) {

@@ -200,7 +200,8 @@ export const TOOL_NAMES = {
   READ_FILE: 'read_file',
   WRITE_FILE: 'write_file',
   EDIT_FILE: 'edit_file',
-  STR_REPLACE_EDITOR: 'text_editor_20250728',
+  SAFE_EDIT_FILE: 'safe_edit_file',
+  APPLY_BLOCK_EDIT: 'apply_block_edit',
   LIST_FILES: 'list_files',
   FIND_FILES: 'find_files',
   GET_CONTEXT: 'get_context',
@@ -215,8 +216,7 @@ export const TOOL_NAMES = {
   REJECT_PATTERN_SUGGESTION: 'reject_pattern_suggestion',
   CREATE_CHECKPOINT: 'create_checkpoint',
   RESTORE_CHECKPOINT: 'restore_checkpoint',
-  LIST_CHECKPOINTS: 'list_checkpoints',
-  EXECUTE_COMMAND: 'execute_command',
+  RUN_COMMAND: 'run_command',
   CREATE_PLAN: 'create_plan',
   EXECUTE_PLAN: 'execute_plan'
 } as const;

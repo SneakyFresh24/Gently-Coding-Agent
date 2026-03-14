@@ -121,7 +121,7 @@ export class TraditionalToolExecutor {
 
     private async executeWithLock(toolName: string, toolArgs: any, taskId: string, targetPlanId: string | null, resolvedStep: PlanStep | null, toolCall: ToolCall): Promise<{ toolCall: ToolCall, result: any, success: boolean }> {
         const filePath = toolArgs.path || toolArgs.file_path;
-        if (['write_file', 'edit_file', 'safe_edit_file', 'delete_file'].includes(toolName) && filePath) {
+        if (['write_file', 'edit_file', 'safe_edit_file', 'apply_block_edit', 'delete_file'].includes(toolName) && filePath) {
             const currentLock = this.fileLocks.get(filePath) || Promise.resolve();
             const newLock = currentLock.then(() => this.internalExecute(toolName, toolArgs, taskId, targetPlanId, resolvedStep, toolCall));
             this.fileLocks.set(filePath, newLock.then(() => { }));
@@ -173,7 +173,7 @@ export class IterativePlanExecutor {
                     sendMessage: async () => ({
                         thought_process: `Executing iterative plan for: ${goal}`,
                         status: "in_progress",
-                        step: { id: 1, description: "Executing first step", tool: repairResult.repaired.steps?.[0]?.tool || 'text_editor_20250728', parameters: repairResult.repaired.steps?.[0]?.parameters || {} }
+                        step: { id: 1, description: "Executing first step", tool: repairResult.repaired.steps?.[0]?.tool || 'apply_block_edit', parameters: repairResult.repaired.steps?.[0]?.parameters || {} }
                     })
                 };
 

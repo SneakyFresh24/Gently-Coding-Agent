@@ -153,7 +153,7 @@ export class ChatFlowManager {
             );
         } else if (['agent', 'debug'].includes(context.selectedMode) || context.agentMode) {
             tools = this.agentManager.getFormattedTools()
-                ?.filter((t: any) => !['text_editor_20250728', 'replace_file_content'].includes(t.function?.name));
+                ?.filter((t: any) => !['replace_file_content'].includes(t.function?.name));
         }
 
         log.info(`getToolsForMode: mode=${context.selectedMode}, returning ${tools?.length || 0} tools`);

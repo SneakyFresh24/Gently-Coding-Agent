@@ -7,7 +7,7 @@ export const TOOL_DEFINITIONS = {
     read_file: {
         name: 'read_file',
         category: 'file',
-        description: 'Read and examine the content of a file. Use this tool to investigate files, understand code structure, and analyze implementations. This is the PRIMARY tool for examining files - do NOT use str_replace_editor for file investigation.',
+        description: 'Read and examine the content of a file. Use this tool to investigate files, understand code structure, and analyze implementations. This is the PRIMARY tool for examining files - do NOT use apply_block_edit for file investigation.',
         parameters: {
             type: 'object',
             properties: {
@@ -433,7 +433,7 @@ The plan will be shown to the user for approval before execution.`,
                             },
                             tool: {
                                 type: 'string',
-                                description: 'Name of the tool to execute (e.g., "text_editor_20250728", "write_file", "search_files")'
+                                description: 'Name of the tool to execute (e.g., "apply_block_edit", "write_file", "search_files")'
                             },
                             parameters: {
                                 type: 'object',
