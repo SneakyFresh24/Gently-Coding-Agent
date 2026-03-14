@@ -64,7 +64,6 @@ export class ChatFlowManager {
             await this.pruner.pruneConversationHistory(context);
             this.sendMessageToWebview({ type: 'activityUpdate', label: 'Validating history...' });
             this.validateHistory(context);
-            this.sendMessageToWebview({ type: 'activityUpdate', label: null }); // Clear custom label before generation
             await this.generateAndStreamResponse(context, enhancedMessage, retryCount);
 
         } catch (error: unknown) {

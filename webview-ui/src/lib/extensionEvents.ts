@@ -154,14 +154,17 @@ const handleMessage = (event: MessageEvent) => {
                     if (msg.messages && Array.isArray(msg.messages)) {
                         chatStore.clearMessages();
                         for (const m of msg.messages) {
-                            if (m.role === "user")
+                            if (m.role === "user") {
                                 chatStore.addUserMessage(m.content, m.fileReferences);
-                            else if (m.role === "assistant") {
-                                chatStore.startAssistantMessage();
-                                chatStore.appendChunk(m.content);
-                                chatStore.endAssistantMessage(m.id);
-                            } else if (m.role === "system")
+                            } else if (m.role === "assistant") {
+                                chatStore.addFullAssistantMessage(m.content, m.id);
+                            } else if (m.role === "system") {
                                 chatStore.restoreSystemMessage(m.id, m.content, m.timestamp);
+                            } else if (m.role === "command-approval" && m.commandApproval) {
+                                chatStore.restoreCommandApprovalMessage(m.id, m.commandApproval, m.timestamp);
+                            } else if (m.role === "tool-execution" && m.toolExecution) {
+                                chatStore.restoreToolExecutionMessage(m.id, m.toolExecution, m.timestamp);
+                            }
                         }
                     }
                     break;
@@ -281,6 +284,7 @@ const handleMessage = (event: MessageEvent) => {
                     break;
 
                 case "activityUpdate":
+                    console.log('[Webview] activityUpdate received:', msg.label);
                     realtimeStore.setActivity(msg.label || null);
                     break;
             }

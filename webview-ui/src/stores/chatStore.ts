@@ -175,8 +175,8 @@ function createChatStore() {
 
         const streamingMsg = state.messages.find(m => m.id === state.currentStreamingMessageId);
 
-        // Remove empty messages
-        if (!streamingMsg || streamingMsg.content.trim() === '') {
+        // Remove empty messages (no content AND no tool/execution metadata)
+        if (!streamingMsg || (streamingMsg.content.trim() === '' && !streamingMsg.toolExecution && !streamingMsg.commandApproval)) {
           return {
             ...state,
             messages: state.messages.filter(m => m.id !== state.currentStreamingMessageId),
