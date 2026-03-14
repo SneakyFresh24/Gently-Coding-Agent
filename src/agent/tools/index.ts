@@ -8,4 +8,5 @@ export * from './PlanningTools';
 export * from './VerificationTools';
 export * from './MemoryBankTools';
 export * from './SafeEditTool';
+export * from './ApplyBlockEditTool';
 export * from './CommandTools';

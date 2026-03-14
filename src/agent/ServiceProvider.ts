@@ -33,6 +33,7 @@ import {
     VerificationTools,
     MemoryBankTools,
     SafeEditTool,
+    ApplyBlockEditTool,
     CommandTools
 } from './tools';
 import {
@@ -128,6 +129,12 @@ export function configureServices(container: Container, context: vscode.Extensio
         c.resolve('contextManager'),
         c.resolve('editorEngine')
     ));
+    container.register('applyBlockEditTool', (c) => new ApplyBlockEditTool(
+        c.resolve('fileOps'),
+        c.resolve('contextManager'),
+        c.resolve('editorEngine'),
+        c.resolve<any>('guardianService')
+    ));
     container.register('commandTools', (c) => new CommandTools(
         () => c.resolve<any>('terminalManager') || null,
         () => { } // Event callback will be set later via ToolManager
@@ -162,6 +169,7 @@ export function configureServices(container: Container, context: vscode.Extensio
             c.resolve('verificationTools'),
             c.resolve('memoryBankTools'),
             c.resolve('safeEditTool'),
+            c.resolve('applyBlockEditTool'),
             c.resolve('commandTools')
         );
 

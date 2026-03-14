@@ -248,7 +248,7 @@ export class PlanningManager implements IAgentService {
    */
   setEventCallback(callback: (event: PlanEvent) => void): void {
     this.eventCallback = callback;
-    // this.planManager.setEventCallback(callback); // Optional if planManager supports it
+    this.planManager.setEventCallback(callback); 
   }
 
   // ==================== TOOL INTEGRATION ====================

@@ -64,7 +64,11 @@
     return `<pre><code>${text}</code></pre>`;
   };
 
-  marked.setOptions({ renderer });
+  marked.setOptions({ 
+    renderer,
+    gfm: true,
+    breaks: true
+  });
 
   // Reactive content rendering
   $effect(() => {
@@ -469,6 +473,21 @@
   .message-content :global(li > ol) {
     margin-top: 0.25rem;
     margin-bottom: 0;
+  }
+
+  /* ===== Task Lists (GFM) ===== */
+  .message-content :global(.task-list-item) {
+    list-style-type: none;
+    margin-left: -1rem;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .message-content :global(.task-list-item input[type="checkbox"]) {
+    margin-top: 0.35rem;
+    cursor: default;
+    accent-color: var(--color-primary);
   }
 
   :global(.copy-button) {

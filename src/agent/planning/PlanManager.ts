@@ -31,8 +31,19 @@ export class PlanManager {
   private toolManager: IToolManager | null = null;
   private checkpointManager: ICheckpointManager | null = null;
 
+  private eventCallback?: (event: PlanEvent) => void;
+
   constructor() {
     this.executor = new PlanExecutionService(this.state, this.validator, this.persistence);
+    
+    // Wire up external file changes to internal state
+    this.persistence.onPlanChanged((planId, updates) => {
+      this.handleExternalPlanChange(planId, updates);
+    });
+  }
+
+  setEventCallback(cb: (event: PlanEvent) => void) {
+    this.eventCallback = cb;
   }
 
   setToolManager(tm: IToolManager) { this.toolManager = tm; }
@@ -142,6 +153,36 @@ export class PlanManager {
    * @param provider The LLM provider for decision making.
    * @param onEvent Optional callback for execution events.
    */
+  private handleExternalPlanChange(planId: string, updates: Map<string, TaskStatus>) {
+    const plan = this.state.getPlan(planId);
+    if (!plan) return;
+
+    log.info(`Syncing external changes for plan ${planId}`);
+    let changed = false;
+
+    for (const [stepId, status] of updates.entries()) {
+      const step = plan.steps.find(s => s.id === stepId);
+      if (step && step.status !== status) {
+        log.debug(`External update: Step ${stepId} -> ${status}`);
+        step.status = status;
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      // Re-calculate stats and notify
+      this.state.updatePlanStatus(planId, plan.status); // Triggers index/stats update in some systems, but here we just need to emit
+      
+      if (this.eventCallback) {
+        this.eventCallback({
+          type: 'planUpdated',
+          planId,
+          plan: this.state.getPlan(planId)
+        });
+      }
+    }
+  }
+
   async executeGoalIteratively(goal: string, tools: Map<string, AgentTool>, provider: OpenRouterService, onEvent?: (e: PlanEvent) => void) {
     return this.executor.executeGoalIteratively(goal, tools, provider, onEvent);
   }

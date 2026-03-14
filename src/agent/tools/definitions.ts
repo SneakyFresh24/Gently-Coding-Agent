@@ -68,6 +68,59 @@ Parameters:
             required: ['file_path', 'new_content']
         }
     },
+    apply_block_edit: {
+        name: 'apply_block_edit',
+        category: 'file',
+        description: `Highly powerful Multi-Hunk Block Editor (Level 5). This is the PRIMARY tool for modifying existing files.
+        
+Replaces the old SafeEditTool by supporting multiple distinct edits (hunks) in a single tool call. 
+It uses an advanced matching algorithm prioritized as follows:
+1. Exact normalized match of 'old_content'
+2. Fuzzy context match using 'context_before' and 'context_after'
+
+Parameters:
+- file_path: Path to the target file.
+- preview_only: (Optional) If true, generates diffs but does NOT apply changes. Used to show planned edits to the user.
+- mode: (Optional) 'best-effort' (default) applies successful hunks even if others fail. 'atomic' rolls back all changes if any single hunk fails.
+- edits: Array of Edit Hunks (Maximum 8).
+    Each edit hunk MUST include:
+    - id: An optional stable identifier (e.g. "hunk-1") for retrying.
+    - old_content: The EXACT old code to replace (Crucial for robust matching).
+    - new_content: The new code to insert.
+    - start_line_hint / end_line_hint: Approximate context lines for disambiguation.
+    - context_before / context_after: 3-5 lines of surrounding context if line numbers have drifted.
+    - reason: Brief string explaining this specific hunk (used for Guardian approval).
+        
+The return format will detailed how many hunks succeeded/failed and provide explicit retry suggestions.`,
+        parameters: {
+            type: 'object',
+            properties: {
+                file_path: { type: 'string', description: 'Path to the target file' },
+                preview_only: { type: 'boolean', description: 'If true, do not write changes, just return diffs' },
+                mode: { type: 'string', enum: ['best-effort', 'atomic'], description: 'Failure mode strategy' },
+                edits: {
+                    type: 'array',
+                    maxItems: 8,
+                    description: 'List of individual hunks to apply to the file',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            id: { type: 'string', description: 'Stable identifier (e.g. "hunk-1")' },
+                            old_content: { type: 'string', description: 'The exact old code block' },
+                            new_content: { type: 'string', description: 'The new code block' },
+                            start_line_hint: { type: 'number', description: 'Approximate start line' },
+                            end_line_hint: { type: 'number', description: 'Approximate end line' },
+                            context_before: { type: 'string', description: '3-4 lines immediately preceding old_content' },
+                            context_after: { type: 'string', description: '3-4 lines immediately following old_content' },
+                            reason: { type: 'string', description: 'Why this change is made' }
+                        },
+                        required: ['old_content', 'new_content', 'reason']
+                    }
+                }
+            },
+            required: ['file_path', 'edits']
+        }
+    },
     list_files: {
         name: 'list_files',
         category: 'file',

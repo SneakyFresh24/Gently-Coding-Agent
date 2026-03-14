@@ -12,6 +12,7 @@ import {
   VerificationTools,
   MemoryBankTools,
   SafeEditTool,
+  ApplyBlockEditTool,
   CommandTools,
   ToolName
 } from '../tools';
@@ -30,6 +31,7 @@ export class ToolManager implements IAgentService {
   private verificationTools: VerificationTools;
   private memoryBankTools: MemoryBankTools;
   private safeEditTool: SafeEditTool;
+  private applyBlockEditTool: ApplyBlockEditTool;
   private commandTools: CommandTools;
 
   // Dependencies
@@ -52,6 +54,7 @@ export class ToolManager implements IAgentService {
     verificationTools: VerificationTools,
     memoryBankTools: MemoryBankTools,
     safeEditTool: SafeEditTool,
+    applyBlockEditTool: ApplyBlockEditTool,
     commandTools: CommandTools
   ) {
     this.toolRegistry = toolRegistry;
@@ -64,6 +67,7 @@ export class ToolManager implements IAgentService {
     this.verificationTools = verificationTools;
     this.memoryBankTools = memoryBankTools;
     this.safeEditTool = safeEditTool;
+    this.applyBlockEditTool = applyBlockEditTool;
     this.commandTools = commandTools;
   }
 
@@ -108,6 +112,7 @@ export class ToolManager implements IAgentService {
       this.verificationTools.registerTools(this.toolRegistry);
       this.memoryBankTools.registerTools(this.toolRegistry);
       this.safeEditTool.registerTools(this.toolRegistry);
+      this.applyBlockEditTool.registerTools(this.toolRegistry);
       this.commandTools.registerTools(this.toolRegistry);
 
       if (this.debug) {

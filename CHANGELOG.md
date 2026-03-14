@@ -2,6 +2,20 @@
 
 All notable changes to the "Gently" extension will be documented in this file.
 
+## [0.5.4] - 2026-03-14
+
+### Added
+- Added `ApplyBlockEditTool` (Multi-Hunk Block Editing), a powerful new editing tool replacing `SafeEditTool`, enabling multiple edits per single AI operation.
+- Added overlap and conflict detection in `EditorEngine` to ensure data integrity during multiple modifications taking place concurrently.
+
+### Changed
+- `EditorEngine` now performs reverse-order hunk application to prevent index shifting.
+- Improved robust fuzzy-matching using context and whitespace normalization in the editor.
+- The Guardian checks are now fully integrated with quick validation during pre-apply previews.
+
+### Fixed
+- Fixed task synchronization between the Webview and `.md` plan files by adding a bidirectional parser (`MarkdownTaskParser`), a `FileSystemWatcher` in `PlanPersistenceService`, and GFM task list support in the `MessageBubble` Svelte component.
+
 ## [0.5.3] - 2026-03-12
 
 ### Fixed

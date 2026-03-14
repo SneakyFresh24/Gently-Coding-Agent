@@ -3,13 +3,26 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ExecutionPlan, PlanStep, TaskStatus } from './types';
 import { LogService } from '../../services/LogService';
+import { MarkdownTaskParser } from './MarkdownTaskParser';
 
 const log = new LogService('PlanPersistence');
 
 /**
  * Handles persistence of execution plans to Markdown files.
+ * Includes a file watcher to sync manual edits back to the system.
  */
 export class PlanPersistenceService {
+    private parser = new MarkdownTaskParser();
+    private watchers: Map<string, vscode.FileSystemWatcher> = new Map();
+    private onPlanChangedCallback?: (planId: string, updates: Map<string, TaskStatus>) => void;
+
+    /**
+     * Registers a callback for when a plan file is modified externally.
+     */
+    public onPlanChanged(callback: (planId: string, updates: Map<string, TaskStatus>) => void) {
+        this.onPlanChangedCallback = callback;
+    }
+
     /**
      * Gets the path to a plan file.
      */
@@ -51,12 +64,8 @@ export class PlanPersistenceService {
             md += `\n## Tasks\n\n`;
 
             for (const step of plan.steps) {
-                let checkbox = '[ ]';
-                let statusEmoji = '⬜';
-                if (step.status === 'completed') { checkbox = '[x]'; statusEmoji = '✅'; }
-                else if (step.status === 'failed') { checkbox = '[!]'; statusEmoji = '❌'; }
-                else if (step.status === 'in-progress') { checkbox = '[/]'; statusEmoji = '🔄'; }
-                else if (step.status === 'skipped') { checkbox = '[-]'; statusEmoji = '⏭️'; }
+                const checkbox = `[${this.parser.getCheckboxChar(step.status)}]`;
+                const statusEmoji = this.parser.getStatusEmoji(step.status);
 
                 md += `- ${checkbox} ${statusEmoji} **${step.id}**: ${step.description}\n`;
                 md += `  - 🔧 Tool: \`${step.tool}\`\n`;
@@ -80,7 +89,11 @@ export class PlanPersistenceService {
                 }
             }
 
+            // Temporarily ignore changes we make ourselves to avoid loops
+            this.stopWatching(plan.id);
             await fs.promises.writeFile(planPath, md, 'utf-8');
+            this.startWatching(plan.id);
+
             log.debug(`Plan ${plan.id} persisted to ${planPath}`);
         } catch (error) {
             log.error(`Failed to persist plan ${plan.id}`, error);
@@ -100,33 +113,25 @@ export class PlanPersistenceService {
             const goalMatch = content.match(/# 📋 Execution Plan: (.*)/);
             const goal = goalMatch ? goalMatch[1].trim() : 'Recovered Plan';
 
-            const stepLines = content.split('\n').filter(l => l.trim().startsWith('- ['));
-            const steps: PlanStep[] = stepLines.map((line, index) => {
-                const statusMatch = line.match(/- \[(.)\]/);
-                const coreMatch = line.match(/\*\*(step-\d+|\d+[a-zA-Z0-9-]*)\*\*: (.*)/);
-                const toolMatch = content.substring(content.indexOf(line)).match(/🔧 Tool: `(.*?)`/);
-
-                const statusMap: Record<string, TaskStatus> = {
-                    'x': 'completed',
-                    ' ': 'pending',
-                    '/': 'in-progress',
-                    '!': 'failed',
-                    '-': 'skipped'
-                };
-
-                const char = statusMatch ? statusMatch[1] : ' ';
-                const id = coreMatch ? coreMatch[1] : `step-${index + 1}`;
-                const description = coreMatch ? coreMatch[2].trim() : `Step ${id}`;
-                const tool = toolMatch ? toolMatch[1] : 'unknown';
-
-                return {
+            const statusMap = this.parser.parseTaskStatuses(content);
+            const steps: PlanStep[] = [];
+            
+            // Reconstruct steps from lines (this part is still slightly complex because we need the full Step objects)
+            // But for loading a NEW plan from MD, we usually have limited info. 
+            // In reality, this is mostly used for recovery.
+            
+            let index = 0;
+            for (const [id, status] of statusMap.entries()) {
+                steps.push({
                     id,
-                    description,
-                    tool,
+                    description: `Recovered Step ${id}`,
+                    tool: 'unknown',
                     parameters: {},
-                    status: statusMap[char] || 'pending'
-                };
-            });
+                    status
+                });
+            }
+
+            this.startWatching(planId);
 
             return {
                 id: planId,
@@ -144,4 +149,43 @@ export class PlanPersistenceService {
             return null;
         }
     }
+
+    private startWatching(planId: string) {
+        if (this.watchers.has(planId)) return;
+
+        const planPath = this.getPlanPath(planId);
+        if (!planPath) return;
+
+        const watcher = vscode.workspace.createFileSystemWatcher(planPath);
+        watcher.onDidChange(async () => {
+            log.info(`Plan file changed: ${planId}`);
+            try {
+                const content = await fs.promises.readFile(planPath, 'utf-8');
+                const updates = this.parser.parseTaskStatuses(content);
+                if (this.onPlanChangedCallback) {
+                    this.onPlanChangedCallback(planId, updates);
+                }
+            } catch (err) {
+                log.error(`Failed to read updated plan file ${planId}`, err);
+            }
+        });
+
+        this.watchers.set(planId, watcher);
+    }
+
+    private stopWatching(planId: string) {
+        const watcher = this.watchers.get(planId);
+        if (watcher) {
+            watcher.dispose();
+            this.watchers.delete(planId);
+        }
+    }
+
+    public dispose() {
+        for (const watcher of this.watchers.values()) {
+            watcher.dispose();
+        }
+        this.watchers.clear();
+    }
 }
+
