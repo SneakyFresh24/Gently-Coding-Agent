@@ -89,6 +89,8 @@ export interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system' | 'command-approval' | 'tool-execution';
   content: string;
+  reasoning?: string;
+  toolCalls?: ToolCall[];
   fileReferences?: FileReference[];
   checkpoint?: Checkpoint;
   timestamp: number;
@@ -145,6 +147,8 @@ function createChatStore() {
             id: messageId,
             role: 'assistant',
             content: '',
+            reasoning: '',
+            toolCalls: [],
             timestamp: Date.now(),
             isStreaming: true,
           },
@@ -153,7 +157,7 @@ function createChatStore() {
       return messageId;
     },
 
-    /** Append chunk to streaming message */
+    /** Append chunk to streaming message (Legacy support) */
     appendChunk(chunk: string) {
       update(state => {
         if (!state.currentStreamingMessageId) return state;
@@ -164,6 +168,48 @@ function createChatStore() {
               ? { ...msg, content: msg.content + chunk }
               : msg
           ),
+        };
+      });
+    },
+
+    /** Update partial message by index or current streaming ID */
+    updatePartialMessage(index: number, updates: any) {
+      update(state => {
+        const messageId = state.currentStreamingMessageId;
+        if (!messageId) return state;
+
+        return {
+          ...state,
+          messages: state.messages.map(msg => {
+            if (msg.id !== messageId) return msg;
+
+            const updated = { ...msg };
+            if (updates.content) updated.content += updates.content;
+            if (updates.reasoning) updated.reasoning += updates.reasoning;
+            
+            if (updates.toolCallDeltas) {
+              const currentToolCalls = [...(updated.toolCalls || [])];
+              Object.entries(updates.toolCallDeltas).forEach(([idx, delta]: [string, any]) => {
+                const i = parseInt(idx);
+                if (!currentToolCalls[i]) {
+                  currentToolCalls[i] = {
+                    id: delta.id || '',
+                    type: 'function',
+                    function: { name: delta.function?.name || '', arguments: '' }
+                  };
+                }
+                if (delta.function?.arguments) {
+                  currentToolCalls[i].function.arguments += delta.function.arguments;
+                }
+                if (delta.function?.name) {
+                  currentToolCalls[i].function.name = delta.function.name;
+                }
+              });
+              updated.toolCalls = currentToolCalls;
+            }
+
+            return updated;
+          })
         };
       });
     },

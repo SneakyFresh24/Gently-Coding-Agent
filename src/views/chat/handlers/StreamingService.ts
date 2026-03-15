@@ -1,13 +1,16 @@
 import * as vscode from 'vscode';
 import { OpenRouterService, ChatMessage } from '../../../services/OpenRouterService';
 import { LogService } from '../../../services/LogService';
+import { StreamResponseHandler } from '../../../core/streaming/StreamResponseHandler';
+import { MessageStateHandler } from '../../../core/task/MessageStateHandler';
 
 const log = new LogService('StreamingService');
 
 export class StreamingService {
     constructor(
         private readonly openRouterService: OpenRouterService,
-        private readonly sendMessageToWebview: (message: any) => void
+        private readonly sendMessageToWebview: (message: any) => void,
+        private readonly messageStateHandler?: MessageStateHandler
     ) { }
 
     async streamResponse(
@@ -22,8 +25,9 @@ export class StreamingService {
             shouldStopRef: { current: boolean };
         }
     ): Promise<{ assistantMessage: string; toolCalls: any[] }> {
-        let assistantMessage = '';
-        let toolCalls: any[] = [];
+        const streamHandler = new StreamResponseHandler();
+        const msgIndex = 0; // Default index for the assistant message in this stream
+
         this.sendMessageToWebview({ type: 'processingStart' });
 
         if (options.isFollowUp) {
@@ -39,6 +43,8 @@ export class StreamingService {
                 });
                 const data = await response.json();
                 const choice = data.choices?.[0];
+                let assistantMessage = '';
+                let toolCalls: any[] = [];
                 if (choice?.message?.content) assistantMessage = choice.message.content;
                 if (choice?.message?.tool_calls) toolCalls = choice.message.tool_calls;
                 this.sendMessageToWebview({ type: 'processingEnd' });
@@ -50,9 +56,11 @@ export class StreamingService {
                         messageId: `msg_${Date.now()}`
                     });
                 }
+                return { assistantMessage, toolCalls };
             } catch (error) {
                 log.error('Non-streaming follow-up failed:', error);
                 this.sendMessageToWebview({ type: 'processingEnd' });
+                return { assistantMessage: '', toolCalls: [] };
             }
         } else {
             try {
@@ -69,18 +77,25 @@ export class StreamingService {
 
                     switch (chunk.type) {
                         case 'text':
-                            if (assistantMessage === '') {
+                            if (streamHandler.getFullState().content === '') {
                                 this.sendMessageToWebview({ type: 'processingEnd' });
                                 this.sendMessageToWebview({ type: 'generatingStart' });
                             }
-                            assistantMessage += chunk.text;
-                            this.sendMessageToWebview({ type: 'assistantMessageChunk', chunk: chunk.text });
+                            const textUpdates = streamHandler.processTextDelta(chunk.text);
+                            if (this.messageStateHandler) {
+                                await this.messageStateHandler.updatePartialMessage(msgIndex, textUpdates);
+                            } else {
+                                this.sendMessageToWebview({ type: 'assistantMessageChunk', chunk: chunk.text });
+                            }
                             break;
 
                         case 'reasoning':
-                            // Reasoning chunks (Thinking tokens)
-                            this.sendMessageToWebview({ type: 'activityUpdate', label: `Thinking...` });
-                            // We could also send these to the webview for a "Thinking" block in the UI
+                            const reasoningUpdates = streamHandler.processReasoningDelta(chunk.reasoning);
+                            if (this.messageStateHandler) {
+                                await this.messageStateHandler.updatePartialMessage(msgIndex, reasoningUpdates);
+                            } else {
+                                this.sendMessageToWebview({ type: 'activityUpdate', label: `Thinking...` });
+                            }
                             break;
 
                         case 'tool_call_start':
@@ -91,11 +106,14 @@ export class StreamingService {
                             break;
 
                         case 'tool_call_delta':
-                            // Optional: update a specific tool's progress in UI
+                            const toolUpdates = streamHandler.processToolCallDelta(chunk.toolCallId, chunk.delta, chunk.index);
+                            if (this.messageStateHandler) {
+                                await this.messageStateHandler.updatePartialMessage(msgIndex, toolUpdates);
+                            }
                             break;
 
                         case 'tool_call_ready':
-                            toolCalls.push(chunk.toolCall);
+                            streamHandler.setToolCallReady(chunk.index, chunk.toolCall);
                             this.sendMessageToWebview({ 
                                 type: 'activityUpdate', 
                                 label: `Ready: ${chunk.toolCall.function.name}` 
@@ -104,19 +122,20 @@ export class StreamingService {
 
                         case 'error':
                             throw chunk.error;
-
-                        case 'usage':
-                            // Handle usage info if needed
-                            break;
                     }
                 }
+                
+                const finalState = streamHandler.getFullState();
+                return { 
+                    assistantMessage: finalState.content, 
+                    toolCalls: finalState.toolCalls 
+                };
             } catch (error) {
                 log.error('Streaming failed:', error);
                 this.sendMessageToWebview({ type: 'error', message: error instanceof Error ? error.message : String(error) });
                 this.sendMessageToWebview({ type: 'processingEnd' });
+                return { assistantMessage: '', toolCalls: [] };
             }
         }
-
-        return { assistantMessage, toolCalls };
     }
 }

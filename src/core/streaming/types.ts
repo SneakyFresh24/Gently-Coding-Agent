@@ -24,7 +24,8 @@ export type StreamChunk =
     | { type: 'tool_call_ready'; toolCall: ToolCall; index: number }
     | { type: 'reasoning'; reasoning: string }
     | { type: 'usage'; usage: UsageInfo }
-    | { type: 'error'; error: Error };
+    | { type: 'error'; error: Error }
+    | { type: 'partial_update'; index: number; updates: PartialMessageUpdate };
 
 export interface ContentChunk {
     type: 'text' | 'reasoning';
@@ -33,6 +34,12 @@ export interface ContentChunk {
 
 export interface UsageChunk {
     usage: UsageInfo;
+}
+
+export interface PartialMessageUpdate {
+    content?: string;
+    reasoning?: string;
+    toolCallDeltas?: Record<number, ToolCallDelta>;
 }
 
 export interface ToolCallDelta {

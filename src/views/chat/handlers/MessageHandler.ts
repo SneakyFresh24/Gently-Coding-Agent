@@ -32,7 +32,12 @@ export class MessageHandler {
   ) {
     const fileRef = new FileReferenceManager(agentManager.getFileOperations(), agentManager.getIndexer());
     this.architectHandoverHandler = new ArchitectHandoverHandler(sendMessageToWebview);
-    const streaming = new StreamingService(openRouterService, sendMessageToWebview);
+    
+    // Get message handler from planning manager
+    const planning = this.agentManager.getPlanningManager();
+    const messageHandler = planning?.getMessageHandler();
+    
+    const streaming = new StreamingService(openRouterService, sendMessageToWebview, messageHandler);
     const refParser = new ReferenceParser(fileRef);
     const pruner = new ConversationPruner(openRouterService, agentManager);
 

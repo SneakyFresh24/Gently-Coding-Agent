@@ -49,14 +49,14 @@ export class PlanningManager implements IAgentService {
    * Add a listener for planning events
    */
   public addListener(listener: (event: PlanEvent) => void): void {
-    this.messageHandler.addListener(listener);
+    this.messageHandler.on('planEvent', listener);
   }
 
   /**
    * Remove a listener
    */
   public removeListener(listener: (event: PlanEvent) => void): void {
-    this.messageHandler.removeListener(listener);
+    this.messageHandler.off('planEvent', listener);
   }
 
   public setPersistPlanFn(fn: (plan: ExecutionPlan) => Promise<void>) {
@@ -187,7 +187,7 @@ export class PlanningManager implements IAgentService {
   }
 
   public getCurrentPlanId(): string | undefined {
-      return this.taskState.getPlan()?.id;
+    return this.taskState.getPlan()?.id;
   }
 
   public getCurrentPlan(): ExecutionPlan | undefined {
@@ -229,6 +229,10 @@ export class PlanningManager implements IAgentService {
 
   public getTaskState(): TaskState {
       return this.taskState;
+  }
+
+  public getMessageHandler(): MessageStateHandler {
+    return this.messageHandler;
   }
 
   public setMessageHandler(handler: MessageStateHandler) {

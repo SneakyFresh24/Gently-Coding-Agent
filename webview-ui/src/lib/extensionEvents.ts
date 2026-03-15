@@ -46,6 +46,14 @@ const handleMessage = (event: MessageEvent) => {
                     chatStore.appendChunk(msg.chunk);
                     break;
 
+                case "partialMessageUpdate":
+                    if (!get(isStreaming)) {
+                        const streamId = chatStore.startAssistantMessage();
+                        realtimeStore.setGenerating(true, streamId);
+                    }
+                    chatStore.updatePartialMessage(msg.index, msg.updates);
+                    break;
+
                 case "assistantMessageEnd":
                     chatStore.endAssistantMessage(msg.messageId);
                     realtimeStore.setGenerating(false);
