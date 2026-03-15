@@ -1,27 +1,26 @@
 /**
- * Simple Mutex for ensuring atomic operations in asynchronous code.
+ * Simple async mutex to serialize state access.
  */
 export class Mutex {
-    private mutex = Promise.resolve();
+    private promise: Promise<void> | null = null;
 
-    /**
-     * Executes the given function while holding the lock.
-     * Ensures only one function runs at a time.
-     */
-    async withLock<T>(fn: () => T | Promise<T>): Promise<T> {
-        let release: () => void;
-        const lock = new Promise<void>(resolve => {
-            release = resolve;
+    async runExclusive<T>(callback: () => Promise<T> | T): Promise<T> {
+        const previousPromise = this.promise;
+        let resolveNext: (() => void) | null = null;
+        this.promise = new Promise<void>((resolve) => {
+            resolveNext = resolve;
         });
 
-        const previous = this.mutex;
-        this.mutex = previous.then(() => lock);
+        if (previousPromise) {
+            await previousPromise;
+        }
 
-        await previous;
         try {
-            return await fn();
+            return await callback();
         } finally {
-            release!();
+            if (resolveNext) {
+                (resolveNext as () => void)();
+            }
         }
     }
 }

@@ -66,8 +66,14 @@ export interface IterativeStepResult {
   };
 }
 
+export interface TaskProgressEvent {
+  type: 'taskProgress';
+  progress: number;
+  label: string;
+}
+
 export interface PlanEvent {
-  type: string;
+  type: 'stepStatusUpdate' | 'planStatusUpdate' | 'iterativePlanStarted' | 'iterativePlanCompleted' | 'iterativePlanFailed' | 'iterativeStepCompleted' | 'iterativeStepFailed' | 'planCreated' | 'planUpdated' | 'planStepCompleted' | 'handover_to_coder' | 'taskProgress' | 'planLoaded';
   planId?: string;
   goal?: string;
   stepId?: string;
@@ -81,4 +87,6 @@ export interface PlanEvent {
   totalTime?: number;
   plan?: any;
   message?: string;
+  progress?: number;
+  label?: string;
 }

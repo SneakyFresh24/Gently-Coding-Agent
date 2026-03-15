@@ -6,7 +6,6 @@ import { CodebaseIndexer } from './CodebaseIndexer';
 import { ContextManager } from './contextManager';
 import { FileReferenceManager } from './fileReferenceManager';
 import { IncrementalIndexer } from './IncrementalIndexer';
-import { PlanManager } from './planning';
 import { MemoryManager as BaseMemoryManager } from './memory';
 import { MemoryBankManager } from './memory/MemoryBankManager';
 import { ValidationManager as BaseValidationManager } from './validation';
@@ -94,7 +93,6 @@ export function configureServices(container: Container, context: vscode.Extensio
     container.register('memoryBankManager', (c) => new MemoryBankManager(c.resolve('workspaceRoot')));
     container.register('fileReferenceManager', (c) => new FileReferenceManager(c.resolve('fileOps'), c.resolve('indexer')));
     container.register('incrementalIndexer', (c) => new IncrementalIndexer(c.resolve('indexer')));
-    container.register('planManager', () => new PlanManager());
     container.register('gitDiffService', (c) => new GitDiffService(c.resolve('workspaceRoot')));
     container.register('checkpointManager', (c) => new CheckpointManager(c.resolve('context'), c.resolve('gitDiffService')));
     container.register('astAnalyzer', (c) => new ASTAnalyzer(c.resolve('context'), c.resolve('fileOps')));
@@ -119,10 +117,10 @@ export function configureServices(container: Container, context: vscode.Extensio
     container.register('checkpointTools', (c) => new CheckpointTools(c.resolve('checkpointManager')));
     container.register('verificationTools', (c) => new VerificationTools(() => c.resolve('verificationAgent')));
     container.register('planningTools', (c) => new PlanningTools(
-        c.resolve('planManager'),
-        c.resolve<any>('terminalManager') || null, // Robust resolution
-        () => { },
-        c.resolve('toolRegistry')
+        c.resolve('planningManager'),
+        c.resolve<any>('terminalManager') || null,
+        c.resolve('toolRegistry'),
+        () => undefined
     ));
     container.register('safeEditTool', (c) => new SafeEditTool(
         c.resolve('fileOps'),
@@ -151,11 +149,7 @@ export function configureServices(container: Container, context: vscode.Extensio
 
     container.register('memoryManager', (c) => new MemoryManager(c.resolve('baseMemoryManager')));
 
-    container.register('planningManager', (c) => {
-        const pm = new PlanningManager(c.resolve('planManager'), null!);
-        pm.setToolManager(c.resolve('toolManager'));
-        return pm;
-    });
+    container.register('planningManager', () => new PlanningManager());
 
     container.register('toolManager', (c) => {
         const tm = new ToolManager(
@@ -165,7 +159,7 @@ export function configureServices(container: Container, context: vscode.Extensio
             c.resolve('projectTools'),
             c.resolve('checkpointTools'),
             c.resolve('planningTools'),
-            c.resolve('planManager'),
+            c.resolve('planningManager'),
             c.resolve('verificationTools'),
             c.resolve('memoryBankTools'),
             c.resolve('safeEditTool'),
@@ -178,7 +172,7 @@ export function configureServices(container: Container, context: vscode.Extensio
             tm.setTerminalManager(termManager);
         }
 
-        const pm = c.resolve<any>('planManager');
+        const pm = c.resolve<any>('planningManager');
         if (pm && typeof pm.setToolManager === 'function') {
             pm.setToolManager(tm);
         }

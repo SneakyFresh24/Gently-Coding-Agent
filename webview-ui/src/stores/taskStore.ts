@@ -62,7 +62,10 @@ function createTaskStore() {
   function updateAndSync(updater: (state: TaskState) => TaskState): void {
     update(state => {
       const newState = updater(state);
-      syncToExtension(newState);
+      // We return the state first, but update() is synchronous in Svelte
+      // so we can call sync immediately after or use a tick, but simple order reversal is what the user highlighted.
+      // Actually, Bug 5 says Sync VOR dem return is the problem.
+      setTimeout(() => syncToExtension(newState), 0); 
       return newState;
     });
   }

@@ -326,8 +326,8 @@ export class WebviewMessageHandler {
       case 'requestCurrentPlan': {
         const agentManager = (this.systemHandler as any).agentManager;
         if (agentManager) {
-          const planManager = agentManager.getPlanManager();
-          const currentPlan = planManager.getCurrentPlan();
+          const planningManager = agentManager.getPlanningManager();
+          const currentPlan = planningManager.getCurrentPlan();
           this.sendMessageToWebview({
             type: 'currentPlanResponse',
             plan: currentPlan || null
@@ -339,9 +339,9 @@ export class WebviewMessageHandler {
       case 'retryStep': {
         const agentManager = (this.systemHandler as any).agentManager;
         if (agentManager && data.planId && data.stepId) {
-          agentManager.getPlanManager().retryStep(data.planId, data.stepId);
+          agentManager.getPlanningManager().retryStep(data.planId, data.stepId);
           // Send update back to UI
-          const plan = agentManager.getPlanManager().getPlan(data.planId);
+          const plan = agentManager.getPlanningManager().getPlan(data.planId);
           this.sendMessageToWebview({ type: 'planLoaded', plan, planId: data.planId } as any);
         }
         break;
@@ -350,9 +350,9 @@ export class WebviewMessageHandler {
       case 'skipStep': {
         const agentManager = (this.systemHandler as any).agentManager;
         if (agentManager && data.planId && data.stepId) {
-          agentManager.getPlanManager().skipStep(data.planId, data.stepId);
+          agentManager.getPlanningManager().skipStep(data.planId, data.stepId);
           // Send update back to UI
-          const plan = agentManager.getPlanManager().getPlan(data.planId);
+          const plan = agentManager.getPlanningManager().getPlan(data.planId);
           this.sendMessageToWebview({ type: 'planLoaded', plan, planId: data.planId } as any);
         }
         break;
@@ -366,8 +366,8 @@ export class WebviewMessageHandler {
       case 'abortPlan': {
         const agentManager = (this.systemHandler as any).agentManager;
         if (agentManager && data.planId) {
-          agentManager.getPlanManager().abortPlan(data.planId);
-          const plan = agentManager.getPlanManager().getPlan(data.planId);
+          agentManager.getPlanningManager().abortPlan(data.planId);
+          const plan = agentManager.getPlanningManager().getPlan(data.planId);
           this.sendMessageToWebview({ type: 'planLoaded', plan, planId: data.planId } as any);
         }
         break;

@@ -2,7 +2,8 @@
 // PlanningTools.ts – FINAL VERSION (Bereich 1)
 // =====================================================
 
-import { PlanManager, CreatePlanParams, ExecutePlanParams, PlanEvent } from '../planning';
+import { PlanningManager } from '../agentManager/PlanningManager';
+import { ExecutionPlan, CreatePlanParams, ExecutePlanParams, PlanEvent } from '../planning';
 import { TerminalManager } from '../../terminal/TerminalManager';
 import { ToolRegistry } from './ToolRegistry';
 import { LogService } from '../../services/LogService';
@@ -11,9 +12,8 @@ const log = new LogService('PlanningTools');
 
 export class PlanningTools {
   constructor(
-    private planManager: PlanManager,
+    private planningManager: PlanningManager,
     private terminalManager: TerminalManager | null,
-    private emitEvent: (event: PlanEvent) => void,
     private toolRegistry?: any,
     private modeProvider?: () => string | undefined
   ) { }
@@ -29,13 +29,8 @@ export class PlanningTools {
   private async createPlan(params: CreatePlanParams): Promise<unknown> {
     log.info(`Creating plan for goal: ${params.goal}`);
     try {
-      const plan = this.planManager.createPlan(params);
+      const plan = this.planningManager.createPlan(params);
       log.info(`Plan created with ${plan.steps.length} steps: ${plan.id}`);
-
-      this.emitEvent({
-        type: 'planCreated',
-        plan: { ...plan, phase: 'created', timestamp: Date.now() }
-      });
 
       // Auf plan ausführung warten (Nur wenn NICHT im Architect-Modus)
       const currentMode = this.modeProvider?.();
@@ -54,19 +49,15 @@ export class PlanningTools {
       }
 
       log.info(`Starting auto-execution for plan ${plan.id}`);
-      await this.planManager.startAutoExecution(plan.id);
-
-      // Aktualisierten Status abrufen (kann undefined sein wenn Plan intern entfernt wurde)
-      const completedPlan = this.planManager.getPlan(plan.id);
-      const finalStatus = completedPlan?.status ?? 'completed';
+      const result = await this.planningManager.startPlanExecution(plan.id);
 
       return {
-        success: finalStatus === 'completed',
+        success: result.success,
         planId: plan.id,
         goal: plan.goal,
-        status: finalStatus,
+        status: result.plan.status,
         totalSteps: plan.totalSteps,
-        message: finalStatus === 'completed' ? `Plan erfolgreich abgeschlossen.` : `Plan Ausführung beendet mit Status: ${finalStatus}`
+        message: result.success ? `Plan erfolgreich abgeschlossen.` : `Plan Ausführung beendet mit Status: ${result.plan.status}`
       };
     } catch (error) {
       log.error(`Failed to create plan:`, error);
@@ -77,50 +68,27 @@ export class PlanningTools {
   private async executePlan(params: ExecutePlanParams): Promise<any> {
     log.info(`Executing plan: ${params.planId}`);
     try {
-      // NEU: Starte die automatische Ausführung über PlanManager
-      await this.planManager.startAutoExecution(params.planId);
-
-      const finalPlan = this.planManager.getPlan(params.planId);
-      const finalStatus = finalPlan?.status ?? 'completed';
-      log.info(`Plan execution finished for ${params.planId} with status: ${finalStatus}`);
-
-      this.emitEvent({
-        type: 'planStatusUpdate',
-        planId: params.planId,
-        status: finalStatus,
-        timestamp: Date.now()
-      });
+      const result = await this.planningManager.startPlanExecution(params.planId);
+      log.info(`Plan execution finished for ${params.planId} with status: ${result.plan.status}`);
 
       return {
-        success: finalStatus === 'completed',
+        success: result.success,
         planId: params.planId,
-        status: finalStatus,
-        completedSteps: finalPlan?.completedSteps ?? 0,
-        message: finalStatus === 'completed'
+        status: result.plan.status,
+        completedSteps: result.plan.completedSteps ?? 0,
+        message: result.success
           ? `✅ Plan erfolgreich abgeschlossen!`
-          : `Plan beendet mit Status: ${finalStatus}`
+          : `Plan beendet mit Status: ${result.plan.status}`
       };
     } catch (error: any) {
       log.error(`Plan execution failed for ${params.planId}:`, error);
-      this.emitEvent({
-        type: 'planStatusUpdate',
-        planId: params.planId,
-        status: 'failed',
-        error: error.message,
-        timestamp: Date.now()
-      });
       return { success: false, message: error.message };
     }
   }
 
   private async handoverToCoder(params: { planId: string; message?: string }): Promise<any> {
     log.info(`Handover to coder initiated for plan: ${params.planId}`);
-    this.emitEvent({
-      type: 'handover_to_coder',
-      planId: params.planId,
-      message: params.message || 'Architect has finished planning.',
-      timestamp: Date.now()
-    });
+    this.planningManager.handoverToCoder(params.planId, params.message || 'Architect has finished planning.');
     return { success: true, message: 'Handover to Code mode initiated' };
   }
 }

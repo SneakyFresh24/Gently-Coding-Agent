@@ -67,14 +67,26 @@ export class ToolRegistry {
    * Get tools in OpenAI tool format
    */
   getFormattedTools(): any[] {
-    return this.getAll().map(tool => ({
-      type: 'function',
-      function: {
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.parameters
+    return this.getAll().map(tool => {
+      const parameters = JSON.parse(JSON.stringify(tool.parameters));
+      if (parameters.type === 'object') {
+        parameters.properties = {
+          ...parameters.properties,
+          task_progress: {
+            type: 'string',
+            description: 'Optional progress update summarizing what has been done and what is left (e.g. "Analyzed code, now implementing changes").'
+          }
+        };
       }
-    }));
+      return {
+        type: 'function',
+        function: {
+          name: tool.name,
+          description: tool.description,
+          parameters
+        }
+      };
+    });
   }
 
   /**

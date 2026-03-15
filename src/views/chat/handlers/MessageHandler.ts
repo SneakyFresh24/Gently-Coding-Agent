@@ -45,7 +45,7 @@ export class MessageHandler {
     const followUp = new FollowUpHandler(
         this.toolCallManager as any, // Cast temporarily if types mismatch during migration
         sendMessageToWebview,
-        () => true, // Simplified validation for now
+        () => ({ valid: true, issues: [] }), // Simplified validation for now
         () => true, // Simplified repair for now
         (msg: string, retry: number, isFollow: boolean) => this.flowManager.generateAndStreamResponse(this.context, msg, retry, isFollow)
     );

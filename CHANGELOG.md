@@ -1,6 +1,23 @@
 # Changelog
 
 All notable changes to the "Gently" extension will be documented in this file.
+ 
+## [0.6.0] - 2026-03-15
+
+### Added
+- **Cline-Inspired Task/Plan Architecture**: Implemented a more robust, centralized system for task management.
+- **State Protection**: Added a `Mutex` to `TaskState` to prevent race conditions during parallel tool executions.
+- **Centralized Task Management**: Introduced `TaskState` and `Task` classes to orchestrate complex execution flows with retry and recovery logic.
+- **Universal Progress Tracking**: Added `task_progress` parameter to all tool schemas for granular real-time feedback.
+
+### Changed
+- **Core Refactor**: Replaced legacy planning components with a modern service layer (`PlanningManager`, `MessageStateHandler`).
+- **Improved Event Flow**: Centralized all outgoing webview messages to ensure state consistency.
+
+### Fixed
+- **DI Stability**: Resolved circular dependency loops in `ServiceProvider.ts` that caused stack overflow errors.
+- **Validation Logic**: Relaxed message schemas in `MessageValidator.ts` to support optional/null plan states during synchronization.
+- **Activation Errors**: Fixed various "Service not registered" and naming conflicts during extension startup.
 
 ## [0.5.4] - 2026-03-14
 

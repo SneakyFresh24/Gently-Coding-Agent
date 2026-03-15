@@ -548,10 +548,10 @@ const MessageSchemas: Record<string, any> = {
 
   // Planning and Task operations
   'syncTasks': {
-    required: ['plans', 'currentPlanId'],
+    required: ['plans'],
     fields: {
       plans: { type: 'array', maxLength: 100 },
-      currentPlanId: { type: 'string', maxLength: 100, optional: true }
+      currentPlanId: { type: 'string', maxLength: 100, optional: true, nullable: true }
     }
   },
   'syncContext': {

@@ -169,6 +169,41 @@ export class SessionHistoryManager {
         return this.sessionManager?.getActiveSession(type);
     }
 
+    /**
+     * Persists the current TaskState to the active session metadata.
+     */
+    async saveTaskState(taskState: any): Promise<void> {
+        if (!this.sessionManager) return;
+        try {
+            const activeSession = await this.sessionManager.getActiveSession(SessionType.CHAT);
+            if (activeSession) {
+                const metadata = activeSession.metadata || {};
+                metadata.taskState = taskState;
+                await this.sessionManager.getChatProvider().updateSession(activeSession.id, { metadata });
+                log.info(`TaskState persisted to session ${activeSession.id}`);
+            }
+        } catch (error) {
+            log.error('Error saving TaskState to session:', error);
+        }
+    }
+
+    /**
+     * Restores TaskState from the active session metadata.
+     */
+    async restoreTaskState(): Promise<any | null> {
+        if (!this.sessionManager) return null;
+        try {
+            const activeSession = await this.sessionManager.getActiveSession(SessionType.CHAT);
+            if (activeSession && activeSession.metadata?.taskState) {
+                log.info(`TaskState restored from session ${activeSession.id}`);
+                return activeSession.metadata.taskState;
+            }
+        } catch (error) {
+            log.error('Error restoring TaskState from session:', error);
+        }
+        return null;
+    }
+
     getChatProvider() {
         return this.sessionManager?.getChatProvider();
     }

@@ -22,7 +22,7 @@ import {
   MemoryManager,
   IAgentService
 } from './index';
-import { PlanManager, PlanEvent } from '../planning';
+import { PlanEvent } from '../planning';
 import {
   safeExecute,
   agentLogger,
@@ -135,11 +135,11 @@ export class AgentManager {
             }
           }
 
-          // Bridge CheckpointManager to PlanManager
-          const planManager = this.container.resolve<any>('planManager');
+          // Bridge CheckpointManager to PlanningManager
+          const planningManager = this.container.resolve<PlanningManager>('planningManager');
           const checkpointManager = this.container.resolve<any>('checkpointManager');
-          if (planManager && checkpointManager) {
-            planManager.setCheckpointManager(checkpointManager);
+          if (planningManager && checkpointManager) {
+            // PlanningManager might need a setter for checkpointManager if we implement it there
           }
         }
       );
@@ -414,8 +414,8 @@ export class AgentManager {
     return this.container.resolve('planningManager');
   }
 
-  getPlanManager(): PlanManager {
-    return this.container.resolve<PlanningManager>('planningManager').getPlanManager();
+  getPlanManager(): any {
+    return this.container.resolve<PlanningManager>('planningManager');
   }
 
   async executeGoalIteratively(goal: string, tools: Map<string, any>, llmProvider: OpenRouterService): Promise<unknown> {

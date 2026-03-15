@@ -284,7 +284,8 @@ const handleMessage = (event: MessageEvent) => {
                     break;
 
                 case "activityUpdate":
-                    console.log('[Webview] activityUpdate received:', msg.label);
+                case "taskProgress":
+                    console.log('[Webview] taskProgress/activityUpdate received:', msg.label);
                     realtimeStore.setActivity(msg.label || null);
                     break;
             }

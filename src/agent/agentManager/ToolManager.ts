@@ -18,7 +18,7 @@ import {
 } from '../tools';
 import { IAgentService } from './index';
 import { TerminalManager } from '../../terminal/TerminalManager';
-import { PlanManager } from '../planning';
+import { PlanningManager } from './PlanningManager';
 
 export class ToolManager implements IAgentService {
   // Core tool components
@@ -36,7 +36,7 @@ export class ToolManager implements IAgentService {
 
   // Dependencies
   private terminalManager: TerminalManager | null = null;
-  private planManager: PlanManager;
+  private planningManager: PlanningManager;
 
   // Configuration
   private debug: boolean = false;
@@ -50,7 +50,7 @@ export class ToolManager implements IAgentService {
     projectTools: ProjectTools,
     checkpointTools: CheckpointTools,
     planningTools: PlanningTools,
-    planManager: PlanManager,
+    planningManager: PlanningManager,
     verificationTools: VerificationTools,
     memoryBankTools: MemoryBankTools,
     safeEditTool: SafeEditTool,
@@ -63,7 +63,7 @@ export class ToolManager implements IAgentService {
     this.projectTools = projectTools;
     this.checkpointTools = checkpointTools;
     this.planningTools = planningTools;
-    this.planManager = planManager;
+    this.planningManager = planningManager;
     this.verificationTools = verificationTools;
     this.memoryBankTools = memoryBankTools;
     this.safeEditTool = safeEditTool;
@@ -164,6 +164,17 @@ export class ToolManager implements IAgentService {
         throw new Error(`Tool not found: ${toolName}`);
       }
 
+      // Handle task_progress if present
+      if (params && params.task_progress && this.eventCallback) {
+        this.eventCallback({
+          type: 'taskProgress',
+          label: params.task_progress
+        });
+        // Optionally remove it so the tool itself doesn't see it (if it doesn't expect it)
+        const { task_progress, ...rest } = params;
+        params = rest;
+      }
+
       if (this.debug) {
         console.log(`[ToolManager] Executing tool: ${toolName}`, params);
       }
@@ -248,9 +259,8 @@ export class ToolManager implements IAgentService {
 
     // Update planning tools with terminal manager
     this.planningTools = new PlanningTools(
-      this.planManager,
+      this.planningManager,
       this.terminalManager,
-      this.eventCallback || (() => { }),
       this.toolRegistry,
       this.modeProvider
     );
@@ -277,9 +287,8 @@ export class ToolManager implements IAgentService {
 
     // Update planning tools with new callback
     this.planningTools = new PlanningTools(
-      this.planManager,
+      this.planningManager as any,
       this.terminalManager,
-      callback,
       this.toolRegistry,
       this.modeProvider
     );
@@ -293,9 +302,8 @@ export class ToolManager implements IAgentService {
 
     // Update planning tools with the new mode provider
     this.planningTools = new PlanningTools(
-      this.planManager,
+      this.planningManager,
       this.terminalManager,
-      this.eventCallback || (() => { }),
       this.toolRegistry,
       this.modeProvider
     );
