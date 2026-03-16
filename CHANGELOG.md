@@ -2,6 +2,21 @@
 
 All notable changes to the "Gently" extension will be documented in this file.
  
+## [0.6.3] - 2026-03-16
+
+### Added
+- **Web Search Integration**: Introduced the `web_search` tool (with `search_web` alias) for enhanced research capabilities.
+- **Session Resilience**: Added per-session `Mutex` protection and auto-recovery from backup files (`.bak`) to prevent session corruption.
+- **Enhanced UI Feedback**: Implemented "eager" tool call emission and partial name updates for real-time progress visualization.
+
+### Fixed
+- **Conversation Persistence**: Fixed the "Missing tool result" bug by ensuring tool execution results are saved to both runtime and disk history.
+- **UI Indicator Stability**: Resolved sticky status labels (e.g., "Preparing prompt...") that remained visible after tasks finished or errored.
+- **Planning Reliability**: Fixed a critical `TypeError` occurred during iterative planning with missing step definitions.
+
+### Changed
+- **Tool Registration**: Refactored `ServiceProvider.ts` and `ToolManager.ts` to support dynamic tool registration and improved dependency injection.
+
 ## [0.6.0] - 2026-03-15
 
 ### Added

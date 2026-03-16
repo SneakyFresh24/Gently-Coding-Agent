@@ -75,7 +75,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.openRouterService,
       this.agentManager,
       (message: any) => this.sendMessageToWebview(message),
-      (_message: any) => { this.sendContextUpdate(); } // Trigger context update on chat
+      (message: any) => {
+        // 1. Runtime-History update (crucial for tool sequence continuity)
+        const context = this.messageHandler.getContext();
+        context.conversationHistory.push(message);
+
+        // 2. Persistent storage update (for session recovery)
+        this.messageHandler.getSessionManager().saveMessageToHistory(message).catch(e =>
+          console.error('[ChatViewProvider] Failed to save conversation history message:', e)
+        );
+
+        // 3. UI Update
+        this.sendContextUpdate();
+      }
     );
 
     this.fileHandler = new FileHandler(

@@ -109,9 +109,11 @@ export class ChatFlowManager {
 
         if (assistantMessage.length > 0 || toolCalls.length > 0) {
             await this.completeStreaming(context, assistantMessage, toolCalls, isFollowUp);
-        } else {
             this.sendMessageToWebview({ type: 'generatingEnd' });
         }
+        
+        // Ensure activity label is cleared after LLM completes (regardless of content)
+        this.sendMessageToWebview({ type: 'activityUpdate', label: null });
     }
 
     private async completeStreaming(context: ChatViewContext, assistantMessage: string, toolCalls: any[], isFollowUp: boolean): Promise<void> {
@@ -123,6 +125,9 @@ export class ChatFlowManager {
         this.sendMessageToWebview({ type: 'generatingEnd' });
         
         await this.sessionHistoryManager.saveMessageToHistory(assistantMsg);
+
+        // Clear activity label after saving to history
+        this.sendMessageToWebview({ type: 'activityUpdate', label: null });
 
         if (toolCalls.length > 0) {
             await this.toolCallDispatcher.handleToolCalls(toolCalls, messageId, context);
