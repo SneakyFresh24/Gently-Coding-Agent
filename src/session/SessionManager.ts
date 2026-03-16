@@ -266,16 +266,23 @@ export class SessionManager implements ISessionManager {
     console.log(`[SessionManager] Set active session: ${sessionId} for type: ${type}`);
   }
 
-  /**
-   * Save all sessions
+   /**
+   * Save all sessions (flush pending debounced saves)
    */
   async saveSessions(): Promise<void> {
     if (this.disposed) {
       throw new Error('SessionManager has been disposed');
     }
 
-    // Sessions are automatically saved when modified, so this is a no-op
-    console.log('[SessionManager] Sessions are automatically saved');
+    await this.flush();
+  }
+
+  /**
+   * Immediately flush all pending disk writes
+   */
+  async flush(): Promise<void> {
+    if (this.disposed) return;
+    await this.storage.flush();
   }
 
   /**

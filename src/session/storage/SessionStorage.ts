@@ -16,6 +16,7 @@ import {
   StorageEventListener
 } from './types/StorageTypes';
 import { Mutex } from '../../core/state/Mutex';
+import { debounce, DebouncedFunction } from '../../utils/debounce';
 
 /**
  * Session storage implementation
@@ -25,6 +26,7 @@ export class SessionStorageImpl implements ISessionStorage {
   private eventListeners: Map<StorageEventType, StorageEventListener[]> = new Map();
   private disposed: boolean = false;
   private locks: Map<string, Mutex> = new Map();
+  private debouncedSaves: Map<string, DebouncedFunction<(session: Session) => Promise<void>>> = new Map();
 
   constructor(config: StorageConfig) {
     this.config = config;
@@ -39,13 +41,41 @@ export class SessionStorageImpl implements ISessionStorage {
   }
 
   /**
-   * Save session to storage
+   * Save session to storage (debounced)
    */
   async saveSession(session: Session): Promise<void> {
     if (this.disposed) {
       throw new Error('Storage has been disposed');
     }
 
+    let debouncedSave = this.debouncedSaves.get(session.id);
+    if (!debouncedSave) {
+      debouncedSave = debounce(this.internalSaveSession.bind(this), 300);
+      this.debouncedSaves.set(session.id, debouncedSave);
+    }
+
+    debouncedSave.trigger(session);
+  }
+
+  /**
+   * Immediately save all pending sessions
+   */
+  async flush(): Promise<void> {
+    console.log('[SessionStorage] Flushing all pending saves...');
+    const flushPromises: Promise<any>[] = [];
+    for (const debouncedSave of this.debouncedSaves.values()) {
+      const result = debouncedSave.flush();
+      if (result instanceof Promise) {
+        flushPromises.push(result);
+      }
+    }
+    await Promise.all(flushPromises);
+  }
+
+  /**
+   * Internal save session to storage
+   */
+  private async internalSaveSession(session: Session): Promise<void> {
     const lock = this.getLock(session.id);
     return await lock.runExclusive(async () => {
       try {

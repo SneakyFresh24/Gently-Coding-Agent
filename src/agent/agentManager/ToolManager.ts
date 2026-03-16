@@ -2,6 +2,7 @@
 // ToolManager - Refactored Tool System Management
 // =====================================================
 
+import * as path from 'path';
 import {
   ToolRegistry,
   FileTools,
@@ -170,6 +171,145 @@ export class ToolManager implements IAgentService {
    */
   getAutoApproveManager(): AutoApproveManager {
     return this.autoApproveManager;
+  }
+
+  /**
+   * Execute multiple tool calls, potentially in parallel.
+   * Independent tools run simultaneously, while tools targeting the same files run sequentially.
+   */
+  async executeTools(toolCalls: { id: string, name: string, params: any }[]): Promise<{ id: string, result: any }[]> {
+    if (this.debug) {
+      console.log(`[ToolManager] Dispatching ${toolCalls.length} tool calls`);
+    }
+
+    const groups = this.groupToolCalls(toolCalls);
+    const results: { id: string, result: any }[] = [];
+
+    await Promise.allSettled(groups.map(async (group) => {
+      for (const call of group) {
+        const taskId = call.id;
+        const toolName = call.name;
+        const toolArgs = call.params;
+
+        try {
+          // 1. Resolve planning context if applicable
+          const planCtx = this.resolvePlanContext(toolName, toolArgs);
+          
+          // 2. Emit start events
+          if (this.eventCallback) {
+            import('../../views/chat/utils/ToolCallUtils').then(({ ToolCallUtils }) => {
+              this.eventCallback!({
+                type: 'taskStart',
+                taskId,
+                taskName: ToolCallUtils.getThinkingMessage(toolName, toolArgs)
+              });
+              this.eventCallback!({ type: 'taskUpdate', taskId, status: 'active' });
+            });
+          }
+
+          // 3. Mark plan step as in-progress
+          if (planCtx && this.planningManager) {
+            this.planningManager.updateStepStatus(planCtx.planId, planCtx.stepId, 'in-progress');
+            toolArgs.planId = planCtx.planId;
+            toolArgs.stepId = planCtx.stepId;
+          }
+
+          // 4. Execution
+          const result = await this.executeTool(toolName, toolArgs);
+          results.push({ id: taskId, result });
+
+          // 5. Handle success updates
+          if (planCtx && this.planningManager) {
+            this.planningManager.updateStepStatus(planCtx.planId, planCtx.stepId, 'completed', result);
+            if (this.eventCallback) {
+              this.eventCallback({ type: 'planStepCompleted', planId: planCtx.planId, stepId: planCtx.stepId, result });
+            }
+          }
+
+          if (this.eventCallback) {
+            import('../../views/chat/utils/ToolCallUtils').then(({ ToolCallUtils }) => {
+              this.eventCallback!({ type: 'taskComplete', taskId });
+              this.eventCallback!({
+                type: 'toolComplete',
+                tool: toolName,
+                comment: ToolCallUtils.generateToolCompletionComment(toolName, toolArgs, result)
+              });
+            });
+          }
+
+        } catch (error) {
+          results.push({ id: taskId, result: { error: String(error) } });
+          
+          if (this.eventCallback) {
+            this.eventCallback({ type: 'taskComplete', taskId });
+          }
+          
+          // Handle plan failure
+          const planCtx = this.resolvePlanContext(toolName, toolArgs);
+          if (planCtx && this.planningManager) {
+             this.planningManager.updateStepStatus(planCtx.planId, planCtx.stepId, 'failed', undefined, String(error));
+          }
+        }
+      }
+    }));
+
+    return results;
+  }
+
+  /**
+   * Helper to resolve plan ID and step ID for a tool call if it's part of a plan.
+   */
+  private resolvePlanContext(toolName: string, params: any): { planId: string, stepId: string } | null {
+    if (!this.planningManager) return null;
+    
+    const currentPlan = this.planningManager.getCurrentPlan();
+    const targetPlanId = params.planId || currentPlan?.id;
+    
+    if (!targetPlanId) return null;
+    
+    const plan = this.planningManager.getPlan(targetPlanId);
+    if (!plan || (plan.status !== 'executing' && plan.status !== 'pending')) return null;
+
+    const step = params.stepId 
+      ? plan.steps.find((s: any) => s.id === params.stepId) 
+      : plan.steps.find((s: any) => s.tool === toolName && (s.status === 'in-progress' || s.status === 'pending'));
+
+    if (step) {
+      return { planId: targetPlanId, stepId: step.id };
+    }
+    
+    return null;
+  }
+
+  /**
+   * Groups tool calls that target the same file to ensure sequential execution for those files.
+   * Independent tools each get their own group and run in parallel.
+   */
+  private groupToolCalls(toolCalls: { id: string, name: string, params: any }[]): { id: string, name: string, params: any }[][] {
+    const fileToGroup = new Map<string, { id: string, name: string, params: any }[]>();
+    const independentGroups: { id: string, name: string, params: any }[][] = [];
+
+    for (const call of toolCalls) {
+      const filePath = call.params?.path || call.params?.file_path;
+      
+      // Only group if it's a file-modifying tool and has a path
+      const isFileModifying = ['write_file', 'edit_file', 'safe_edit_file', 'apply_block_edit', 'delete_file'].includes(call.name);
+      
+      if (isFileModifying && filePath) {
+        const normalizedPath = path.normalize(filePath);
+        if (!fileToGroup.has(normalizedPath)) {
+          const group: { id: string, name: string, params: any }[] = [];
+          fileToGroup.set(normalizedPath, group);
+          independentGroups.push(group);
+        }
+        fileToGroup.get(normalizedPath)!.push(call);
+      } else {
+        // Independent tool (read, system, etc.)
+        independentGroups.push([call]);
+      }
+    }
+
+    return independentGroups;
   }
 
   // ==================== TOOL EXECUTION ====================

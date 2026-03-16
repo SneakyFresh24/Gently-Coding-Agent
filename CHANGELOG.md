@@ -6,7 +6,9 @@ All notable changes to the "Gently" extension will be documented in this file.
 
 ### Added
 - **Web Search Integration**: Introduced the `web_search` tool (with `search_web` alias) for enhanced research capabilities.
+- **Parallel Tool Calling**: Implemented a centralized execution core in `ToolManager` with file-path dependency detection. Independent tools now run simultaneously while maintainng data integrity for file modifications.
 - **Session Resilience**: Added per-session `Mutex` protection and auto-recovery from backup files (`.bak`) to prevent session corruption.
+- **Debounced Persistence**: Added a 300ms debounce for session saves with a crash-safe `async flush` mechanism on extension shutdown.
 - **Enhanced UI Feedback**: Implemented "eager" tool call emission and partial name updates for real-time progress visualization.
 
 ### Fixed

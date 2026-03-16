@@ -91,68 +91,24 @@ export class TraditionalToolExecutor {
     }
 
     private async executeToolCallsParallel(toolCalls: ToolCall[]): Promise<{ toolCall: ToolCall, result: any, success: boolean }[]> {
-        const baseTimestamp = Date.now();
-        const taskIds = toolCalls.map((_, i) => `task-${baseTimestamp}-${i}`);
-        const planningManager = this.agentManager.getPlanningManager();
-
-        return await Promise.all(toolCalls.map(async (toolCall, i) => {
-            const toolName = toolCall.function.name;
-            const toolArgs = ToolCallUtils.repairAndParseJSON(toolCall.function.arguments).repaired;
-            const taskId = taskIds[i];
-
-            this.sendMessageToWebview({ type: 'taskStart', taskId, taskName: ToolCallUtils.getThinkingMessage(toolName, toolArgs) });
-
-            const targetPlanId = toolArgs.planId || planningManager.getCurrentPlan()?.id;
-            let resolvedStep: PlanStep | null = null;
-
-            if (targetPlanId) {
-                const plan = planningManager.getPlan(targetPlanId);
-                if (plan && (plan.status === 'executing' || plan.status === 'pending')) {
-                    resolvedStep = toolArgs.stepId ? plan.steps.find((s: PlanStep) => s.id === toolArgs.stepId) || null : plan.steps.find((s: PlanStep) => s.tool === toolName && (s.status === 'in-progress' || s.status === 'pending')) || null;
-                    if (resolvedStep) {
-                        toolArgs.planId = targetPlanId;
-                        toolArgs.stepId = resolvedStep.id;
-                        planningManager.updateStepStatus(targetPlanId, resolvedStep.id, 'in-progress');
-                    }
-                }
-            }
-
-            return await this.executeWithLock(toolName, toolArgs, taskId, targetPlanId, resolvedStep, toolCall, planningManager);
+        const toolManager = this.agentManager.getToolManager();
+        
+        const mappedCalls = toolCalls.map(tc => ({
+            id: tc.id,
+            name: tc.function.name,
+            params: ToolCallUtils.repairAndParseJSON(tc.function.arguments).repaired
         }));
-    }
 
-    private async executeWithLock(toolName: string, toolArgs: any, taskId: string, targetPlanId: string | null, resolvedStep: PlanStep | null, toolCall: ToolCall, planningManager: PlanningManager): Promise<{ toolCall: ToolCall, result: any, success: boolean }> {
-        const filePath = toolArgs.path || toolArgs.file_path;
-        if (['write_file', 'edit_file', 'safe_edit_file', 'apply_block_edit', 'delete_file'].includes(toolName) && filePath) {
-            const currentLock = this.fileLocks.get(filePath) || Promise.resolve();
-            const newLock = currentLock.then(() => this.internalExecute(toolName, toolArgs, taskId, targetPlanId, resolvedStep, toolCall, planningManager));
-            this.fileLocks.set(filePath, newLock.then(() => { }));
-            return await newLock;
-        }
-        return await this.internalExecute(toolName, toolArgs, taskId, targetPlanId, resolvedStep, toolCall, planningManager);
-    }
+        const results = await toolManager.executeTools(mappedCalls);
 
-    private async internalExecute(toolName: string, toolArgs: any, taskId: string, targetPlanId: string | null, resolvedStep: PlanStep | null, toolCall: ToolCall, planningManager: PlanningManager): Promise<{ toolCall: ToolCall, result: any, success: boolean }> {
-        try {
-            this.sendMessageToWebview({ type: 'taskUpdate', taskId, status: 'active' });
-            const result = await this.agentManager.executeTool(toolName, toolArgs);
-
-            if (targetPlanId && resolvedStep) {
-                planningManager.updateStepStatus(targetPlanId, resolvedStep.id, 'completed', result);
-                this.sendMessageToWebview({ type: 'planStepCompleted', planId: targetPlanId, stepId: resolvedStep.id, result });
-            }
-
-            this.sendMessageToWebview({ type: 'taskComplete', taskId });
-            this.sendMessageToWebview({ type: 'toolComplete', tool: toolName, comment: ToolCallUtils.generateToolCompletionComment(toolName, toolArgs, result) });
-
-            return { toolCall, result, success: true };
-        } catch (error) {
-            if (targetPlanId && resolvedStep) {
-                planningManager.updateStepStatus(targetPlanId, resolvedStep.id, 'failed', undefined, String(error));
-            }
-            this.sendMessageToWebview({ type: 'taskComplete', taskId });
-            return { toolCall, result: { error: String(error) }, success: false };
-        }
+        return results.map(r => {
+            const originalCall = toolCalls.find(tc => tc.id === r.id)!;
+            return {
+                toolCall: originalCall,
+                result: r.result,
+                success: !r.result.error
+            };
+        });
     }
 }
 

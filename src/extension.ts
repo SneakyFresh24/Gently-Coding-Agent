@@ -150,8 +150,18 @@ export async function activate(context: vscode.ExtensionContext) {
   }
 }
 
-export function deactivate() {
+export async function deactivate() {
   console.log('Gently AI Coding Agent is now deactivated');
+
+  // Flush pending disk writes
+  if (sessionManager) {
+    try {
+      await sessionManager.flush();
+    } catch (err) {
+      console.error('Failed to flush sessions during deactivation:', err);
+    }
+  }
+
   if (agentManager) agentManager.dispose();
   if (guardianIntegration) guardianIntegration.dispose();
 }
