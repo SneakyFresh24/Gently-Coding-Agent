@@ -1,15 +1,16 @@
 <script lang="ts">
-  import { extensionSync } from "../../lib/extensionSync";
-  import { terminalStore, terminalMode } from "../../stores/terminalStore";
+  import { settingsStore } from "../../stores/settingsStore";
   import { realtimeStore } from "../../stores/realtimeStore";
 
   function handleToggle() {
-    const newMode = $terminalMode === "manual" ? "smart" : "manual";
-    terminalStore.setMode(newMode);
-    extensionSync.send("setTerminalMode", { mode: newMode });
+    const current = $settingsStore.autoApproveSettings;
+    settingsStore.setAutoApproveSettings({
+      ...current,
+      executeSafeCommands: !current.executeSafeCommands
+    });
   }
 
-  let isSmartMode = $derived($terminalMode === "smart");
+  let isSmartMode = $derived($settingsStore.autoApproveSettings.executeSafeCommands);
   let isTerminalActive = $derived($realtimeStore.terminalActive);
   let pendingApprovals = $derived($realtimeStore.pendingApprovalsCount);
 </script>

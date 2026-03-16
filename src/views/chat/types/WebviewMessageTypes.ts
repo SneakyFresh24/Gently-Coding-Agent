@@ -11,6 +11,7 @@ import {
   QuickPattern
 } from '../../../terminal/HybridApprovalManager';
 import { OutputChunk } from '../../../terminal/execution/types/ExecutionTypes';
+import { AutoApproveSettings } from '../../../approval/AutoApproveSettings';
 
 // =====================================================
 // INBOUND MESSAGES (Webview → Extension)
@@ -530,6 +531,31 @@ export interface ShowStepResultMessage {
   result: any;
 }
 
+/**
+ * Set auto-approve settings
+ */
+export interface SetAutoApproveSettingsMessage {
+  type: 'setAutoApproveSettings';
+  settings: AutoApproveSettings;
+}
+
+/**
+ * Toggle YOLO mode
+ */
+export interface ToggleYoloModeMessage {
+  type: 'toggleYoloMode';
+  enabled: boolean;
+}
+
+/**
+ * Response to a tool approval request
+ */
+export interface ToolApprovalResponseMessage {
+  type: 'toolApprovalResponse';
+  approvalId: string;
+  approved: boolean;
+}
+
 // =====================================================
 // OUTBOUND MESSAGES (Extension → Webview)
 // =====================================================
@@ -592,6 +618,25 @@ export interface AuthStatusMessage {
   selectedModel?: string;
   selectedMode?: string;
   currentMode?: Record<string, unknown>;
+}
+
+/**
+ * Auto-approve settings updated
+ */
+export interface AutoApproveSettingsUpdateMessage {
+  type: 'autoApproveSettingsUpdate';
+  settings: AutoApproveSettings;
+}
+
+/**
+ * Tool approval request
+ */
+export interface ToolApprovalRequestMessage {
+  type: 'toolApprovalRequest';
+  approvalId: string;
+  toolName: string;
+  params: any;
+  timestamp: number;
 }
 
 /**
@@ -1196,7 +1241,10 @@ export type InboundWebviewMessage =
   | SkipStepMessage
   | RequestSessionMetadataMessage
   | AbortPlanMessage
-  | ShowStepResultMessage;
+  | ShowStepResultMessage
+  | SetAutoApproveSettingsMessage
+  | ToggleYoloModeMessage
+  | ToolApprovalResponseMessage;
 
 /**
  * All outbound messages (Extension → Webview)
@@ -1267,6 +1315,8 @@ export type OutboundWebviewMessage =
   | { type: 'checkpointRestored'; checkpointId: string; messageId: string; checkpointNumber: number; filesRestored: string[] }
   | { type: 'checkpoints'; messageId: string; checkpoints: any[] }
   | { type: 'activityUpdate'; label: string | null }
+  | AutoApproveSettingsUpdateMessage
+  | ToolApprovalRequestMessage
   | PlanStatusUpdateMessage
   | StepStatusUpdateMessage
   | PlanUpdatedMessage;

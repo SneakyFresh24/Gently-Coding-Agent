@@ -3,7 +3,7 @@
     import ModeSelector from "../ui/ModeSelector.svelte";
     import TerminalModeToggle from "../terminal/TerminalModeToggle.svelte";
     import ValidationIndicator from "../validation/ValidationIndicator.svelte";
-    import { Brain, Sparkles } from "lucide-svelte";
+    import { Brain, Sparkles, ShieldCheck } from "lucide-svelte";
     import { realtimeStore } from "../../stores/realtimeStore";
     import { chatActions } from "../../lib/chatActions";
 
@@ -11,12 +11,14 @@
         selectedMode?: string;
         messageLength?: number;
         onenhancePrompt?: () => void;
+        ontoggleAutoApprove?: () => void;
     }
 
     let {
         selectedMode = "architect",
         messageLength = 0,
         onenhancePrompt,
+        ontoggleAutoApprove,
     }: Props = $props();
 
     let isEnhancing = $derived($realtimeStore.isEnhancing);
@@ -63,6 +65,14 @@
             aria-label="Enhance prompt"
         >
             <Sparkles size={14} />
+        </button>
+        <button
+            class="icon-button"
+            onclick={ontoggleAutoApprove}
+            title="Auto-Approval Settings"
+            aria-label="Toggle Auto-Approval Settings"
+        >
+            <ShieldCheck size={14} />
         </button>
         <ValidationIndicator onshowErrors={showValidationDialog} />
     </div>

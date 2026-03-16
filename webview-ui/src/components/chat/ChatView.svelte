@@ -15,6 +15,7 @@
   import ChatToolbar from "./ChatToolbar.svelte";
   import ChatOverlays from "./ChatOverlays.svelte";
   import ErrorBanner from "./ErrorBanner.svelte";
+  import AutoApproveMenu from "../approval/AutoApproveMenu.svelte";
 
   import type { FileReference } from "../../stores/chatStore";
 
@@ -29,6 +30,7 @@
   let activeTab = $state<"thread" | "task" | "context">("thread");
   let pendingFileReferences = $state<FileReference[]>([]);
   let messageList = $state<MessageList | null>(null);
+  let showAutoApproveMenu = $state(false);
 
   let selectedMode = $derived($settingsStore.selectedMode);
   let error = $derived($chatStore.error);
@@ -81,10 +83,13 @@
 
   {#if activeTab === "thread"}
     <div class="input-section">
+      <AutoApproveMenu isOpen={showAutoApproveMenu} />
+      
       <ChatToolbar
         {selectedMode}
         messageLength={message.trim().length}
         onenhancePrompt={enhancePrompt}
+        ontoggleAutoApprove={() => showAutoApproveMenu = !showAutoApproveMenu}
       />
 
       <ChatInputArea

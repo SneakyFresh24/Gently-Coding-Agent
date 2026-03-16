@@ -20,6 +20,8 @@ import {
 import { IAgentService } from './index';
 import { TerminalManager } from '../../terminal/TerminalManager';
 import { PlanningManager } from './PlanningManager';
+import { AutoApproveManager } from '../../approval/AutoApproveManager';
+import { HookManager } from '../../hooks/HookManager';
 
 export class ToolManager implements IAgentService {
   // Core tool components
@@ -39,6 +41,8 @@ export class ToolManager implements IAgentService {
   // Dependencies
   private terminalManager: TerminalManager | null = null;
   private planningManager: PlanningManager;
+  private autoApproveManager: AutoApproveManager;
+  private hookManager: HookManager;
 
   // Configuration
   private debug: boolean = false;
@@ -58,7 +62,9 @@ export class ToolManager implements IAgentService {
     safeEditTool: SafeEditTool,
     applyBlockEditTool: ApplyBlockEditTool,
     commandTools: CommandTools,
-    webSearchTools: WebSearchTools
+    webSearchTools: WebSearchTools,
+    autoApproveManager: AutoApproveManager,
+    hookManager: HookManager
   ) {
     this.toolRegistry = toolRegistry;
     this.fileTools = fileTools;
@@ -73,6 +79,8 @@ export class ToolManager implements IAgentService {
     this.applyBlockEditTool = applyBlockEditTool;
     this.commandTools = commandTools;
     this.webSearchTools = webSearchTools;
+    this.autoApproveManager = autoApproveManager;
+    this.hookManager = hookManager;
   }
 
   async initialize(): Promise<void> {
@@ -157,10 +165,17 @@ export class ToolManager implements IAgentService {
     return this.toolRegistry.getNames();
   }
 
+  /**
+   * Get auto approve manager
+   */
+  getAutoApproveManager(): AutoApproveManager {
+    return this.autoApproveManager;
+  }
+
   // ==================== TOOL EXECUTION ====================
 
   /**
-   * Execute a tool
+   * Execute a tool with hooks and auto-approval check
    */
   async executeTool(toolName: string, params: any): Promise<any> {
     try {
@@ -175,19 +190,87 @@ export class ToolManager implements IAgentService {
           type: 'taskProgress',
           label: params.task_progress
         });
-        // Optionally remove it so the tool itself doesn't see it (if it doesn't expect it)
         const { task_progress, ...rest } = params;
         params = rest;
+      }
+
+      // 1. PRE-HOOKS
+      const preHookResult = await this.hookManager.executePreHooks(toolName, params);
+      if (preHookResult.blocked) {
+        throw new Error(`Tool execution blocked by hook: ${preHookResult.reason || 'Unknown reason'}`);
+      }
+      params = preHookResult.modifiedParams;
+
+      // 2. APPROVAL CHECK
+      const autoApproved = await this.autoApproveManager.shouldAutoApprove(toolName, params);
+      if (!autoApproved) {
+        const approved = await this.requestApproval(toolName, params);
+        if (!approved) {
+          throw new Error('Tool execution rejected by user');
+        }
       }
 
       if (this.debug) {
         console.log(`[ToolManager] Executing tool: ${toolName}`, params);
       }
 
-      return await tool.execute(params);
+      // 3. EXECUTION
+      const result = await tool.execute(params);
+
+      // 4. POST-HOOKS
+      await this.hookManager.executePostHooks(toolName, params, result);
+
+      return result;
     } catch (error) {
       console.error(`[ToolManager] Error executing tool ${toolName}:`, error);
       throw error;
+    }
+  }
+
+  /**
+   * Request approval for a tool execution
+   * Returns a promise that resolves when the user approves or rejects
+   */
+  private async requestApproval(toolName: string, params: any): Promise<boolean> {
+    if (!this.eventCallback) return false;
+
+    return new Promise((resolve) => {
+      const approvalId = `tool_approval_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      // Map to the existing commandApprovalRequest pattern for now, 
+      // or we might need a dedicated toolApprovalRequest message
+      const callback = this.eventCallback;
+      if (callback) {
+        callback({
+          type: 'toolApprovalRequest',
+          approvalId,
+          toolName,
+          params,
+          timestamp: Date.now()
+        });
+      }
+
+      // Simple one-time listener pattern (needs to be handled in ChatViewProvider)
+      // For now we'll assume the response comes back via a handler we'll add
+      const listener = (event: any) => {
+        if (event.type === 'toolApprovalResponse' && event.approvalId === approvalId) {
+          resolve(event.approved);
+          // In a real system we'd need to remove this listener
+        }
+      };
+
+      // We'll actually handle this via ToolManager.handleApprovalResponse called from ChatViewProvider
+      this.pendingApprovals.set(approvalId, resolve);
+    });
+  }
+
+  private pendingApprovals: Map<string, (approved: boolean) => void> = new Map();
+
+  public handleApprovalResponse(approvalId: string, approved: boolean): void {
+    const resolve = this.pendingApprovals.get(approvalId);
+    if (resolve) {
+      resolve(approved);
+      this.pendingApprovals.delete(approvalId);
     }
   }
 

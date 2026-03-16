@@ -45,6 +45,18 @@ export const defaultModels: LLMModelInfo[] = [
   },
 ];
 
+export interface AutoApproveSettings {
+  readFiles: boolean;
+  readFilesExternally: boolean;
+  editFiles: boolean;
+  editFilesExternally: boolean;
+  executeSafeCommands: boolean;
+  executeAllCommands: boolean;
+  useBrowser: boolean;
+  useMcp: boolean;
+  yoloMode: boolean;
+}
+
 interface SettingsState {
   agentMode: boolean;
   temperature: number;
@@ -53,7 +65,20 @@ interface SettingsState {
   selectedModel: LLMModel;
   selectedMode: string;
   availableModels: LLMModelInfo[];
+  autoApproveSettings: AutoApproveSettings;
 }
+
+const initialAutoApproveSettings: AutoApproveSettings = {
+  readFiles: true,
+  readFilesExternally: false,
+  editFiles: false,
+  editFilesExternally: false,
+  executeSafeCommands: true,
+  executeAllCommands: false,
+  useBrowser: false,
+  useMcp: false,
+  yoloMode: false
+};
 
 const initialState: SettingsState = {
   agentMode: false,
@@ -63,6 +88,7 @@ const initialState: SettingsState = {
   selectedModel: 'deepseek/deepseek-chat',
   selectedMode: 'ask',
   availableModels: defaultModels,
+  autoApproveSettings: initialAutoApproveSettings
 };
 
 function createSettingsStore() {
@@ -156,6 +182,27 @@ function createSettingsStore() {
         extensionSync.persistSetting('selectedMode', modeId);
         return { ...state, selectedMode: modeId };
       });
+    },
+
+    /** Set auto-approve settings */
+    setAutoApproveSettings(settings: AutoApproveSettings) {
+      update(state => {
+        extensionSync.send('setAutoApproveSettings', { settings });
+        return { ...state, autoApproveSettings: settings };
+      });
+    },
+
+    /** Toggle YOLO mode */
+    toggleYoloMode(enabled: boolean) {
+      update(state => {
+        extensionSync.send('toggleYoloMode', { enabled });
+        return { ...state, autoApproveSettings: { ...state.autoApproveSettings, yoloMode: enabled } };
+      });
+    },
+
+    /** Update settings from extension */
+    updateFromExtension(settings: AutoApproveSettings) {
+      update(state => ({ ...state, autoApproveSettings: settings }));
     },
 
     /** Hydrate all settings from localStorage in a single call */

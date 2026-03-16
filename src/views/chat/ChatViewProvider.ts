@@ -198,6 +198,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             await this.handleCommandApprovalResponse(data.commandId, data.response);
             return;
           }
+          if (data.type === 'toolApprovalResponse') {
+            this.agentManager.getToolManager().handleApprovalResponse(data.approvalId, data.approved);
+            return;
+          }
           await this.webviewMessageHandler.handleMessage(data, this._view!);
         } catch (error: any) {
           console.error('[ChatViewProvider] Error handling webview message:', error);

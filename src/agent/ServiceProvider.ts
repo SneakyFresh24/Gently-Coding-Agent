@@ -44,6 +44,8 @@ import {
     MemoryManager
 } from './agentManager/index';
 import { CONTEXT_LIMITS } from '../utils';
+import { AutoApproveManager } from '../approval/AutoApproveManager';
+import { HookManager } from '../hooks/HookManager';
 
 /**
  * Configure all services in the container
@@ -65,6 +67,9 @@ export function configureServices(container: Container, context: vscode.Extensio
         // but for DI purposes we'll return the instance created in extension.ts if forced
         return undefined; 
     });
+
+    container.register('autoApproveManager', (c) => new AutoApproveManager(context));
+    container.register('hookManager', (c) => new HookManager(workspaceRoot));
 
     // 2. Base Services
     container.register('fileOps', () => new FileOperations());
@@ -167,7 +172,9 @@ export function configureServices(container: Container, context: vscode.Extensio
             c.resolve('safeEditTool'),
             c.resolve('applyBlockEditTool'),
             c.resolve('commandTools'),
-            c.resolve('webSearchTools')
+            c.resolve('webSearchTools'),
+            c.resolve('autoApproveManager'),
+            c.resolve('hookManager')
         );
 
         const termManager = c.resolve<any>('terminalManager');

@@ -297,6 +297,28 @@ export class WebviewMessageHandler {
         console.log(`[WebviewMessageHandler] Quick pattern: ${data.name} = ${data.enabled}`);
         break;
 
+      case 'setAutoApproveSettings': {
+        const agentManager = (this.systemHandler as any).agentManager;
+        const autoApproveManager = agentManager.getServiceProvider().getService('autoApproveManager');
+        if (autoApproveManager) {
+          await autoApproveManager.setSettings(data.settings);
+          this.sendMessageToWebview({ type: 'autoApproveSettingsUpdate', settings: data.settings });
+        }
+        break;
+      }
+
+      case 'toggleYoloMode': {
+        const agentManager = (this.systemHandler as any).agentManager;
+        const autoApproveManager = agentManager.getServiceProvider().getService('autoApproveManager');
+        if (autoApproveManager) {
+          const settings = autoApproveManager.getSettings();
+          settings.yoloMode = data.enabled;
+          await autoApproveManager.setSettings(settings);
+          this.sendMessageToWebview({ type: 'autoApproveSettingsUpdate', settings });
+        }
+        break;
+      }
+
       case 'enhancePrompt':
         await this.systemHandler.handleEnhancePrompt(data.prompt);
         break;

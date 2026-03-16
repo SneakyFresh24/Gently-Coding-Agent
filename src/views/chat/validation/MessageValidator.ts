@@ -602,6 +602,47 @@ const MessageSchemas: Record<string, any> = {
     fields: {
       messageId: { type: 'string', maxLength: 100 }
     }
+  },
+  'setAutoApproveSettings': {
+    required: ['settings'],
+    fields: {
+      settings: { type: 'object', maxKeys: 15 }
+    }
+  },
+  'toggleYoloMode': {
+    required: ['enabled'],
+    fields: {
+      enabled: { type: 'boolean' }
+    }
+  },
+  'toolApprovalResponse': {
+    required: ['approvalId', 'approved'],
+    fields: {
+      approvalId: { type: 'string', maxLength: 100 },
+      approved: { type: 'boolean' }
+    }
+  },
+  'refreshGuardian': {
+    required: [],
+    fields: {}
+  },
+  'login': {
+    required: ['email', 'password'],
+    fields: {
+      email: { type: 'string', maxLength: 255 },
+      password: { type: 'string', maxLength: 100 }
+    }
+  },
+  'signup': {
+    required: ['email', 'password'],
+    fields: {
+      email: { type: 'string', maxLength: 255 },
+      password: { type: 'string', maxLength: 100 }
+    }
+  },
+  'logout': {
+    required: [],
+    fields: {}
   }
 };
 
