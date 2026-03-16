@@ -27,6 +27,7 @@ export class SessionStorageImpl implements ISessionStorage {
   private disposed: boolean = false;
   private locks: Map<string, Mutex> = new Map();
   private debouncedSaves: Map<string, DebouncedFunction<(session: Session) => Promise<void>>> = new Map();
+  private pendingSessions: Map<string, Session> = new Map();
 
   constructor(config: StorageConfig) {
     this.config = config;
@@ -47,6 +48,9 @@ export class SessionStorageImpl implements ISessionStorage {
     if (this.disposed) {
       throw new Error('Storage has been disposed');
     }
+
+    // Memory-First: Update pending map immediately so reads are consistent
+    this.pendingSessions.set(session.id, { ...session });
 
     let debouncedSave = this.debouncedSaves.get(session.id);
     if (!debouncedSave) {
@@ -109,6 +113,9 @@ export class SessionStorageImpl implements ISessionStorage {
           timestamp: Date.now()
         });
 
+        // Memory-First: Remove from pending only after successful write
+        this.pendingSessions.delete(session.id);
+
         console.log(`[SessionStorage] Saved session: ${session.id}`);
       } catch (error) {
         console.error(`[SessionStorage] Error saving session: ${session.id}`, error);
@@ -128,6 +135,13 @@ export class SessionStorageImpl implements ISessionStorage {
   async loadSession(sessionId: string): Promise<Session | null> {
     if (this.disposed) {
       throw new Error('Storage has been disposed');
+    }
+
+    // Memory-First: Check pending map before hitting disk
+    const pending = this.pendingSessions.get(sessionId);
+    if (pending) {
+      console.log(`[SessionStorage] Returning pending session from memory: ${sessionId}`);
+      return { ...pending };
     }
 
     try {
@@ -238,6 +252,14 @@ export class SessionStorageImpl implements ISessionStorage {
       throw new Error('Storage has been disposed');
     }
 
+    // Memory-First: Remove from pending as well
+    this.pendingSessions.delete(sessionId);
+    const debounced = this.debouncedSaves.get(sessionId);
+    if (debounced) {
+        debounced.cancel();
+        this.debouncedSaves.delete(sessionId);
+    }
+
     try {
       const filePath = this.getSessionFilePath(sessionId);
 
@@ -287,6 +309,14 @@ export class SessionStorageImpl implements ISessionStorage {
         } else {
           console.log(`[SessionStorage] Failed to load session: ${sessionId}`);
         }
+      }
+
+      // Memory-First: Add any pending sessions that might not be on disk yet
+      for (const [id, session] of this.pendingSessions.entries()) {
+          if (!sessions.some(s => s.id === id)) {
+              console.log(`[SessionStorage] Adding pending-only session to list: ${id}`);
+              sessions.push({ ...session });
+          }
       }
 
       console.log(`[SessionStorage] Returning ${sessions.length} sessions total`);

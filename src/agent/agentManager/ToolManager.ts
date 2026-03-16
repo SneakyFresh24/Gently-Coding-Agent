@@ -377,8 +377,12 @@ export class ToolManager implements IAgentService {
     return new Promise((resolve) => {
       const approvalId = `tool_approval_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       
-      // Map to the existing commandApprovalRequest pattern for now, 
-      // or we might need a dedicated toolApprovalRequest message
+      const timeout = setTimeout(() => {
+        console.warn(`[ToolManager] Approval timeout for ${toolName} reached after 5 minutes. Defaulting to reject.`);
+        this.pendingApprovals.delete(approvalId);
+        resolve(false);
+      }, 5 * 60 * 1000); // 5 minutes safety timeout
+
       const callback = this.eventCallback;
       if (callback) {
         callback({
@@ -390,17 +394,10 @@ export class ToolManager implements IAgentService {
         });
       }
 
-      // Simple one-time listener pattern (needs to be handled in ChatViewProvider)
-      // For now we'll assume the response comes back via a handler we'll add
-      const listener = (event: any) => {
-        if (event.type === 'toolApprovalResponse' && event.approvalId === approvalId) {
-          resolve(event.approved);
-          // In a real system we'd need to remove this listener
-        }
-      };
-
-      // We'll actually handle this via ToolManager.handleApprovalResponse called from ChatViewProvider
-      this.pendingApprovals.set(approvalId, resolve);
+      this.pendingApprovals.set(approvalId, (approved: boolean) => {
+        clearTimeout(timeout);
+        resolve(approved);
+      });
     });
   }
 

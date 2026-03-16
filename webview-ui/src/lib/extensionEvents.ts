@@ -21,6 +21,7 @@ export interface BridgeOptions {
     onModelsList?: (models: any[]) => void;
     onContextUpdate?: (files: any[], stats: any) => void;
     onRestoreSession?: (data: { tasks?: any; context?: any }) => void;
+    onToolApprovalRequest?: (request: { approvalId: string; toolName: string; params: any }) => void;
 }
 
 let isInitialized = false;
@@ -193,6 +194,16 @@ const handleMessage = (event: MessageEvent) => {
 
                 case "commandApprovalRequest":
                     if (msg.request) chatStore.addCommandApprovalMessage(msg.request);
+                    break;
+
+                case "toolApprovalRequest":
+                    if (msg.approvalId) {
+                        listeners.forEach(l => l.onToolApprovalRequest?.({
+                            approvalId: msg.approvalId,
+                            toolName: msg.toolName,
+                            params: msg.params
+                        }));
+                    }
                     break;
 
                 case "terminalOutputChunk":

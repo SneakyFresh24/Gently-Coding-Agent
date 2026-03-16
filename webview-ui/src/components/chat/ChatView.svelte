@@ -16,6 +16,7 @@
   import ChatOverlays from "./ChatOverlays.svelte";
   import ErrorBanner from "./ErrorBanner.svelte";
   import AutoApproveMenu from "../approval/AutoApproveMenu.svelte";
+  import ToolApprovalDialog from "../approval/ToolApprovalDialog.svelte";
 
   import type { FileReference } from "../../stores/chatStore";
 
@@ -31,6 +32,7 @@
   let pendingFileReferences = $state<FileReference[]>([]);
   let messageList = $state<MessageList | null>(null);
   let showAutoApproveMenu = $state(false);
+  let pendingToolApproval = $state<{ approvalId: string; toolName: string; params: any } | null>(null);
 
   let selectedMode = $derived($settingsStore.selectedMode);
   let error = $derived($chatStore.error);
@@ -54,6 +56,7 @@
       onTabChange: (t) => (activeTab = t),
       onFileRefAdd: (f) =>
         (pendingFileReferences = [...pendingFileReferences, f]),
+      onToolApprovalRequest: (req) => (pendingToolApproval = req),
     });
   });
 </script>
@@ -101,6 +104,15 @@
     </div>
   {/if}
 </div>
+
+{#if pendingToolApproval}
+  <ToolApprovalDialog
+    approvalId={pendingToolApproval.approvalId}
+    toolName={pendingToolApproval.toolName}
+    params={pendingToolApproval.params}
+    on:close={() => (pendingToolApproval = null)}
+  />
+{/if}
 
 <ChatOverlays />
 
