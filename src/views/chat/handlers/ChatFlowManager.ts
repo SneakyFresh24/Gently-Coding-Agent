@@ -9,6 +9,7 @@ import { ToolCallManager } from '../toolcall';
 import { ToolCallDispatcher } from './ExecutionDispatchers';
 import { LogService } from '../../../services/LogService';
 import { ModeService } from '../../../modes/ModeService';
+import { OpenRouterService } from '../../../services/OpenRouterService';
 import { OutboundWebviewMessage } from '../types/WebviewMessageTypes';
 
 const log = new LogService('ChatFlowManager');
@@ -24,7 +25,8 @@ export class ChatFlowManager {
         private readonly toolCallManager: ToolCallManager,
         private readonly toolCallDispatcher: ToolCallDispatcher,
         private readonly modeService: ModeService,
-        private readonly sendMessageToWebview: (message: OutboundWebviewMessage) => void
+        private readonly sendMessageToWebview: (message: OutboundWebviewMessage) => void,
+        private readonly openRouterService: OpenRouterService
     ) { }
 
     async handleUserMessage(
@@ -81,7 +83,7 @@ export class ChatFlowManager {
     async generateAndStreamResponse(context: ChatViewContext, message: string, retryCount: number = 0, isFollowUp: boolean = false): Promise<void> {
         const mode = this.modeService.getCurrentMode();
         const temperature = mode?.temperature ?? 0.7;
-        const maxTokens = mode?.maxTokens ?? 4096;
+        const maxTokens = context.selectedModel ? await this.openRouterService.getMaxTokens(context.selectedModel) : (mode?.maxTokens ?? 4096);
 
         this.sendMessageToWebview({ type: 'activityUpdate', label: 'Preparing prompt...' });
         const systemPrompt = await this.promptManager.prepareSystemPrompt(context, retryCount);

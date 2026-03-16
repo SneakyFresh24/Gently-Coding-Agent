@@ -44,6 +44,7 @@ const APP_TITLE = 'Gently - AI Coding Agent';
 
 export class OpenRouterService {
     private toolCallProcessor = new StreamingToolCallProcessor();
+    private modelMaxTokensCache: Map<string, number> = new Map();
 
     constructor(private readonly apiKeyManager: ApiKeyManager) { }
 
@@ -293,15 +294,35 @@ export class OpenRouterService {
             });
             if (!resp.ok) return [];
             const data: any = await resp.json();
-            return (data.data ?? []).map((m: any) => ({
-                id: m.id,
-                name: m.name,
-                context_length: m.context_length ?? 0,
-                max_output: m.top_provider?.max_completion_tokens ?? 0,
-            }));
+            const models = (data.data ?? []).map((m: any) => {
+                const maxOutput = m.top_provider?.max_completion_tokens || 0;
+                // Update cache while we vary the list
+                this.modelMaxTokensCache.set(m.id, maxOutput);
+                return {
+                    id: m.id,
+                    name: m.name,
+                    context_length: m.context_length ?? 0,
+                    max_output: maxOutput,
+                };
+            });
+            return models;
         } catch {
             return [];
         }
+    }
+
+    /**
+     * Get the dynamic max_output for a given model
+     */
+    async getMaxTokens(modelId: string): Promise<number> {
+        if (this.modelMaxTokensCache.has(modelId)) {
+            const cached = this.modelMaxTokensCache.get(modelId);
+            if (cached && cached > 0) return cached;
+        }
+
+        const models = await this.listModels();
+        const model = models.find(m => m.id === modelId);
+        return (model?.max_output && model.max_output > 0) ? model.max_output : 8192; // Fallback to 8k
     }
 
     dispose(): void {

@@ -158,21 +158,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
       this.sendMessageToWebview(event);
 
-      // Link plan to session if it's a new plan
-      if (event.type === 'planCreated' && event.plan?.id) {
-        this.sessionHandler.updateSessionWithPlan(event.plan.id).catch(err => {
-          console.error('[ChatViewProvider] Failed to update session with plan:', err);
-        });
-      }
-
       // Handle automatic handover from Architect to Coder
       if (event.type === 'handover_to_coder') {
         console.log('[ChatViewProvider] Handover detected - Switching to Code mode');
         this.setSelectedMode('code').then(() => {
-          if (event.planId) {
-            const planMessage = event.message || 'Executing plan...';
-            this.messageHandler.sendMessage(`${planMessage}\n\n(Execute Plan ID: ${event.planId})`, true);
-          }
+          const planMessage = event.message || 'Architect has finished planning. Review history above.';
+          this.messageHandler.sendMessage(planMessage, true);
         }).catch(err => {
           console.error('[ChatViewProvider] Failed to handle handover:', err);
         });

@@ -66,7 +66,7 @@ export class MessageHandler {
       (m: string | undefined) => followUp.sendFollowUpMessage(this.context, m || '')
     );
 
-    this.flowManager = new ChatFlowManager(agentManager, this.sessionHistoryManager, refParser, promptMgr, streaming, pruner, this.toolCallManager, dispatcher, this.modeService, sendMessageToWebview);
+    this.flowManager = new ChatFlowManager(agentManager, this.sessionHistoryManager, refParser, promptMgr, streaming, pruner, this.toolCallManager, dispatcher, this.modeService, sendMessageToWebview, openRouterService);
 
     this.context = { agentMode: false, selectedModel: 'glm-4.6', selectedMode: 'ask', conversationHistory: [], shouldStopStream: false, messageCheckpoints: new Map(), toolExecutionStartSent: new Set() };
     this.loadStoredState();

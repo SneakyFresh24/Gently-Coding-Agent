@@ -6,6 +6,7 @@ interface ToolCallState {
     name: string;
     arguments: string;
     isReady: boolean;
+    hasEmittedStart: boolean;
 }
 
 /**
@@ -27,16 +28,25 @@ export class StreamingToolCallProcessor {
                     id: tc.id || '',
                     name: tc.function?.name || '',
                     arguments: tc.function?.arguments || '',
-                    isReady: false
+                    isReady: false,
+                    hasEmittedStart: false
                 };
                 this.toolCallStateByIndex.set(index, newState);
                 
-                // Eager emission: if we have either Name OR ID, we can start showing it
-                if (newState.name) {
+                // Yield start if we have BOTH id and name immediately (rare but possible)
+                if (newState.id && newState.name) {
+                    newState.hasEmittedStart = true;
                     yield { 
                         type: 'tool_call_start', 
                         toolCallId: newState.id, 
                         toolName: newState.name,
+                        index
+                    };
+                } else if (newState.name) {
+                    // Just yield partial name if ID is missing
+                    yield {
+                        type: 'tool_call_partial',
+                        partialName: newState.name,
                         index
                     };
                 }
@@ -44,7 +54,19 @@ export class StreamingToolCallProcessor {
                 // Existing tool call update
                 const state = this.toolCallStateByIndex.get(index)!;
                 
-                if (tc.id) state.id = tc.id;
+                if (tc.id) {
+                    state.id = tc.id;
+                    // Yield start only when both ID and Name are present and we haven't emitted yet
+                    if (state.id && state.name && !state.hasEmittedStart) {
+                        state.hasEmittedStart = true;
+                        yield {
+                            type: 'tool_call_start',
+                            toolCallId: state.id,
+                            toolName: state.name,
+                            index
+                        };
+                    }
+                }
                 
                 if (tc.function?.name) {
                     state.name += tc.function.name;
@@ -55,8 +77,9 @@ export class StreamingToolCallProcessor {
                         index
                     };
 
-                    // If we didn't have a name before but now we do, emit start
-                    if (state.name.length === tc.function.name.length) {
+                    // Yield start only when both ID and Name are present and we haven't emitted yet
+                    if (state.id && state.name && !state.hasEmittedStart) {
+                        state.hasEmittedStart = true;
                         yield {
                             type: 'tool_call_start',
                             toolCallId: state.id,

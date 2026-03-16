@@ -7,11 +7,11 @@ export const TOOL_DEFINITIONS = {
     read_file: {
         name: 'read_file',
         category: 'file',
-        description: 'Read and examine the content of a file. Use this tool to investigate files, understand code structure, and analyze implementations. This is the PRIMARY tool for examining files - do NOT use apply_block_edit for file investigation.',
+        description: 'Read a file to understand code or data.',
         parameters: {
             type: 'object',
             properties: {
-                path: { type: 'string', description: 'Path to the file (relative to workspace root)' }
+                path: { type: 'string', description: 'Path to the file relative to workspace root' }
             },
             required: ['path']
         }
@@ -57,37 +57,19 @@ export const TOOL_DEFINITIONS = {
     safe_edit_file: {
         name: 'safe_edit_file',
         category: 'file',
-        description: `Advanced intelligent file editor (Level 4). Automatically chooses the best matching strategy (Line-Range → AST → Anchor → Fuzzy) to apply code changes. 
-        
-Features:
-- **Line-Range**: Precise replacement if start_line/end_line are known.
-- **AST Symbol**: Reliable replacement of functions or classes by name (e.g., "MyComponent.render").
-- **Smart Anchor**: Robust matching with trimming and disambiguation via line_number_hint.
-- **Fuzzy Fallback**: Matches text even if whitespace or minor characters differ.
-- **Guardian Check**: Pre-analysis to prevent destructive or architectural-risk edits.
-- **Preview Mode**: Generates a diff without writing to disk.
-
-Parameters:
-- file_path: Path to the file.
-- anchor_line: (Optional) Text of the line to replace. Use for Small Edits.
-- new_content: The complete new code for the block.
-- end_anchor: (Optional) Text marking the end of the block.
-- line_number_hint: (Optional) 1-based line number for disambiguation.
-- start_line / end_line: (Optional) 1-based line numbers for direct replacement (Highest priority).
-- symbol_name: (Optional) "ClassName.methodName" or "functionName" for AST-based replacement.
-- preview: (Optional) Set to true to see the change without applying it.`,
+        description: 'Edit a file using smart matching (Line-Range, AST, Anchor, or Fuzzy). Prefer apply_block_edit for multiple hunks.',
         parameters: {
             type: 'object',
             properties: {
                 file_path: { type: 'string', description: 'Path to the file' },
-                anchor_line: { type: 'string', description: 'Start anchor text' },
+                anchor_line: { type: 'string', description: 'Text of the line to replace' },
                 new_content: { type: 'string', description: 'New code content' },
-                end_anchor: { type: 'string', description: 'End anchor text (for multi-line blocks)' },
-                line_number_hint: { type: 'number', description: 'Line number hint (1-based)' },
-                start_line: { type: 'number', description: 'Explicit start line (1-based)' },
-                end_line: { type: 'number', description: 'Explicit end line (1-based)' },
-                symbol_name: { type: 'string', description: 'AST symbol name (e.g. "MyClass.render")' },
-                preview: { type: 'boolean', description: 'Preview diff only' }
+                end_anchor: { type: 'string', description: 'Optional end marker for block replacement' },
+                line_number_hint: { type: 'number', description: 'Optional 1-based line number' },
+                start_line: { type: 'number', description: 'Optional explicit start line' },
+                end_line: { type: 'number', description: 'Optional explicit end line' },
+                symbol_name: { type: 'string', description: 'Optional AST symbol (e.g. "Class.method")' },
+                preview: { type: 'boolean', description: 'If true, only return the diff' }
             },
             required: ['file_path', 'new_content']
         }
@@ -95,47 +77,23 @@ Parameters:
     apply_block_edit: {
         name: 'apply_block_edit',
         category: 'file',
-        description: `Highly powerful Multi-Hunk Block Editor (Level 5). This is the PRIMARY tool for modifying existing files.
-        
-Replaces the old SafeEditTool by supporting multiple distinct edits (hunks) in a single tool call. 
-It uses an advanced matching algorithm prioritized as follows:
-1. Exact normalized match of 'old_content'
-2. Fuzzy context match using 'context_before' and 'context_after'
-
-Parameters:
-- file_path: Path to the target file.
-- preview_only: (Optional) If true, generates diffs but does NOT apply changes. Used to show planned edits to the user.
-- mode: (Optional) 'best-effort' (default) applies successful hunks even if others fail. 'atomic' rolls back all changes if any single hunk fails.
-- edits: Array of Edit Hunks (Maximum 8).
-    Each edit hunk MUST include:
-    - id: An optional stable identifier (e.g. "hunk-1") for retrying.
-    - old_content: The EXACT old code to replace (Crucial for robust matching).
-    - new_content: The new code to insert.
-    - start_line_hint / end_line_hint: Approximate context lines for disambiguation.
-    - context_before / context_after: 3-5 lines of surrounding context if line numbers have drifted.
-    - reason: Brief string explaining this specific hunk (used for Guardian approval).
-        
-The return format will detailed how many hunks succeeded/failed and provide explicit retry suggestions.`,
+        description: 'Apply multiple edits (hunks) to a file simultaneously using exact or context-based matching.',
         parameters: {
             type: 'object',
             properties: {
                 file_path: { type: 'string', description: 'Path to the target file' },
-                preview_only: { type: 'boolean', description: 'If true, do not write changes, just return diffs' },
-                mode: { type: 'string', enum: ['best-effort', 'atomic'], description: 'Failure mode strategy' },
+                preview_only: { type: 'boolean', description: 'Generate diff without applying' },
+                mode: { type: 'string', enum: ['best-effort', 'atomic'], description: 'Strategy if hunks fail' },
                 edits: {
                     type: 'array',
                     maxItems: 8,
-                    description: 'List of individual hunks to apply to the file',
                     items: {
                         type: 'object',
                         properties: {
-                            id: { type: 'string', description: 'Stable identifier (e.g. "hunk-1")' },
-                            old_content: { type: 'string', description: 'The exact old code block' },
-                            new_content: { type: 'string', description: 'The new code block' },
-                            start_line_hint: { type: 'number', description: 'Approximate start line' },
-                            end_line_hint: { type: 'number', description: 'Approximate end line' },
-                            context_before: { type: 'string', description: '3-4 lines immediately preceding old_content' },
-                            context_after: { type: 'string', description: '3-4 lines immediately following old_content' },
+                            old_content: { type: 'string', description: 'EXACT code to replace' },
+                            new_content: { type: 'string', description: 'New code content' },
+                            context_before: { type: 'string', description: 'Surrounding context (optional)' },
+                            context_after: { type: 'string', description: 'Surrounding context (optional)' },
                             reason: { type: 'string', description: 'Why this change is made' }
                         },
                         required: ['old_content', 'new_content', 'reason']
@@ -427,86 +385,16 @@ The return format will detailed how many hunks succeeded/failed and provide expl
     },
 
     // --- Planning Tools ---
-    create_plan: {
-        name: 'create_plan',
-        category: 'planning',
-        description: `Create a structured execution plan for complex tasks before execution.
-
-Use this tool when:
-- The user request requires multiple steps (e.g., "Create API with tests and register it")
-- You need to coordinate changes across multiple files
-- The task has clear dependencies between steps
-
-The plan will be shown to the user for approval before execution.`,
-        parameters: {
-            type: 'object',
-            properties: {
-                goal: {
-                    type: 'string',
-                    description: 'High-level goal of the plan (e.g., "Create user profile API with tests")'
-                },
-                steps: {
-                    type: 'array',
-                    description: 'Array of steps to execute',
-                    items: {
-                        type: 'object',
-                        properties: {
-                            description: {
-                                type: 'string',
-                                description: 'Human-readable description of what this step does'
-                            },
-                            tool: {
-                                type: 'string',
-                                description: 'Name of the tool to execute (e.g., "apply_block_edit", "write_file", "search_files")'
-                            },
-                            parameters: {
-                                type: 'object',
-                                description: 'Parameters to pass to the tool'
-                            },
-                            dependencies: {
-                                type: 'array',
-                                description: 'Optional: IDs of steps that must complete first (e.g., ["step-1", "step-2"])',
-                                items: { type: 'string' }
-                            }
-                        },
-                        required: ['description', 'tool', 'parameters']
-                    }
-                }
-            },
-            required: ['goal', 'steps']
-        }
-    },
-    execute_plan: {
-        name: 'execute_plan',
-        category: 'planning',
-        description: `Execute a previously created plan step-by-step.
-
-This tool will:
-1. Execute each step in order (respecting dependencies)
-2. Validate results after each step
-3. Stop and report if a step fails
-4. Return results to you for analysis`,
-        parameters: {
-            type: 'object',
-            properties: {
-                planId: { type: 'string', description: 'ID of the plan to execute' },
-                autoRetry: { type: 'boolean', description: 'Automatically retry failed steps (default: false)' },
-                maxRetries: { type: 'number', description: 'Maximum retries per step (default: 3)' }
-            },
-            required: ['planId']
-        }
-    },
     handover_to_coder: {
         name: 'handover_to_coder',
         category: 'planning',
-        description: `Submit the plan and hand over execution to the Code mode. Call this ONLY when you have fully finished creating the detailed plan.`,
+        description: 'Switch to Code mode. Call this ONLY after finishing the implementation plan in chat.',
         parameters: {
             type: 'object',
             properties: {
-                planId: { type: 'string', description: 'The ID of the plan you created.' },
-                message: { type: 'string', description: 'An optional message to pass to the coder agent.' }
+                message: { type: 'string', description: 'Brief summary of the plan for the Coder.' }
             },
-            required: ['planId']
+            required: ['message']
         }
     },
 
