@@ -17,12 +17,22 @@ export class ToolCallUtils {
 
       try {
         if (!toolCall.function || !toolCall.function.name) {
-          // Normalize flattened tool call structure (some LLMs might omit the 'function' wrapper)
+          // Log the actual structure for debugging
+          console.error(`[PARALLEL] Tool call ${index} has unexpected structure:`, JSON.stringify(toolCall, null, 2));
+
+          // Normalize flattened tool call structure
           if (toolCall.name && toolCall.arguments) {
             console.log(`[PARALLEL] Normalizing flattened tool call: ${toolCall.name}`);
             toolCall.function = {
               name: toolCall.name,
               arguments: toolCall.arguments
+            };
+          } else if (typeof toolCall.function === 'string') {
+            // Handle case where function is a string
+            console.log(`[PARALLEL] Normalizing string function tool call: ${toolCall.function}`);
+            toolCall.function = { 
+              name: toolCall.function, 
+              arguments: toolCall.arguments || '{}' 
             };
           } else {
             console.error(`[PARALLEL] Tool call ${index} missing function or name`);

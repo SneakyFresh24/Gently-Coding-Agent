@@ -54,6 +54,13 @@ export async function activate(context: vscode.ExtensionContext) {
   // ── Mode service ──────────────────────────────────────────────────────────
   modeService = new ModeService(context);
 
+  // ── Agent initialization ──────────────────────────────────────────────────
+  try {
+    await agentManager.initialize();
+  } catch (err) {
+    console.error('Failed to initialize agent:', err);
+  }
+
   // ── Chat view provider ────────────────────────────────────────────────────
   chatViewProvider = new ChatViewProvider(
     context.extensionUri,
@@ -99,10 +106,6 @@ export async function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // ── Agent initialization ──────────────────────────────────────────────────
-  agentManager.initialize().catch(err => {
-    console.error('Failed to initialize agent:', err);
-  });
 
   // ── Guardian integration ──────────────────────────────────────────────────
   try {

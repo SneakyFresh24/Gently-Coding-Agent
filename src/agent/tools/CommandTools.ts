@@ -8,6 +8,13 @@ export class CommandTools {
     ) { }
 
     /**
+     * Set the event callback dynamically
+     */
+    public setEventCallback(callback: (event: any) => void): void {
+        this.emitEvent = callback;
+    }
+
+    /**
      * Register all command-related tools
      */
     registerTools(registry: ToolRegistry): void {

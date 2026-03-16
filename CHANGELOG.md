@@ -1,7 +1,21 @@
 # Changelog
 
 All notable changes to the "Gently" extension will be documented in this file.
- 
+
+## [0.7.0] - 2026-03-16
+### Fixed
+- **Iterative Planning**: Disabled unintended automatic search loops for long goals.
+- **Plan Step Extraction**: Fixed issue where LLM-provided steps were ignored in `create_plan` tool calls.
+- **Tool Call Validation**: Improved resilience to malformed tool call structures and added repair logging.
+- **UI Visibility**: Added unique IDs to system messages to ensure they are correctly processed by the webview store.
+- **Granular Reporting**: Added detailed retry notifications and timeout warnings for terminal approvals.
+- **Approval Flow**: Implemented 30-second warning before 5-minute approval timeout.
+- **Race Condition**: Awaited `AgentManager` initialization before starting `ChatViewProvider` to prevent service resolution errors.
+- **Event Propagation**: Fixed uninitialized `eventCallback` in `CommandTools` by implementing proper propagation from `ToolManager`.
+- **Approval Logging**: Added detailed logs and explicit error throwing in `ToolManager` to prevent silent approval failures.
+- **Tool Normalization**: Added support for string-based function calls and detailed JSON logging for malformed tools.
+
+
 ## [0.6.3] - 2026-03-16
 
 ### Added
@@ -18,15 +32,6 @@ All notable changes to the "Gently" extension will be documented in this file.
 
 ### Changed
 - **Tool Registration**: Refactored `ServiceProvider.ts` and `ToolManager.ts` to support dynamic tool registration and improved dependency injection.
-
-## [0.7.0] - 2026-03-16
-### Fixed
-- **Iterative Planning**: Disabled unintended automatic search loops for long goals.
-- **Plan Step Extraction**: Fixed issue where LLM-provided steps were ignored in `create_plan` tool calls.
-- **Tool Call Validation**: Improved resilience to malformed tool call structures and added repair logging.
-- **UI Visibility**: Added unique IDs to system messages to ensure they are correctly processed by the webview store.
-- **Granular Reporting**: Added detailed retry notifications and timeout warnings for terminal approvals.
-- **Approval Flow**: Implemented 30-second warning before 5-minute approval timeout.
 
 ## [0.6.0] - 2026-03-15
 

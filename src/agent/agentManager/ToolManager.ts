@@ -372,7 +372,13 @@ export class ToolManager implements IAgentService {
    * Returns a promise that resolves when the user approves or rejects
    */
   private async requestApproval(toolName: string, params: any): Promise<boolean> {
-    if (!this.eventCallback) return false;
+    console.log(`[ToolManager] requestApproval called for: ${toolName}`);
+    console.log(`[ToolManager] eventCallback is: ${this.eventCallback ? 'SET' : 'NOT SET'}`);
+
+    if (!this.eventCallback) {
+        console.error(`[ToolManager] CRITICAL: eventCallback is not set! Cannot request approval for: ${toolName}`);
+        throw new Error('Tool approval system not initialized. Please restart the extension.');
+    }
 
     return new Promise((resolve) => {
       const approvalId = `tool_approval_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -509,6 +515,11 @@ export class ToolManager implements IAgentService {
    */
   setEventCallback(callback: (event: any) => void): void {
     this.eventCallback = callback;
+
+    // Propagate to CommandTools
+    if (this.commandTools && (this.commandTools as any).setEventCallback) {
+      (this.commandTools as any).setEventCallback(callback);
+    }
 
     // Update planning tools with new callback
     this.planningTools = new PlanningTools(
