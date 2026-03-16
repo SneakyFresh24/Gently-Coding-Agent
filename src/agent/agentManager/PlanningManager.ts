@@ -159,12 +159,18 @@ export class PlanningManager implements IAgentService {
   // ==================== LEGACY COMPATIBILITY ====================
 
   public shouldUseIterativePlanning(goal: string): boolean {
-    return goal.length > 50; // Simple heuristic
+    return false; // Iterative planning heuristic disabled to prevent unintended search loops
   }
 
   public async executeGoalIteratively(goal: string, tools: any, llmProvider: any): Promise<any> {
-    const plan = this.createPlan({ goal, steps: [{ description: 'Auto-step', tool: 'web_search', parameters: { query: goal } }] });
-    return this.startPlanExecution(plan.id);
+    const currentPlan = this.getCurrentPlan();
+    if (currentPlan) {
+        log.info(`Executing goal iteratively using existing plan ${currentPlan.id}`);
+        return this.startPlanExecution(currentPlan.id);
+    }
+    
+    log.error('executeGoalIteratively called but no plan exists');
+    return { success: false, message: 'No plan found to execute' };
   }
 
   public getPlanManager(): any {

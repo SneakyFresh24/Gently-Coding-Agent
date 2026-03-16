@@ -80,24 +80,26 @@ export class Task {
 
     private async handleStepFailure(planId: string, step: PlanStep, errorMsg: string): Promise<void> {
         let shouldRetry = false;
+        let attempt = 0;
         
         await this.state.update((s) => {
             s.consecutiveMistakeCount++;
-            if (s.autoRetryAttempts < 3) { // Example threshold
+            if (s.autoRetryAttempts < 3) {
                 s.autoRetryAttempts++;
+                attempt = s.autoRetryAttempts;
                 shouldRetry = true;
             }
         });
-
+ 
         if (shouldRetry) {
-            log.info(`Retrying step ${step.id} (Attempt ${this.state.getState().autoRetryAttempts})`);
-            await this.messageHandler.sendSystemMessage(`Step ${step.id} failed. Retrying...`);
+            log.info(`Retrying step ${step.id} (Attempt ${attempt}/3)`);
+            await this.messageHandler.sendSystemMessage(`Step "${step.description}" failed: ${errorMsg}. Retrying (Attempt ${attempt}/3)...`);
             await this.executeStep(planId, step);
         } else {
+            log.error(`Step ${step.id} failed after maximum retries.`);
+            await this.messageHandler.sendSystemMessage(`Step "${step.description}" failed after maximum retry attempts: ${errorMsg}`);
             await this.messageHandler.updateStepStatus(planId, step.id, 'failed', undefined, errorMsg);
             await this.messageHandler.updatePlanStatus(planId, 'failed');
-            // We don't automatically stop the whole task if it's meant to be robust, 
-            // but for now we follow Gently's pattern of stopping on fail if not retrying.
         }
     }
 

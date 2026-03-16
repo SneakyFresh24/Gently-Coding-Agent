@@ -812,6 +812,7 @@ export interface SystemConfigUpdatedMessage {
  */
 export interface SystemMessageMessage {
   type: 'systemMessage';
+  messageId?: string;
   content: string;
 }
 

@@ -376,13 +376,42 @@ export class HybridApprovalManager {
         timestamp: Date.now()
       });
 
-      // Timeout after 5 minutes
-      setTimeout(() => {
+      // Warning 30 seconds before timeout
+      const warningTimeout = setTimeout(() => {
         if (this.pendingApprovals.has(request.commandId)) {
+          this.sendMessageToWebview({
+            type: 'systemMessage',
+            messageId: `sys_warn_${Date.now()}`,
+            content: `⚠️ Warning: Command "${request.command.substring(0, 50)}${request.command.length > 50 ? '...' : ''}" will be automatically rejected in 30 seconds if not approved.`
+          });
+        }
+      }, (5 * 60 - 30) * 1000);
+
+      // Timeout after 5 minutes
+      const timeout = setTimeout(() => {
+        if (this.pendingApprovals.has(request.commandId)) {
+          console.warn(`[HybridApprovalManager] Approval timeout for ${request.commandId} reached. Defaulting to reject.`);
+          
+          this.sendMessageToWebview({
+            type: 'systemMessage',
+            messageId: `sys_timeout_${Date.now()}`,
+            content: `❌ Command execution rejected due to approval timeout (5 minutes).`
+          });
+
           this.pendingApprovals.delete(request.commandId);
-          reject(new Error('Approval request timeout'));
+          resolve(false);
         }
       }, 5 * 60 * 1000);
+ 
+      this.pendingApprovals.set(request.commandId, { 
+        resolve: (val) => {
+            clearTimeout(warningTimeout);
+            clearTimeout(timeout);
+            resolve(val);
+        }, 
+        reject, 
+        command: request.command 
+      });
     });
   }
 

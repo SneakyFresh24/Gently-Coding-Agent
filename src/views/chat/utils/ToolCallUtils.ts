@@ -17,9 +17,18 @@ export class ToolCallUtils {
 
       try {
         if (!toolCall.function || !toolCall.function.name) {
-          console.error(`[PARALLEL] Tool call ${index} missing function or name`);
-          invalidToolCalls.push({ toolCall, index, error: 'Missing function or name' });
-          continue;
+          // Normalize flattened tool call structure (some LLMs might omit the 'function' wrapper)
+          if (toolCall.name && toolCall.arguments) {
+            console.log(`[PARALLEL] Normalizing flattened tool call: ${toolCall.name}`);
+            toolCall.function = {
+              name: toolCall.name,
+              arguments: toolCall.arguments
+            };
+          } else {
+            console.error(`[PARALLEL] Tool call ${index} missing function or name`);
+            invalidToolCalls.push({ toolCall, index, error: 'Missing function or name' });
+            continue;
+          }
         }
 
         // FIX: Normalize empty arguments for parameterless tools (list_files, analyze_project_structure, recall_memories, etc.)

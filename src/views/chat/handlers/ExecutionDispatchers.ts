@@ -126,17 +126,18 @@ export class IterativePlanExecutor {
         try {
             const repairResult = ToolCallUtils.repairAndParseJSON(createPlanCall.function.arguments);
             if (repairResult.success && repairResult.repaired?.goal) {
-                const goal = repairResult.repaired.goal;
-                const mockProvider = {
-                    sendMessage: async () => ({
-                        thought_process: `Executing iterative plan for: ${goal}`,
-                        status: "in_progress",
-                        step: { id: 1, description: "Executing first step", tool: repairResult.repaired.steps?.[0]?.tool || 'apply_block_edit', parameters: repairResult.repaired.steps?.[0]?.parameters || {} }
-                    })
-                };
-
-                const executionContext = await (this.agentManager as any).executeGoalIteratively(goal, new Map(), mockProvider);
-                this.sendMessageToWebview({ type: 'iterativePlanCompleted', goal, totalSteps: executionContext.completed_steps.length, totalTime: executionContext.total_execution_time });
+                const { goal, steps } = repairResult.repaired;
+                
+                // If the LLM provided explicit steps, we use them instead of just the goal
+                if (steps && Array.isArray(steps) && steps.length > 0) {
+                    log.info(`[ITERATIVE] Creating plan with ${steps.length} provided steps`);
+                    const plan = this.agentManager.getPlanningManager().createPlan({ goal, steps });
+                    const executionContext = await (this.agentManager as any).executeGoalIteratively(goal, new Map(), {});
+                    this.sendMessageToWebview({ type: 'iterativePlanCompleted', goal, totalSteps: executionContext.completed_steps?.length || 0, totalTime: executionContext.total_execution_time });
+                } else {
+                    // Fallback to traditional if no steps provided
+                    await this.fallback([createPlanCall], '', context);
+                }
 
                 if (context.currentFlowId) context.currentFlowId = undefined;
             } else {
