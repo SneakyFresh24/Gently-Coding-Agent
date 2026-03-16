@@ -15,6 +15,7 @@ import {
   StorageEventType,
   StorageEventListener
 } from './types/StorageTypes';
+import { Mutex } from '../../core/state/Mutex';
 
 /**
  * Session storage implementation
@@ -23,10 +24,18 @@ export class SessionStorageImpl implements ISessionStorage {
   private config: StorageConfig;
   private eventListeners: Map<StorageEventType, StorageEventListener[]> = new Map();
   private disposed: boolean = false;
+  private locks: Map<string, Mutex> = new Map();
 
   constructor(config: StorageConfig) {
     this.config = config;
     this.initializeEventListeners();
+  }
+
+  private getLock(sessionId: string): Mutex {
+    if (!this.locks.has(sessionId)) {
+      this.locks.set(sessionId, new Mutex());
+    }
+    return this.locks.get(sessionId)!;
   }
 
   /**
@@ -37,39 +46,50 @@ export class SessionStorageImpl implements ISessionStorage {
       throw new Error('Storage has been disposed');
     }
 
-    try {
-      // Update session timestamps
-      session.updatedAt = Date.now();
-      session.lastAccessedAt = Date.now();
+    const lock = this.getLock(session.id);
+    return await lock.runExclusive(async () => {
+      try {
+        // Update session timestamps
+        session.updatedAt = Date.now();
+        session.lastAccessedAt = Date.now();
 
-      // Save to file
-      const filePath = this.getSessionFilePath(session.id);
+        // Save to file
+        const filePath = this.getSessionFilePath(session.id);
 
-      // Ensure directory exists before writing
-      await this.ensureStorageDirectory();
+        // Ensure directory exists before writing
+        await this.ensureStorageDirectory();
 
-      // Save session safely using atomic write
-      const tempFilePath = `${filePath}.tmp`;
-      await fs.writeFile(tempFilePath, JSON.stringify(session, null, 2), 'utf8');
-      await fs.rename(tempFilePath, filePath);
+        // Save session safely using atomic write
+        const tempFilePath = `${filePath}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+        const backupFilePath = `${filePath}.bak`;
 
-      // Emit event
-      this.emitEvent({
-        type: StorageEventType.SESSION_SAVED,
-        sessionId: session.id,
-        timestamp: Date.now()
-      });
+        // Create backup of current file if it exists
+        try {
+          await fs.access(filePath);
+          await fs.copyFile(filePath, backupFilePath);
+        } catch { /* ignore if no existing file */ }
 
-      console.log(`[SessionStorage] Saved session: ${session.id}`);
-    } catch (error) {
-      console.error(`[SessionStorage] Error saving session: ${session.id}`, error);
-      this.emitEvent({
-        type: StorageEventType.ERROR_OCCURRED,
-        timestamp: Date.now(),
-        error: error instanceof Error ? error : new Error('Unknown error')
-      });
-      throw error;
-    }
+        await fs.writeFile(tempFilePath, JSON.stringify(session, null, 2), 'utf8');
+        await fs.rename(tempFilePath, filePath);
+
+        // Emit event
+        this.emitEvent({
+          type: StorageEventType.SESSION_SAVED,
+          sessionId: session.id,
+          timestamp: Date.now()
+        });
+
+        console.log(`[SessionStorage] Saved session: ${session.id}`);
+      } catch (error) {
+        console.error(`[SessionStorage] Error saving session: ${session.id}`, error);
+        this.emitEvent({
+          type: StorageEventType.ERROR_OCCURRED,
+          timestamp: Date.now(),
+          error: error instanceof Error ? error : new Error('Unknown error')
+        });
+        throw error;
+      }
+    });
   }
 
   /**
@@ -99,18 +119,24 @@ export class SessionStorageImpl implements ISessionStorage {
       } catch (parseError) {
         console.error(`[SessionStorage] Corrupted session file: ${sessionId}`, parseError);
 
-        // Attempt recovery: truncate to last valid closing brace
-        const recovered = this.attemptSessionRecovery(data);
-        if (recovered) {
-          console.log(`[SessionStorage] Recovered corrupted session: ${sessionId}`);
-          session = recovered;
-          // Overwrite with recovered data
-          await fs.writeFile(filePath, JSON.stringify(session, null, 2), 'utf8');
+        // Attempt recovery from backup
+        const recoveredFromBak = await this.recoverFromBackup(sessionId);
+        if (recoveredFromBak) {
+          session = recoveredFromBak;
         } else {
-          // Recovery failed — delete the corrupted file
-          console.error(`[SessionStorage] Recovery failed, deleting corrupted session: ${sessionId}`);
-          try { await fs.unlink(filePath); } catch { /* ignore */ }
-          return null;
+          // Attempt truncation recovery
+          const recovered = this.attemptSessionRecovery(data);
+          if (recovered) {
+            console.log(`[SessionStorage] Recovered corrupted session via truncation: ${sessionId}`);
+            session = recovered;
+            // Overwrite with recovered data
+            await fs.writeFile(filePath, JSON.stringify(session, null, 2), 'utf8');
+          } else {
+            // Recovery failed — delete the corrupted file
+            console.error(`[SessionStorage] Recovery failed, deleting corrupted session: ${sessionId}`);
+            try { await fs.unlink(filePath); } catch { /* ignore */ }
+            return null;
+          }
         }
       }
 
@@ -134,6 +160,28 @@ export class SessionStorageImpl implements ISessionStorage {
         timestamp: Date.now(),
         error: error instanceof Error ? error : new Error('Unknown error')
       });
+      return null;
+    }
+  }
+
+  /**
+   * Attempt to recover a corrupted session by truncating at last valid JSON
+   */
+  private async recoverFromBackup(sessionId: string): Promise<Session | null> {
+    const filePath = this.getSessionFilePath(sessionId);
+    const backupPath = `${filePath}.bak`;
+
+    try {
+      await fs.access(backupPath);
+      const data = await fs.readFile(backupPath, 'utf8');
+      const session = JSON.parse(data);
+      console.log(`[SessionStorage] Successfully recovered session ${sessionId} from backup.`);
+      
+      // Restore the backup as the main file
+      await fs.writeFile(filePath, data, 'utf8');
+      return session;
+    } catch (error) {
+      console.error(`[SessionStorage] Recovery from backup failed for ${sessionId}:`, error);
       return null;
     }
   }

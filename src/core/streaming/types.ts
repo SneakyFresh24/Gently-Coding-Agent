@@ -20,6 +20,7 @@ export interface UsageInfo {
 export type StreamChunk = 
     | { type: 'text'; text: string }
     | { type: 'tool_call_start'; toolCallId: string; toolName: string; index: number }
+    | { type: 'tool_call_partial'; partialName: string; index: number }
     | { type: 'tool_call_delta'; toolCallId: string; delta: string; index: number }
     | { type: 'tool_call_ready'; toolCall: ToolCall; index: number }
     | { type: 'reasoning'; reasoning: string }

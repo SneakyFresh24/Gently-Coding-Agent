@@ -14,6 +14,7 @@ import {
   SafeEditTool,
   ApplyBlockEditTool,
   CommandTools,
+  WebSearchTools,
   ToolName
 } from '../tools';
 import { IAgentService } from './index';
@@ -33,6 +34,7 @@ export class ToolManager implements IAgentService {
   private safeEditTool: SafeEditTool;
   private applyBlockEditTool: ApplyBlockEditTool;
   private commandTools: CommandTools;
+  private webSearchTools: WebSearchTools;
 
   // Dependencies
   private terminalManager: TerminalManager | null = null;
@@ -55,7 +57,8 @@ export class ToolManager implements IAgentService {
     memoryBankTools: MemoryBankTools,
     safeEditTool: SafeEditTool,
     applyBlockEditTool: ApplyBlockEditTool,
-    commandTools: CommandTools
+    commandTools: CommandTools,
+    webSearchTools: WebSearchTools
   ) {
     this.toolRegistry = toolRegistry;
     this.fileTools = fileTools;
@@ -69,6 +72,7 @@ export class ToolManager implements IAgentService {
     this.safeEditTool = safeEditTool;
     this.applyBlockEditTool = applyBlockEditTool;
     this.commandTools = commandTools;
+    this.webSearchTools = webSearchTools;
   }
 
   async initialize(): Promise<void> {
@@ -114,6 +118,7 @@ export class ToolManager implements IAgentService {
       this.safeEditTool.registerTools(this.toolRegistry);
       this.applyBlockEditTool.registerTools(this.toolRegistry);
       this.commandTools.registerTools(this.toolRegistry);
+      this.webSearchTools.registerTools(this.toolRegistry);
 
       if (this.debug) {
         console.log(`[ToolManager] Registered ${this.toolRegistry.getNames().length} tools`);

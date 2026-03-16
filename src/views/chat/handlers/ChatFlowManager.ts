@@ -83,7 +83,7 @@ export class ChatFlowManager {
 
         this.sendMessageToWebview({ type: 'activityUpdate', label: 'Preparing prompt...' });
         const systemPrompt = await this.promptManager.prepareSystemPrompt(context, retryCount);
-        this.sendMessageToWebview({ type: 'activityUpdate', label: null });
+        // Fix: Removed activityUpdate: null to keep the last status visible until streaming starts
         const messages = [
             { role: 'system' as const, content: systemPrompt },
             ...context.conversationHistory.map(toChatMessage),
@@ -92,9 +92,9 @@ export class ChatFlowManager {
         const tools = this.getToolsForMode(context);
         const responseFormat = tools && context.selectedModel === 'deepseek-chat' ? { type: 'json_object' as const } : undefined;
 
-        if (!isFollowUp) {
-            this.sendMessageToWebview({ type: 'generatingStart' });
-        }
+        // Always send generatingStart to ensure the UI indicator is active,
+        // even for follow-up responses (e.g. after tool execution)
+        this.sendMessageToWebview({ type: 'generatingStart' });
 
         context.shouldStopStream = false;
         const { assistantMessage, toolCalls } = await this.streamingService.streamResponse(messages, {

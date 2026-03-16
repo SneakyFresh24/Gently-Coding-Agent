@@ -47,9 +47,12 @@ export class StreamingService {
                 let toolCalls: any[] = [];
                 if (choice?.message?.content) assistantMessage = choice.message.content;
                 if (choice?.message?.tool_calls) toolCalls = choice.message.tool_calls;
+                
                 this.sendMessageToWebview({ type: 'processingEnd' });
 
                 if (assistantMessage) {
+                    // Send start signal for UI consistency
+                    this.sendMessageToWebview({ type: 'generatingStart' });
                     this.sendMessageToWebview({
                         type: 'assistantMessageFull',
                         content: assistantMessage,

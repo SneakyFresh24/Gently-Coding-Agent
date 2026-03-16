@@ -31,7 +31,8 @@ export class StreamingToolCallProcessor {
                 };
                 this.toolCallStateByIndex.set(index, newState);
                 
-                if (newState.id && newState.name) {
+                // Eager emission: if we have either Name OR ID, we can start showing it
+                if (newState.name) {
                     yield { 
                         type: 'tool_call_start', 
                         toolCallId: newState.id, 
@@ -44,7 +45,26 @@ export class StreamingToolCallProcessor {
                 const state = this.toolCallStateByIndex.get(index)!;
                 
                 if (tc.id) state.id = tc.id;
-                if (tc.function?.name) state.name += tc.function.name;
+                
+                if (tc.function?.name) {
+                    state.name += tc.function.name;
+                    // Emit partial name for UI feedback (e.g. "read_f" -> "read_file")
+                    yield {
+                        type: 'tool_call_partial',
+                        partialName: state.name,
+                        index
+                    };
+
+                    // If we didn't have a name before but now we do, emit start
+                    if (state.name.length === tc.function.name.length) {
+                        yield {
+                            type: 'tool_call_start',
+                            toolCallId: state.id,
+                            toolName: state.name,
+                            index
+                        };
+                    }
+                }
                 
                 if (tc.function?.arguments) {
                     state.arguments += tc.function.arguments;
@@ -54,13 +74,6 @@ export class StreamingToolCallProcessor {
                         delta: tc.function.arguments,
                         index
                     };
-                }
-
-                // Check if it just became "complete enough" to notify start (if not already done)
-                // This handles cases where ID or name arrive in a later delta
-                if (state.id && state.name && !state.isReady) {
-                    // Logic to check if we should emit start if we haven't yet
-                    // For simplicity, we assume start is emitted once we have id and name
                 }
             }
         }

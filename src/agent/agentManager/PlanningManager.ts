@@ -79,15 +79,15 @@ export class PlanningManager implements IAgentService {
     const plan: ExecutionPlan = {
       id: `plan_${Date.now()}`,
       goal: params.goal,
-      steps: params.steps.map((s, i) => ({
+      steps: (params.steps || []).map((s, i) => ({
         ...s,
         id: `step-${i + 1}`,
-        status: 'pending'
+        status: 'pending' as const
       })),
-      status: 'pending',
+      status: 'pending' as const,
       createdAt: Date.now(),
       currentStepIndex: 0,
-      totalSteps: params.steps.length,
+      totalSteps: params.steps?.length || 0,
       completedSteps: 0,
       failedSteps: 0
     };
@@ -163,7 +163,7 @@ export class PlanningManager implements IAgentService {
   }
 
   public async executeGoalIteratively(goal: string, tools: any, llmProvider: any): Promise<any> {
-    const plan = this.createPlan({ goal, steps: [{ description: 'Auto-step', tool: 'search_web', parameters: { query: goal } }] });
+    const plan = this.createPlan({ goal, steps: [{ description: 'Auto-step', tool: 'web_search', parameters: { query: goal } }] });
     return this.startPlanExecution(plan.id);
   }
 

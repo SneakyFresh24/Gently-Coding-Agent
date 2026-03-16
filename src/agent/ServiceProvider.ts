@@ -33,7 +33,8 @@ import {
     MemoryBankTools,
     SafeEditTool,
     ApplyBlockEditTool,
-    CommandTools
+    CommandTools,
+    WebSearchTools
 } from './tools';
 import {
     FileOperationManager,
@@ -137,6 +138,7 @@ export function configureServices(container: Container, context: vscode.Extensio
         () => c.resolve<any>('terminalManager') || null,
         () => { } // Event callback will be set later via ToolManager
     ));
+    container.register('webSearchTools', () => new WebSearchTools());
 
     // 4. Managers
     container.register('fileOperationManager', (c) => new FileOperationManager(
@@ -164,7 +166,8 @@ export function configureServices(container: Container, context: vscode.Extensio
             c.resolve('memoryBankTools'),
             c.resolve('safeEditTool'),
             c.resolve('applyBlockEditTool'),
-            c.resolve('commandTools')
+            c.resolve('commandTools'),
+            c.resolve('webSearchTools')
         );
 
         const termManager = c.resolve<any>('terminalManager');

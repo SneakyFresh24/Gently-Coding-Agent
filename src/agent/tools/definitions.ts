@@ -16,6 +16,30 @@ export const TOOL_DEFINITIONS = {
             required: ['path']
         }
     },
+    web_search: {
+        name: 'web_search',
+        category: 'search',
+        description: 'Search the web for information using a query. Use this when you need up-to-date information not in your training data or local files.',
+        parameters: {
+            type: 'object',
+            properties: {
+                query: { type: 'string', description: 'The search query' }
+            },
+            required: ['query']
+        }
+    },
+    search_web: {
+        name: 'search_web',
+        category: 'search',
+        description: 'Alias for web_search.',
+        parameters: {
+            type: 'object',
+            properties: {
+                query: { type: 'string', description: 'The search query' }
+            },
+            required: ['query']
+        }
+    },
     write_file: {
         name: 'write_file',
         category: 'file',
