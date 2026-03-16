@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { AgentManager } from '../../../agent/agentManager/AgentManager';
 import { FileReferenceManager, FileReference } from '../../../agent/fileReferenceManager';
 import { RESPONSE_FORMATTING_PROMPT } from '../../../agent/prompts/responseFormatting';
+import { ModeService } from '../../../modes/ModeService';
 import { ChatViewContext } from '../types/ChatTypes';
 import { OpenRouterService } from '../../../services/OpenRouterService';
 import { LogService } from '../../../services/LogService';
@@ -48,13 +49,13 @@ export class ReferenceParser {
 export class PromptManager {
     constructor(
         private readonly agentManager: AgentManager,
-        private readonly architectReminders: { getArchitectModeReminder(): string }
+        private readonly modeService: ModeService
     ) { }
 
     async prepareSystemPrompt(context: ChatViewContext, retryCount: number = 0): Promise<string> {
-        let systemPrompt = `You are Gently, an AI coding agent integrated into VS Code.
-You help developers write, understand, and debug code.
-You are powered by DeepSeek V3.2 and designed to be an affordable alternative to Augment Code.
+        // Use the system prompt defined in the current mode
+        let systemPrompt = this.modeService.getSystemPrompt() || `You are Gently, an AI coding agent integrated into VS Code.
+You help delevopers write, understand, and debug code.
 Current workspace: ${vscode.workspace.name || 'No workspace open'}`;
 
         systemPrompt += `\n\n${RESPONSE_FORMATTING_PROMPT}`;
@@ -72,14 +73,6 @@ Current workspace: ${vscode.workspace.name || 'No workspace open'}`;
         systemPrompt += `\n\n--- GUARDIAN MEMORY ---\n` +
             `Wichtige Architektur-Entscheidungen und Regeln werden automatisch von Guardian in decisions.md und rules.md gespeichert.\n` +
             `Berücksichtige diese Dokumente immer bei Architektur-Änderungen oder neuen Features.\n`;
-
-        if (context.agentMode || context.selectedMode === 'agent') {
-            systemPrompt += this.getAgentModePrompt();
-        }
-
-        if (context.selectedMode === 'architect') {
-            systemPrompt += this.architectReminders.getArchitectModeReminder();
-        }
 
         const modelLower = context.selectedModel.toLowerCase();
         if (modelLower.includes('minimax') || modelLower.includes('m2.5') || modelLower.includes('glm')) {

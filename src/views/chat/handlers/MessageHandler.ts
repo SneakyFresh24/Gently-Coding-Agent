@@ -12,6 +12,7 @@ import { ConversationPruner, PromptManager, ReferenceParser } from './ContextGen
 import { FollowUpHandler, ArchitectHandoverHandler } from './SequenceManagers';
 import { ToolCallDispatcher } from './ExecutionDispatchers';
 import { SessionHistoryManager } from './SessionHistoryManager';
+import { ModeService } from '../../../modes/ModeService';
 import { StreamingService } from './StreamingService';
 import { ChatFlowManager } from './ChatFlowManager';
 import { OutboundWebviewMessage } from '../types/WebviewMessageTypes';
@@ -27,6 +28,7 @@ export class MessageHandler {
     private readonly extensionContext: vscode.ExtensionContext,
     private readonly openRouterService: OpenRouterService,
     private readonly agentManager: AgentManager,
+    private readonly modeService: ModeService,
     private readonly sendMessageToWebview: (message: OutboundWebviewMessage) => void,
     private readonly updateConversationHistory: (message: Message) => void
   ) {
@@ -45,7 +47,7 @@ export class MessageHandler {
     this.initializeNewToolCallSystem();
 
     this.sessionHistoryManager = new SessionHistoryManager(extensionContext, agentManager.getServiceProvider().getService('sessionManager'), sendMessageToWebview);
-    const promptMgr = new PromptManager(agentManager, this.architectHandoverHandler);
+    const promptMgr = new PromptManager(agentManager, this.modeService);
 
     const followUp = new FollowUpHandler(
         this.toolCallManager as any, // Cast temporarily if types mismatch during migration
@@ -64,7 +66,7 @@ export class MessageHandler {
       (m: string | undefined) => followUp.sendFollowUpMessage(this.context, m || '')
     );
 
-    this.flowManager = new ChatFlowManager(agentManager, this.sessionHistoryManager, refParser, promptMgr, streaming, pruner, this.toolCallManager, dispatcher, sendMessageToWebview);
+    this.flowManager = new ChatFlowManager(agentManager, this.sessionHistoryManager, refParser, promptMgr, streaming, pruner, this.toolCallManager, dispatcher, this.modeService, sendMessageToWebview);
 
     this.context = { agentMode: false, selectedModel: 'glm-4.6', selectedMode: 'ask', conversationHistory: [], shouldStopStream: false, messageCheckpoints: new Map(), toolExecutionStartSent: new Set() };
     this.loadStoredState();

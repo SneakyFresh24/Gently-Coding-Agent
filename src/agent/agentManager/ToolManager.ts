@@ -49,6 +49,7 @@ export class ToolManager implements IAgentService {
   private debug: boolean = false;
   private eventCallback?: (event: any) => void;
   private modeProvider?: () => string | undefined;
+  private lastToolName: string | null = null;
 
   constructor(
     toolRegistry: ToolRegistry,
@@ -318,6 +319,13 @@ export class ToolManager implements IAgentService {
    * Execute a tool with hooks and auto-approval check
    */
   async executeTool(toolName: string, params: any): Promise<any> {
+    const currentMode = this.modeProvider?.();
+    
+    // Anti-Loop Check for handover_to_coder
+    if (toolName === 'handover_to_coder' && this.lastToolName === 'handover_to_coder') {
+      throw new Error(`Cannot call handover_to_coder consecutively - already in handover state`);
+    }
+
     try {
       const tool = this.toolRegistry.get(toolName);
       if (!tool) {
@@ -351,7 +359,7 @@ export class ToolManager implements IAgentService {
       }
 
       if (this.debug) {
-        console.log(`[ToolManager] Executing tool: ${toolName}`, params);
+        console.log(`[ToolManager] Executing ${toolName}`, params);
       }
 
       // 3. EXECUTION
@@ -359,6 +367,11 @@ export class ToolManager implements IAgentService {
 
       // 4. POST-HOOKS
       await this.hookManager.executePostHooks(toolName, params, result);
+
+      // Reset or update lastToolName
+      if (toolName !== 'handover_to_coder') {
+          this.lastToolName = toolName;
+      }
 
       return result;
     } catch (error) {
@@ -372,36 +385,42 @@ export class ToolManager implements IAgentService {
    * Returns a promise that resolves when the user approves or rejects
    */
   private async requestApproval(toolName: string, params: any): Promise<boolean> {
-    console.log(`[ToolManager] requestApproval called for: ${toolName}`);
-    console.log(`[ToolManager] eventCallback is: ${this.eventCallback ? 'SET' : 'NOT SET'}`);
-
-    if (!this.eventCallback) {
-        console.error(`[ToolManager] CRITICAL: eventCallback is not set! Cannot request approval for: ${toolName}`);
-        throw new Error('Tool approval system not initialized. Please restart the extension.');
-    }
-
     return new Promise((resolve) => {
       const approvalId = `tool_approval_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       
+      console.log(`[ToolManager] ═════════════════════════════════════`);
+      console.log(`[ToolManager] APPROVAL REQUEST START`);
+      console.log(`[ToolManager] Tool: ${toolName}`);
+      console.log(`[ToolManager] ID: ${approvalId}`);
+      console.log(`[ToolManager] eventCallback: ${this.eventCallback ? '✅ SET' : '❌ NOT SET'}`);
+      console.log(`[ToolManager] Pending queue size: ${this.pendingApprovals.size}`);
+      console.log(`[ToolManager] ═════════════════════════════════════`);
+
+      if (!this.eventCallback) {
+        console.error(`[ToolManager] ❌ CRITICAL: eventCallback is not set!`);
+        console.error(`[ToolManager] This means the UI will never receive the approval request!`);
+        throw new Error('Tool approval system not initialized. Please restart the extension.');
+      }
+
       const timeout = setTimeout(() => {
-        console.warn(`[ToolManager] Approval timeout for ${toolName} reached after 5 minutes. Defaulting to reject.`);
+        console.warn(`[ToolManager] ⏱️ Approval TIMEOUT for ${toolName} (ID: ${approvalId}) after 5 minutes`);
         this.pendingApprovals.delete(approvalId);
         resolve(false);
-      }, 5 * 60 * 1000); // 5 minutes safety timeout
+      }, 5 * 60 * 1000);
 
-      const callback = this.eventCallback;
-      if (callback) {
-        callback({
+      this.eventCallback({
           type: 'toolApprovalRequest',
           approvalId,
           toolName,
           params,
           timestamp: Date.now()
-        });
-      }
+      });
+      
+      console.log(`[ToolManager] ✅ Approval request sent to webview (ID: ${approvalId})`);
 
       this.pendingApprovals.set(approvalId, (approved: boolean) => {
         clearTimeout(timeout);
+        console.log(`[ToolManager] 📩 Response received for ${approvalId}: ${approved ? '✅ APPROVED' : '❌ REJECTED'}`);
         resolve(approved);
       });
     });
@@ -520,14 +539,6 @@ export class ToolManager implements IAgentService {
     if (this.commandTools && (this.commandTools as any).setEventCallback) {
       (this.commandTools as any).setEventCallback(callback);
     }
-
-    // Update planning tools with new callback
-    this.planningTools = new PlanningTools(
-      this.planningManager as any,
-      this.terminalManager,
-      this.toolRegistry,
-      this.modeProvider
-    );
   }
 
   /**
@@ -535,17 +546,6 @@ export class ToolManager implements IAgentService {
    */
   setCurrentModeProvider(provider: () => string | undefined): void {
     this.modeProvider = provider;
-
-    // Update planning tools with the new mode provider
-    this.planningTools = new PlanningTools(
-      this.planningManager,
-      this.terminalManager,
-      this.toolRegistry,
-      this.modeProvider
-    );
-
-    // Re-register to apply changes
-    this.registerAllTools();
   }
 
   // ==================== TOOL CATEGORIES ====================

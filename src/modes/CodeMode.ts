@@ -52,6 +52,14 @@ You are the Implementation Expert. You bridge the gap between architectural desi
   readonly temperature = 0.4;
 
   /**
+   * Get tools for this mode (filtered by availableTools)
+   */
+  getToolsForMode(agentManager: any): any[] {
+    const allTools = agentManager.getFormattedTools() || [];
+    return allTools.filter((tool: any) => this.availableTools.includes(tool.function?.name));
+  }
+
+  /**
    * Wird aufgerufen, wenn der Code Mode aktiviert wird
    */
   async onActivate(): Promise<void> {

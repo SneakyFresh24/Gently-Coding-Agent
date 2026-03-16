@@ -36,12 +36,27 @@ export class ModeManager implements IModeManager {
       throw new Error(`Mode '${modeId}' is not registered`);
     }
 
+    if (this.currentModeId === modeId) {
+      return;
+    }
+
     const previousModeId = this.currentModeId;
+    const oldMode = this.currentMode;
     const newMode = this.modeRegistry.get(modeId)!;
 
     // Deaktiviere den aktuellen Modus
-    if (this.currentMode) {
-      await this.deactivateCurrentMode();
+    if (oldMode) {
+      console.log(`[ModeManager] Deactivating mode: ${oldMode.displayName} (${previousModeId})`);
+      this.setModeStatus(oldMode.id, ModeStatus.DEACTIVATING);
+      try {
+        if (oldMode.onDeactivate) {
+          await oldMode.onDeactivate();
+        }
+        this.setModeStatus(oldMode.id, ModeStatus.INACTIVE);
+      } catch (error) {
+        console.error(`[ModeManager] Error deactivating mode ${oldMode.id}:`, error);
+        this.setModeStatus(oldMode.id, ModeStatus.ERROR);
+      }
     }
 
     // Setze den neuen Modus als aktivierend

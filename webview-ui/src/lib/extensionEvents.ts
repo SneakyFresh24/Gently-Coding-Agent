@@ -259,15 +259,6 @@ const handleMessage = (event: MessageEvent) => {
                     listeners.forEach(l => l.onRestoreSession?.({ tasks: msg.tasks, context: msg.context }));
                     break;
 
-                case "handover_to_coder":
-                    settingsStore.setSelectedMode("code");
-                    setTimeout(() => {
-                        extensionSync.send("sendMessage", {
-                            message: msg.message + "\n\n(Execute Plan ID: " + msg.planId + ")",
-                            fileReferences: []
-                        });
-                    }, 800);
-                    break;
 
                 case "promptEnhancing":
                     realtimeStore.setEnhancing(msg.isEnhancing);

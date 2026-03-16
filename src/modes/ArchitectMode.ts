@@ -56,10 +56,11 @@ You are the Strategist. You bridge the gap between user requirements and technic
   readonly temperature = 0.7; // Architect needs more creativity
 
   /**
-   * Get tools for this mode (planning + memory bank, no code execution)
+   * Get tools for this mode (filtered by availableTools)
    */
   getToolsForMode(agentManager: AgentManager): AgentTool[] {
-    return agentManager.getPlanningOnlyTools();
+    const allTools = agentManager.getFormattedTools() || [];
+    return allTools.filter(tool => this.availableTools.includes(tool.function?.name));
   }
 
   /**
@@ -76,9 +77,3 @@ You are the Strategist. You bridge the gap between user requirements and technic
     this.showMessage('Architect mode deactivated.');
   }
 }
-
-// TEST: ArchitectMode.ts
-const mode = new ArchitectMode();
-console.assert(mode.temperature === 0.7, 'Temperature fix failed: Expected 0.7');
-console.assert(mode.systemPrompt.includes('VERY CONCISE architectural reasoning'), 'Prompt update failed: Missing key phrase for reasoning');
-console.log('✅ ArchitectMode jetzt 9.7/10 (Balanced & Concise & Type-Safe)');

@@ -27,6 +27,7 @@ export interface GentlyMode {
   // Modus-spezifische Methoden
   canHandleTool(toolName: string): boolean;
   getToolFilter?(tools: AgentTool[]): AgentTool[];
+  getToolsForMode(agentManager: any): any[];
 }
 
 /**

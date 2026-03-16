@@ -94,7 +94,8 @@ describe('ModeManager', () => {
         onActivate: vi.fn(),
         onDeactivate: vi.fn(),
         canHandleTool: vi.fn(),
-        getToolFilter: vi.fn()
+        getToolFilter: vi.fn(),
+        getToolsForMode: vi.fn()
       };
 
       modeRegistry.register(mockMode);

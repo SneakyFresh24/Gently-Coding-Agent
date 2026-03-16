@@ -8,6 +8,7 @@ import { ChatHandlerUtils } from './ChatHandlerUtils';
 import { ToolCallManager } from '../toolcall';
 import { ToolCallDispatcher } from './ExecutionDispatchers';
 import { LogService } from '../../../services/LogService';
+import { ModeService } from '../../../modes/ModeService';
 import { OutboundWebviewMessage } from '../types/WebviewMessageTypes';
 
 const log = new LogService('ChatFlowManager');
@@ -22,6 +23,7 @@ export class ChatFlowManager {
         private readonly pruner: ConversationPruner,
         private readonly toolCallManager: ToolCallManager,
         private readonly toolCallDispatcher: ToolCallDispatcher,
+        private readonly modeService: ModeService,
         private readonly sendMessageToWebview: (message: OutboundWebviewMessage) => void
     ) { }
 
@@ -77,9 +79,9 @@ export class ChatFlowManager {
     }
 
     async generateAndStreamResponse(context: ChatViewContext, message: string, retryCount: number = 0, isFollowUp: boolean = false): Promise<void> {
-        const config = vscode.workspace.getConfiguration('gently');
-        const temperature = isFollowUp ? 0.8 : (config.get<number>('temperature') || 0.7);
-        const maxTokens = config.get<number>('maxTokens') || 4000;
+        const mode = this.modeService.getCurrentMode();
+        const temperature = mode?.temperature ?? 0.7;
+        const maxTokens = mode?.maxTokens ?? 4096;
 
         this.sendMessageToWebview({ type: 'activityUpdate', label: 'Preparing prompt...' });
         const systemPrompt = await this.promptManager.prepareSystemPrompt(context, retryCount);
@@ -144,25 +146,11 @@ export class ChatFlowManager {
     }
 
     private getToolsForMode(context: ChatViewContext): any[] | undefined {
-        let tools: any[] | undefined;
+        const mode = this.modeService.getCurrentMode();
+        if (!mode) return this.agentManager.getFormattedTools();
 
-        if (context.selectedMode === 'architect') {
-            const { ArchitectMode } = require('../../../modes/ArchitectMode');
-            tools = new ArchitectMode().getToolsForMode(this.agentManager);
-        } else if (context.selectedMode === 'code') {
-            const { CodeMode } = require('../../../modes/CodeMode');
-            const codeMode = new CodeMode();
-            const allTools = this.agentManager.getFormattedTools();
-            // Only allow tools that CodeMode explicitly declares
-            tools = allTools?.filter((t: any) =>
-                codeMode.availableTools.includes(t.function?.name)
-            );
-        } else if (['agent', 'debug'].includes(context.selectedMode) || context.agentMode) {
-            tools = this.agentManager.getFormattedTools()
-                ?.filter((t: any) => !['replace_file_content'].includes(t.function?.name));
-        }
-
-        log.info(`getToolsForMode: mode=${context.selectedMode}, returning ${tools?.length || 0} tools`);
+        const tools = mode.getToolsForMode(this.agentManager);
+        log.info(`getToolsForMode: mode=${mode.id}, returning ${tools?.length || 0} tools`);
         return tools;
     }
 

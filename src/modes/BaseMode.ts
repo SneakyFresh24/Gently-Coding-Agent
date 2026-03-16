@@ -6,14 +6,7 @@ import {
   GentlyMode,
   ModeContext
 } from './types/ModeTypes';
-
-// Temporär definieren, bis der Import korrekt funktioniert
-interface AgentTool {
-  name: string;
-  description: string;
-  parameters: any;
-  execute: (params: any) => Promise<any>;
-}
+import { AgentTool } from '../agent/agentManager/AgentManager';
 
 /**
  * Basisklasse für alle Modi
@@ -75,6 +68,11 @@ export abstract class BaseMode implements GentlyMode {
   getToolFilter(tools: AgentTool[]): AgentTool[] {
     return tools.filter(tool => this.canHandleTool(tool.name));
   }
+
+  /**
+   * Gibt alle für diesen Modus verfügbaren Tools zurück
+   */
+  abstract getToolsForMode(agentManager: any): any[];
 
   /**
    * Zeigt eine Nachricht an

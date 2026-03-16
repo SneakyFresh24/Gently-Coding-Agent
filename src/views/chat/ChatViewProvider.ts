@@ -23,6 +23,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'gently.chatView';
   private _view?: vscode.WebviewView;
   private isWebviewReady = false;
+  
+  // Queue for messages sent before the webview is ready
+  private pendingMessages: any[] = [];
 
   private messageHandler!: MessageHandler;
   private sessionHandler!: SessionHandler;
@@ -47,10 +50,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.agentManager.getIndexer()
     );
 
+    this.initializeHandlersAndCallbacks();
+  }
+
+  private initializeHandlersAndCallbacks(): void {
     this.initializeHandlers();
 
-    if (context) {
-      this.initializeTerminalManager(context);
+    if (this.context) {
+      this.initializeTerminalManager(this.context);
     }
 
     this.setupEventCallbacks();
@@ -74,6 +81,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.context,
       this.openRouterService,
       this.agentManager,
+      this.modeService,
       (message: any) => this.sendMessageToWebview(message),
       (message: any) => {
         // 1. Runtime-History update (crucial for tool sequence continuity)
@@ -141,7 +149,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   private setupEventCallbacks(): void {
     this.agentManager.setEventCallback((event: any) => {
-      if (this._view) this._view.webview.postMessage(event);
+      // If the webview is not ready, buffer the message
+      if (!this._view) {
+        console.log('[ChatViewProvider] Webview not ready, queuing event:', event.type);
+        this.pendingMessages.push(event);
+        return;
+      }
+
+      this.sendMessageToWebview(event);
 
       // Link plan to session if it's a new plan
       if (event.type === 'planCreated' && event.plan?.id) {
@@ -153,8 +168,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       // Handle automatic handover from Architect to Coder
       if (event.type === 'handover_to_coder') {
         console.log('[ChatViewProvider] Handover detected - Switching to Code mode');
-        this.setSelectedMode('code').catch(err => {
-          console.error('[ChatViewProvider] Failed to auto-switch to Code mode:', err);
+        this.setSelectedMode('code').then(() => {
+          if (event.planId) {
+            const planMessage = event.message || 'Executing plan...';
+            this.messageHandler.sendMessage(`${planMessage}\n\n(Execute Plan ID: ${event.planId})`, true);
+          }
+        }).catch(err => {
+          console.error('[ChatViewProvider] Failed to handle handover:', err);
         });
       }
     });
@@ -182,6 +202,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       };
 
       webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+
+      // Flush pending messages if any
+      if (this.pendingMessages.length > 0) {
+        console.log(`[ChatViewProvider] Flushing ${this.pendingMessages.length} pending messages to webview`);
+        for (const msg of this.pendingMessages) {
+          webviewView.webview.postMessage(msg);
+        }
+        this.pendingMessages = [];
+      }
 
 
       webviewView.webview.onDidReceiveMessage(async (data: WebviewMessage) => {

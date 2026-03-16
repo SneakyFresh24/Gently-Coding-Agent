@@ -1,7 +1,6 @@
 # Changelog
 
 All notable changes to the "Gently" extension will be documented in this file.
-
 ## [0.7.0] - 2026-03-16
 ### Fixed
 - **Iterative Planning**: Disabled unintended automatic search loops for long goals.
@@ -14,6 +13,10 @@ All notable changes to the "Gently" extension will be documented in this file.
 - **Event Propagation**: Fixed uninitialized `eventCallback` in `CommandTools` by implementing proper propagation from `ToolManager`.
 - **Approval Logging**: Added detailed logs and explicit error throwing in `ToolManager` to prevent silent approval failures.
 - **Tool Normalization**: Added support for string-based function calls and detailed JSON logging for malformed tools.
+- **Event Queuing**: Added buffering for messages sent before webview is ready, preventing lost approval prompts.
+- **Handover Transition**: Unified handover logic in backend with automatic plan execution and smooth mode switching.
+- **Initialization Stability**: Fixed race condition in `ChatViewProvider` startup sequence.
+- **Tool Manager Optimization**: Removed redundant tool re-creations and added enhanced structured logging for approvals.
 
 
 ## [0.6.3] - 2026-03-16
