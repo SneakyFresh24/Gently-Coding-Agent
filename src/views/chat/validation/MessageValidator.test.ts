@@ -314,7 +314,7 @@ describe('MessageValidator', () => {
         const message = {
           type: 'commandApprovalResponse',
           commandId: 'cmd-123',
-          approved: true
+          response: 'accept'
         };
         
         const result = validator.validateInboundMessage(message);
@@ -324,7 +324,7 @@ describe('MessageValidator', () => {
       it('should reject command approval without commandId', () => {
         const message = {
           type: 'commandApprovalResponse',
-          approved: true
+          response: 'accept'
           // missing commandId
         };
         
@@ -334,6 +334,23 @@ describe('MessageValidator', () => {
           expect.objectContaining({ 
             field: 'commandId',
             code: 'REQUIRED_FIELD_MISSING'
+          })
+        );
+      });
+
+      it('should reject command approval with invalid response', () => {
+        const message = {
+          type: 'commandApprovalResponse',
+          commandId: 'cmd-123',
+          response: 'invalid'
+        };
+        
+        const result = validator.validateInboundMessage(message);
+        expect(result.isValid).toBe(false);
+        expect(result.errors).toContainEqual(
+          expect.objectContaining({ 
+            field: 'response',
+            code: 'INVALID_ENUM_VALUE'
           })
         );
       });

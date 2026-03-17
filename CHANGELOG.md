@@ -1,6 +1,27 @@
 # Changelog
 
 All notable changes to the "Gently" extension will be documented in this file.
+
+## [0.7.1] - 2026-03-17
+
+### Added
+- **Dynamic Token Management**: Implemented automatic fetching of `max_output` limits from OpenRouter to maximize generation capacity and prevent truncation.
+- **Robust JSON Repair**: Added a state-aware JSON sanitizer that automatically repairs truncated objects, arrays, and strings from mid-stream cuts.
+
+### Changed
+- **Text-Based Planning**: Replaced the JSON-based `create_plan` and `execute_plan` tools with a streamlined Markdown-based planning flow in the chat.
+- **Tool Context Optimization**: Drastically shortened tool descriptions in `definitions.ts` to reduce token overhead and improve prompt adherence.
+- **Handover Workflow**: Unified the Architect-to-Coder transition to use plan summaries and preserve chat history for implementation.
+
+### Fixed
+- **Command Approval Flow**: Fixed a critical response type mismatch between frontend and backend.
+- **Backend Validation**: Synchronized the `MessageValidator` schema with the modern approval response enum.
+- **Streaming Tool-Call Stability**: Resolved the "Empty Tool Name" error by ensuring tool calls are only emitted once both ID and Name are fully received from the stream.
+
+### Added
+- **Command Approval Options**: Added a new "Accept Always" button to the approval dialog for faster workflow.
+- **Dynamic Token Management**: Implemented automatic fetching of `max_output` limits from OpenRouter to maximize generation capacity and prevent truncation.
+
 ## [0.7.0] - 2026-03-16
 ### Fixed
 - **Iterative Planning**: Disabled unintended automatic search loops for long goals.

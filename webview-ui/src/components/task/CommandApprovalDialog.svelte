@@ -15,7 +15,7 @@
     chatStore.updateCommandApprovalStatus(commandId, "approved");
     extensionSync.send("commandApprovalResponse", {
       commandId,
-      approved: true,
+      response: "accept",
     });
   }
 
@@ -23,7 +23,15 @@
     chatStore.updateCommandApprovalStatus(commandId, "rejected");
     extensionSync.send("commandApprovalResponse", {
       commandId,
-      approved: false,
+      response: "deny",
+    });
+  }
+
+  function handleAcceptAlways() {
+    chatStore.updateCommandApprovalStatus(commandId, "approved");
+    extensionSync.send("commandApprovalResponse", {
+      commandId,
+      response: "accept_always",
     });
   }
 
@@ -73,6 +81,13 @@
     {#if status === "pending"}
       <button class="action-btn reject" on:click={handleReject} title="Reject">
         <Icon name="X" size={16} />
+      </button>
+      <button
+        class="action-btn accept-always"
+        on:click={handleAcceptAlways}
+        title="Accept Always"
+      >
+        <Icon name="ShieldCheck" size={16} />
       </button>
       <button
         class="action-btn approve"
@@ -207,6 +222,17 @@
   .action-btn.approve:hover {
     background: rgba(34, 197, 94, 0.25);
     border-color: rgba(34, 197, 94, 0.5);
+  }
+
+  .action-btn.accept-always {
+    background: rgba(96, 165, 250, 0.15);
+    border-color: rgba(96, 165, 250, 0.3);
+    color: #60a5fa;
+  }
+
+  .action-btn.accept-always:hover {
+    background: rgba(96, 165, 250, 0.25);
+    border-color: rgba(96, 165, 250, 0.5);
   }
 
   .status-result {

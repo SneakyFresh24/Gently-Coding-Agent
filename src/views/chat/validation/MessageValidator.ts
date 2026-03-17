@@ -347,10 +347,10 @@ const MessageSchemas: Record<string, any> = {
 
   // Terminal operations
   'commandApprovalResponse': {
-    required: ['commandId', 'approved'],
+    required: ['commandId', 'response'],
     fields: {
       commandId: { type: 'string', maxLength: 100 },
-      approved: { type: 'boolean' }
+      response: { type: 'string', enum: ['accept', 'accept_always', 'deny'] }
     }
   },
   'killCommand': {
