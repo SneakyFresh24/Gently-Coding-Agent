@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { GuardianEvent } from '../../stores/guardianStore';
   import { createEventDispatcher } from 'svelte';
+  import Icon from '../ui/Icon.svelte';
 
   export let event: GuardianEvent;
 
@@ -15,12 +16,14 @@
   }
 
   $: severityClass = `severity-${event.severity}`;
-  $: typeIcon = event.type === 'security' ? '🔒' : event.type === 'performance' ? '⚡' : '📋';
+  $: iconName = event.type === 'security' ? 'lock' : event.type === 'performance' ? 'zap' : 'note';
 </script>
 
 <div class="issue-card {severityClass}">
   <div class="header">
-    <span class="icon">{typeIcon}</span>
+    <span class="icon">
+      <Icon name={iconName} size={16} />
+    </span>
     <span class="title">{event.title}</span>
     <span class="badge {event.severity}">{event.severity}</span>
   </div>
@@ -41,7 +44,7 @@
     padding: 16px;
     background: var(--vscode-editor-background);
     border: 1px solid var(--vscode-widget-border);
-    border-left: 4px solid #ccc;
+    border-left: 4px solid var(--vscode-widget-border);
     border-radius: 8px;
     margin-bottom: 12px;
     transition: all 0.2s ease;
@@ -52,10 +55,10 @@
     border-color: var(--vscode-focusBorder);
   }
 
-  .severity-critical { border-left-color: #f14c4c; }
-  .severity-high { border-left-color: #ffa500; }
-  .severity-medium { border-left-color: #cca700; }
-  .severity-low { border-left-color: #3794ff; }
+  .severity-critical { border-left-color: var(--vscode-errorForeground); }
+  .severity-high { border-left-color: var(--vscode-editorWarning-foreground); }
+  .severity-medium { border-left-color: var(--vscode-editorInfo-foreground); }
+  .severity-low { border-left-color: var(--vscode-textLink-foreground); }
 
   .header {
     display: flex;
@@ -77,10 +80,10 @@
     font-weight: 700;
   }
 
-  .badge.critical { background: #f14c4c; color: white; }
-  .badge.high { background: #ffa500; color: black; }
-  .badge.medium { background: #cca700; color: black; }
-  .badge.low { background: #3794ff; color: white; }
+  .badge.critical { background: var(--vscode-errorForeground); color: var(--vscode-button-foreground); }
+  .badge.high { background: var(--vscode-editorWarning-foreground); color: #000; }
+  .badge.medium { background: var(--vscode-editorInfo-foreground); color: #000; }
+  .badge.low { background: var(--vscode-textLink-foreground); color: white; }
 
   .description {
     font-size: 12px;

@@ -683,7 +683,7 @@ export interface ApiKeyStatusMessage {
  */
 export interface ModelsListMessage {
   type: 'modelsList';
-  models: { id: string; name: string; context_length: number }[];
+  models: { id: string; name: string; context_length: number; max_output: number }[];
 }
 
 /**

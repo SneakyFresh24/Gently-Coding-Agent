@@ -1,16 +1,19 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import type { ModelInfo } from '../../lib/types';
   
   export let selectedModel = '';
-  export let models: string[] = [];
+  export let models: ModelInfo[] = [];
   
   let isOpen = false;
 
-  function selectModel(model: string) {
-    selectedModel = model;
+  $: selectedModelName = models.find(m => m.id === selectedModel)?.name || selectedModel || 'Select Model';
+
+  function selectModel(modelId: string) {
+    selectedModel = modelId;
     isOpen = false;
     // Notify app of change
-    window.postMessage({ type: 'modelChanged', model }, '*');
+    window.postMessage({ type: 'modelChanged', model: modelId }, '*');
   }
 
   function toggleDropdown() {
@@ -35,19 +38,22 @@
 
 <div class="model-selector">
   <button class="selector-btn" on:click={toggleDropdown}>
-    <span class="model-name">{selectedModel || 'Select Model'}</span>
+    <span class="model-name">{selectedModelName}</span>
     <span class="chevron">▾</span>
   </button>
 
   {#if isOpen}
     <div class="dropdown">
-      {#each models as model}
+      {#each models as model (model.id)}
         <button 
           class="model-item" 
-          class:active={model === selectedModel}
-          on:click={() => selectModel(model)}
+          class:active={model.id === selectedModel}
+          on:click={() => selectModel(model.id)}
         >
-          {model}
+          <div class="model-info">
+            <span class="model-label">{model.name}</span>
+            <span class="model-context">{Math.round(model.context_length / 1000)}k</span>
+          </div>
         </button>
       {/each}
     </div>
@@ -64,23 +70,25 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 10px;
-    background: var(--vscode-button-secondaryBackground);
-    color: var(--vscode-button-secondaryForeground);
-    border: 1px solid var(--vscode-widget-border);
+    padding: 2px 8px;
+    background: transparent;
+    color: var(--vscode-foreground);
+    border: 1px solid transparent;
     border-radius: 4px;
-    font-size: 12px;
+    font-size: var(--font-size-xs);
     cursor: pointer;
     transition: all 0.2s ease;
+    opacity: 0.8;
   }
 
   .selector-btn:hover {
-    background: var(--vscode-button-secondaryHoverBackground);
-    border-color: var(--vscode-focusBorder);
+    background: var(--vscode-toolbar-hoverBackground);
+    border-color: var(--vscode-widget-border);
+    opacity: 1;
   }
 
   .model-name {
-    max-width: 120px;
+    max-width: 150px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -88,15 +96,14 @@
 
   .dropdown {
     position: absolute;
-    top: 100%;
+    bottom: calc(100% + 8px);
     left: 0;
-    margin-top: 4px;
     background: var(--vscode-dropdown-background);
     border: 1px solid var(--vscode-dropdown-border);
-    border-radius: 4px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    border-radius: 6px;
+    box-shadow: var(--shadow-lg);
     z-index: 1000;
-    min-width: 180px;
+    min-width: 220px;
     max-height: 300px;
     overflow-y: auto;
   }
@@ -113,12 +120,34 @@
     cursor: pointer;
   }
 
-  .model-item:hover {
-    background: var(--vscode-list-hoverBackground);
+  .model-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    gap: 8px;
   }
 
-  .model-item.active {
-    background: var(--vscode-list-activeSelectionBackground);
-    color: var(--vscode-list-activeSelectionForeground);
+  .model-label {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .model-context {
+    font-size: 10px;
+    color: var(--vscode-descriptionForeground);
+    background: var(--vscode-badge-background);
+    color: var(--vscode-badge-foreground);
+    padding: 1px 4px;
+    border-radius: 3px;
+    opacity: 0.8;
+  }
+
+  .model-item.active .model-context {
+    background: var(--vscode-list-activeSelectionForeground);
+    color: var(--vscode-list-activeSelectionBackground);
+    opacity: 1;
   }
 </style>

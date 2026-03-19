@@ -137,6 +137,7 @@ export interface ModelInfo {
   id: string;
   name: string;
   context_length: number;
+  max_output: number;
 }
 
 // ── Inbound Messages (Webview → Extension) ───────────

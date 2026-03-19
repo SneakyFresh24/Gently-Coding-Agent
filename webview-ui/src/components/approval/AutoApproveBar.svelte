@@ -39,27 +39,30 @@
 
 <style>
   .auto-approve-bar {
-    padding: var(--space-md) var(--space-lg);
-    border-top: 0.5px solid var(--vscode-panel-border);
+    padding: 0;
   }
 
   .bar-button {
     display: flex;
     align-items: center;
     gap: var(--space-sm);
-    width: 100%;
-    background: none;
-    border: none;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
     color: var(--vscode-foreground);
     font-size: var(--font-size-xs);
     cursor: pointer;
     text-align: left;
     font-family: inherit;
-    padding: var(--space-xs) 0;
+    padding: 2px 8px;
+    transition: all 0.2s ease;
+    opacity: 0.8;
   }
 
   .bar-button:hover {
-    opacity: 0.8;
+    background: var(--vscode-toolbar-hoverBackground);
+    border-color: var(--vscode-widget-border);
+    opacity: 1;
   }
 
   .label {

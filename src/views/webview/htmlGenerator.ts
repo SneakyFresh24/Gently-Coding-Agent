@@ -37,7 +37,12 @@ export function generateHtml(
   html = html.replace(
     /(<link[^>]+href="|<script[^>]+src="|<img[^>]+src=")([^"]+)"/g,
     (match, prefix, assetPath) => {
-      const cleanPath = assetPath.startsWith('/') ? assetPath.slice(1) : assetPath;
+      let cleanPath = assetPath;
+      if (cleanPath.startsWith('./')) {
+        cleanPath = cleanPath.slice(2);
+      } else if (cleanPath.startsWith('/')) {
+        cleanPath = cleanPath.slice(1);
+      }
       const assetUri = webview.asWebviewUri(vscode.Uri.joinPath(distPath, cleanPath));
       return `${prefix}${assetUri}"`;
     }
@@ -49,7 +54,7 @@ export function generateHtml(
           content="default-src 'none'; 
                    style-src ${webview.cspSource} 'unsafe-inline'; 
                    script-src ${webview.cspSource} 'unsafe-inline'; 
-                   font-src ${webview.cspSource}; 
+                   font-src ${webview.cspSource} data:; 
                    img-src ${webview.cspSource} https: data:;">
   `;
 

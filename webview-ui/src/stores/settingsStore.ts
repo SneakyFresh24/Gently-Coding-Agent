@@ -11,6 +11,7 @@ import type { ModelInfo } from '../lib/types';
 interface SettingsStoreState {
   hasApiKey: boolean;
   availableModels: ModelInfo[];
+  selectedModel: string;
   maxTokens: number;
   isLoadingModels: boolean;
 }
@@ -18,6 +19,7 @@ interface SettingsStoreState {
 const initialState: SettingsStoreState = {
   hasApiKey: false,
   availableModels: [],
+  selectedModel: '',
   maxTokens: 8000,
   isLoadingModels: false,
 };
@@ -43,7 +45,17 @@ function createSettingsStore() {
     },
 
     setModels(models: ModelInfo[]) {
-      update(s => ({ ...s, availableModels: models, isLoadingModels: false }));
+      update(s => {
+        const nextState = { ...s, availableModels: models, isLoadingModels: false };
+        if (!s.selectedModel && models.length > 0) {
+          nextState.selectedModel = models[0].id;
+        }
+        return nextState;
+      });
+    },
+
+    setSelectedModel(modelId: string) {
+      update(s => ({ ...s, selectedModel: modelId }));
     },
 
     fetchModels() {

@@ -61,8 +61,8 @@
     font-weight: 700;
   }
 
-  .critical .value { color: #f14c4c; }
-  .high .value { color: #ffa500; }
-  .medium .value { color: #cca700; }
+  .critical .value { color: var(--vscode-errorForeground); }
+  .high .value { color: var(--vscode-editorWarning-foreground); }
+  .medium .value { color: var(--vscode-editorInfo-foreground); }
   .total .value { color: var(--vscode-foreground); }
 </style>

@@ -1,10 +1,9 @@
 <script lang="ts">
-  import ModelDropdown from './ModelDropdown.svelte';
+  import type { ModelInfo } from '../../lib/types';
   import TokenDisplay from './TokenDisplay.svelte';
+  import Icon from '../ui/Icon.svelte';
   
   export let currentView = 'chat';
-  export let selectedModel = 'deepseek-chat';
-  export let models: string[] = [];
   export let tokens = 0;
   
   function setView(view: string) {
@@ -15,7 +14,7 @@
 <header class="main-header">
   <div class="left">
     <div class="brand">
-      <span class="logo">🤖</span>
+      <Icon name="hubot" size={20} />
       <span class="name">Gently</span>
     </div>
     
@@ -26,7 +25,7 @@
         on:click={() => setView('chat')}
         title="Chat"
       >
-        💬
+        <Icon name="comment" size={18} />
       </button>
       <button 
         class="nav-item" 
@@ -34,7 +33,7 @@
         on:click={() => setView('guardian')}
         title="Guardian"
       >
-        🛡️
+        <Icon name="shield" size={18} />
       </button>
       <button 
         class="nav-item" 
@@ -42,13 +41,9 @@
         on:click={() => setView('history')}
         title="History"
       >
-        📜
+        <Icon name="history" size={18} />
       </button>
     </nav>
-  </div>
-
-  <div class="center">
-    <ModelDropdown {selectedModel} {models} />
   </div>
 
   <div class="right">
@@ -59,7 +54,7 @@
       on:click={() => setView('settings')}
       title="Settings"
     >
-      ⚙️
+      <Icon name="settings-gear" size={18} />
     </button>
   </div>
 </header>
@@ -127,11 +122,5 @@
     background: var(--vscode-list-activeSelectionBackground);
     color: var(--vscode-list-activeSelectionForeground);
     opacity: 1;
-  }
-
-  .center {
-    flex: 1;
-    display: flex;
-    justify-content: center;
   }
 </style>

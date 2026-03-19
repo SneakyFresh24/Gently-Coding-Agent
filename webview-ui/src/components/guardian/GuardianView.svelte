@@ -2,6 +2,7 @@
   import { guardianStore, filteredEvents, activeEvents, criticalCount } from '../../stores/guardianStore';
   import StatsOverview from './StatsOverview.svelte';
   import IssueCard from './IssueCard.svelte';
+  import Icon from '../ui/Icon.svelte';
   
   $: highCount = $activeEvents.filter(e => e.severity === 'high').length;
   $: mediumCount = $activeEvents.filter(e => e.severity === 'medium').length;
@@ -17,7 +18,6 @@
 
   function startScan() {
     guardianStore.setScanning(true);
-    // Simulate scan
     setTimeout(() => {
       guardianStore.setScanning(false);
     }, 2000);
@@ -31,7 +31,13 @@
       <p class="subtitle">System Monitoring & Safety Dashboard</p>
     </div>
     <button class="scan-btn" class:scanning={$guardianStore.isScanning} on:click={startScan} disabled={$guardianStore.isScanning}>
-      {$guardianStore.isScanning ? '🛡️ Scanning...' : '🔍 Start Scan'}
+      {#if $guardianStore.isScanning}
+        <Icon name="shield" size={14} className="spin" />
+        <span>Scanning...</span>
+      {:else}
+        <Icon name="search" size={14} />
+        <span>Start Scan</span>
+      {/if}
     </button>
   </header>
 
@@ -49,7 +55,9 @@
 
     {#if $filteredEvents.length === 0}
       <div class="empty-state">
-        <span class="icon">✅</span>
+        <div class="empty-icon">
+          <Icon name="pass-filled" size={32} />
+        </div>
         <p>No active issues detected. System is secure.</p>
       </div>
     {:else}
@@ -88,6 +96,9 @@
   }
 
   .scan-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     padding: 8px 16px;
     background: var(--vscode-button-background);
     color: var(--vscode-button-foreground);
@@ -129,14 +140,15 @@
     border-radius: 12px;
     text-align: center;
     margin-top: 24px;
+    color: var(--vscode-descriptionForeground);
   }
 
-  .empty-state .icon {
-    font-size: 32px;
+  .empty-icon {
     margin-bottom: 12px;
+    color: var(--vscode-testing-iconPassed, #73c991);
   }
 
   .empty-state p {
-    opacity: 0.7;
+    opacity: 0.8;
   }
 </style>

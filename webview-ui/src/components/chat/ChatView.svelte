@@ -6,6 +6,7 @@
   import MessagesArea from './MessagesArea.svelte';
   import InputSection from './InputSection.svelte';
   import AutoApproveBar from '../approval/AutoApproveBar.svelte';
+  import ModelDropdown from '../layout/ModelDropdown.svelte';
 
   import { extensionStore, isBusy, hasTask } from '../../stores/extensionStore';
   import { chatStore, isStreaming } from '../../stores/chatStore';
@@ -14,7 +15,6 @@
 
   let { isHidden = false } = $props();
 
-  // Wire up message handlers on mount
   onMount(() => {
     initMessaging({
       // State & lifecycle
@@ -106,7 +106,13 @@
   </div>
 
   <footer class="chat-footer">
-    <AutoApproveBar />
+    <div class="footer-toolbar">
+      <AutoApproveBar />
+      <ModelDropdown 
+        selectedModel={$settingsStore.selectedModel} 
+        models={$settingsStore.availableModels} 
+      />
+    </div>
     <InputSection
       isBusy={$isBusy}
       isStreamingProp={$isStreaming}
@@ -132,5 +138,15 @@
   .chat-footer {
     border-top: 1px solid var(--vscode-panel-border);
     background: var(--vscode-sideBar-background);
+    padding: 0;
+  }
+
+  .footer-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--vscode-panel-border);
+    background: var(--vscode-editor-background);
   }
 </style>

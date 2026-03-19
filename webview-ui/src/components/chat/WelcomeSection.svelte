@@ -1,27 +1,30 @@
 <script lang="ts">
+  import Icon from '../ui/Icon.svelte';
 </script>
 
 <div class="welcome">
   <div class="welcome-content">
-    <div class="welcome-icon">🤖</div>
+    <div class="welcome-icon">
+      <Icon name="hubot" size={48} />
+    </div>
     <h2 class="welcome-title">Gently</h2>
     <p class="welcome-subtitle">AI Coding Agent</p>
 
     <div class="welcome-tips">
       <div class="tip">
-        <span class="tip-icon">💬</span>
+        <Icon name="comment" size={20} className="tip-icon" />
         <span>Ask me to write, edit, or debug code</span>
       </div>
       <div class="tip">
-        <span class="tip-icon">📁</span>
+        <Icon name="folder" size={20} className="tip-icon" />
         <span>Attach files for context with @</span>
       </div>
       <div class="tip">
-        <span class="tip-icon">🏗️</span>
+        <Icon name="package" size={20} className="tip-icon" />
         <span>Use Architect mode for complex plans</span>
       </div>
       <div class="tip">
-        <span class="tip-icon">⚡</span>
+        <Icon name="zap" size={20} className="tip-icon" />
         <span>Configure auto-approve for faster workflows</span>
       </div>
     </div>
@@ -78,8 +81,7 @@
     color: var(--vscode-foreground);
   }
 
-  .tip-icon {
-    font-size: var(--font-size-lg);
+  :global(.tip-icon) {
     flex-shrink: 0;
   }
 </style>

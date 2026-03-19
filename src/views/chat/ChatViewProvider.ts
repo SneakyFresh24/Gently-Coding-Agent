@@ -271,6 +271,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     console.log('[ChatViewProvider] Initializing webview data');
     
     await this.sendApiKeyStatus();
+    
+    // Fetch models and send to webview if API key is present
+    const hasKey = await this.apiKeyManager.hasKey();
+    if (hasKey) {
+      try {
+        const models = await this.openRouterService.listModels();
+        if (models && models.length > 0) {
+          this.sendMessageToWebview({ type: 'modelsList', models });
+        }
+      } catch (error) {
+        console.error('[ChatViewProvider] Error fetching models on init:', error);
+      }
+    }
+
     await this.sendContextUpdate();
     await this.postTokenUsage();
     await this.sessionHandler.handleGetSessions();
