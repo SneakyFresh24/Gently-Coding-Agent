@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { TerminalManager } from './TerminalManager';
 import { ExecutionOptions, CommandResult } from './execution/types/ExecutionTypes';
-import { TerminalMode, SafetyLevel } from './HybridApprovalManager';
+import { TerminalMode, SafetyLevel } from '../types/approval';
 
 // Mock VS Code API
 vi.mock('vscode', () => ({

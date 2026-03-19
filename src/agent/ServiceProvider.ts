@@ -44,7 +44,7 @@ import {
     MemoryManager
 } from './agentManager/index';
 import { CONTEXT_LIMITS } from '../utils';
-import { AutoApproveManager } from '../approval/AutoApproveManager';
+import { ApprovalManager, AutoApproveManager } from '../approval/ApprovalManager';
 import { HookManager } from '../hooks/HookManager';
 
 /**
@@ -68,6 +68,12 @@ export function configureServices(container: Container, context: vscode.Extensio
         return undefined; 
     });
 
+    container.register('approvalManager', (c) => new ApprovalManager(context, (m) => {
+        const agentSessions = c.resolve<any>('agentSessions');
+        if (agentSessions && typeof agentSessions.sendMessageToWebview === 'function') {
+            agentSessions.sendMessageToWebview(m);
+        }
+    }));
     container.register('autoApproveManager', (c) => new AutoApproveManager(context));
     container.register('hookManager', (c) => new HookManager(workspaceRoot));
 

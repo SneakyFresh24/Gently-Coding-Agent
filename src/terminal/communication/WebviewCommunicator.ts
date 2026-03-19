@@ -14,7 +14,7 @@ import {
   TerminalStatusMessage,
   FallbackModeUsedMessage
 } from './types/CommunicationTypes';
-import { ApprovalRequest, TerminalMode, QuickPattern } from '../HybridApprovalManager';
+import { ApprovalRequest, TerminalMode, QuickPattern } from '../../types/approval';
 import { OutputChunk } from '../execution/types/ExecutionTypes';
 
 /**

@@ -5,10 +5,10 @@
 import * as vscode from 'vscode';
 import { v4 as uuidv4 } from 'uuid';
 import { ShellIntegrationExecutor } from './ShellIntegrationExecutor';
-import { HybridApprovalManager, TerminalMode, QuickPattern } from './HybridApprovalManager';
 import { WebviewCommunicatorImpl } from './communication/WebviewCommunicator';
 import { ExecutionOptions, CommandResult, OutputChunk } from './execution/types/ExecutionTypes';
-import { ApprovalRequest } from './HybridApprovalManager';
+import { ApprovalManager } from '../approval/ApprovalManager';
+import { TerminalMode, QuickPattern, ApprovalRequest } from '../types/approval';
 import { GuardianService } from '../guardian/GuardianService';
 
 /**
@@ -16,7 +16,7 @@ import { GuardianService } from '../guardian/GuardianService';
  */
 export class TerminalManager {
   private executor: ShellIntegrationExecutor;
-  private approvalManager: HybridApprovalManager;
+  private approvalManager: ApprovalManager;
   private webviewCommunicator: WebviewCommunicatorImpl;
   private guardian: GuardianService | null = null;
 
@@ -28,7 +28,7 @@ export class TerminalManager {
     // Initialize components
     this.webviewCommunicator = new WebviewCommunicatorImpl(sendMessageToWebview);
     this.executor = new ShellIntegrationExecutor(this.webviewCommunicator);
-    this.approvalManager = new HybridApprovalManager(context, sendMessageToWebview);
+    this.approvalManager = new ApprovalManager(context, sendMessageToWebview);
     this.guardian = guardianService || null;
 
     console.log('[TerminalManager] Initialized with modular architecture (Refactored)');

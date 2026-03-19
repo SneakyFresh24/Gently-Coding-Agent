@@ -21,7 +21,7 @@ import {
 import { IAgentService } from './index';
 import { TerminalManager } from '../../terminal/TerminalManager';
 import { PlanningManager } from './PlanningManager';
-import { AutoApproveManager } from '../../approval/AutoApproveManager';
+import { AutoApproveManager } from '../../approval/ApprovalManager';
 import { HookManager } from '../../hooks/HookManager';
 
 export class ToolManager implements IAgentService {

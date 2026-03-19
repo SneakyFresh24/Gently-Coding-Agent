@@ -8,10 +8,10 @@ import { CommandApproval, ToolExecution, Checkpoint, Message } from './ChatTypes
 import {
   ApprovalRequest,
   TerminalMode,
-  QuickPattern
-} from '../../../terminal/HybridApprovalManager';
+  QuickPattern,
+  AutoApprovalSettings as AutoApproveSettings
+} from '../../../types/approval';
 import { OutputChunk } from '../../../terminal/execution/types/ExecutionTypes';
-import { AutoApproveSettings } from '../../../approval/AutoApproveSettings';
 
 // =====================================================
 // INBOUND MESSAGES (Webview → Extension)

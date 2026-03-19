@@ -7,13 +7,13 @@ export { ShellIntegrationExecutor as CommandExecutorImpl } from './ShellIntegrat
 export type { CommandExecutor, ExecutionOptions, CommandResult, OutputChunk, OutputChunkCallback } from './execution/types/ExecutionTypes';
 
 // Approval modules
-export { HybridApprovalManager as ApprovalManagerImpl } from './HybridApprovalManager';
+export { ApprovalManager as ApprovalManagerImpl } from '../approval/ApprovalManager';
 export type {
   CommandEvaluation as SafetyEvaluation,
   TerminalMode,
   QuickPattern,
   SafetyLevel
-} from './HybridApprovalManager';
+} from '../types/approval';
 
 // Communication modules
 export { WebviewCommunicatorImpl } from './communication/WebviewCommunicator';
