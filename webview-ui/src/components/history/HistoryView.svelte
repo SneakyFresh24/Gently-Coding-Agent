@@ -21,17 +21,8 @@
 
   onMount(() => {
     historyStore.fetchHistory();
-    // Dummy initial data for demonstration if empty
-    setTimeout(() => {
-      if ($historyStore.sessions.length === 0) {
-        historyStore.setSessions([
-          { id: '101', title: 'Refactoring Backend', timestamp: Date.now() - 3600000, messageCount: 24, model: 'deepseek-chat' },
-          { id: '102', title: 'Fixing CSS Grid', timestamp: Date.now() - 86400000, messageCount: 12, model: 'gpt-4o' },
-          { id: '103', title: 'Planning New Features', timestamp: Date.now() - 172800000, messageCount: 45, model: 'claude-3-5-sonnet' }
-        ]);
-      }
-    }, 500);
   });
+
 </script>
 
 <div class="history-view">

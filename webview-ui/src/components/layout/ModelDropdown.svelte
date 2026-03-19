@@ -6,8 +6,14 @@
   export let models: ModelInfo[] = [];
   
   let isOpen = false;
+  let searchTerm = '';
+
 
   $: selectedModelName = models.find(m => m.id === selectedModel)?.name || selectedModel || 'Select Model';
+  $: filteredModels = searchTerm 
+    ? models.filter(m => m.name.toLowerCase().includes(searchTerm.toLowerCase()) || m.id.toLowerCase().includes(searchTerm.toLowerCase()))
+    : models;
+
 
   function selectModel(modelId: string) {
     selectedModel = modelId;
@@ -39,24 +45,41 @@
 <div class="model-selector">
   <button class="selector-btn" on:click={toggleDropdown}>
     <span class="model-name">{selectedModelName}</span>
-    <span class="chevron">▾</span>
+    <span class="chevron">
+      <i class="codicon {isOpen ? 'codicon-chevron-down' : 'codicon-chevron-up'}"></i>
+    </span>
   </button>
+
 
   {#if isOpen}
     <div class="dropdown">
-      {#each models as model (model.id)}
-        <button 
-          class="model-item" 
-          class:active={model.id === selectedModel}
-          on:click={() => selectModel(model.id)}
-        >
-          <div class="model-info">
-            <span class="model-label">{model.name}</span>
-            <span class="model-context">{Math.round(model.context_length / 1000)}k</span>
-          </div>
-        </button>
-      {/each}
+      <div class="search-container">
+        <input 
+          type="text" 
+          placeholder="Search models..." 
+          bind:value={searchTerm}
+          on:click|stopPropagation
+        />
+      </div>
+      <div class="model-list">
+        {#each filteredModels as model (model.id)}
+          <button 
+            class="model-item" 
+            class:active={model.id === selectedModel}
+            on:click={() => selectModel(model.id)}
+          >
+            <div class="model-info">
+              <span class="model-label">{model.name}</span>
+              <span class="model-context">{Math.round(model.context_length / 1000)}k</span>
+            </div>
+          </button>
+        {/each}
+        {#if filteredModels.length === 0}
+          <div class="no-results">No models found</div>
+        {/if}
+      </div>
     </div>
+
   {/if}
 </div>
 
@@ -96,17 +119,48 @@
 
   .dropdown {
     position: absolute;
-    bottom: calc(100% + 8px);
+    top: calc(100% + 8px);
     left: 0;
     background: var(--vscode-dropdown-background);
     border: 1px solid var(--vscode-dropdown-border);
     border-radius: 6px;
     box-shadow: var(--shadow-lg);
     z-index: 1000;
-    min-width: 220px;
-    max-height: 300px;
+    min-width: 240px;
+    max-height: 320px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .search-container {
+    padding: 8px;
+    border-bottom: 1px solid var(--vscode-dropdown-border);
+    background: var(--vscode-input-background);
+  }
+
+  .search-container input {
+    width: 100%;
+    padding: 4px 8px;
+    background: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border);
+    border-radius: 4px;
+    font-size: 11px;
+  }
+
+  .model-list {
+    flex: 1;
     overflow-y: auto;
   }
+
+  .no-results {
+    padding: 12px;
+    text-align: center;
+    font-size: 11px;
+    opacity: 0.5;
+  }
+
 
   .model-item {
     display: block;

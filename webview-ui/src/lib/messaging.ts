@@ -81,7 +81,14 @@ export interface MessageHandlers {
 
   // Catch-all for unhandled types
   onUnhandled?: (data: any) => void;
+
+  // New handlers
+  onTaskStart?: (data: any) => void;
+  onTaskUpdate?: (data: any) => void;
+  onTaskComplete?: (data: any) => void;
+  onRefreshSessions?: (data: any) => void;
 }
+
 
 // Map from message type to handler key
 const TYPE_TO_HANDLER: Record<string, keyof MessageHandlers> = {
@@ -132,7 +139,12 @@ const TYPE_TO_HANDLER: Record<string, keyof MessageHandlers> = {
   activityUpdate: 'onActivityUpdate',
   workspaceInfo: 'onWorkspaceInfo',
   thinking: 'onThinking',
+  taskStart: 'onTaskStart',
+  taskUpdate: 'onTaskUpdate',
+  taskComplete: 'onTaskComplete',
+  refreshSessions: 'onRefreshSessions',
 };
+
 
 let _handlers: MessageHandlers = {};
 let _initialized = false;

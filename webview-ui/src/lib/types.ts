@@ -39,6 +39,14 @@ export interface CommandApproval {
   status: 'pending' | 'approved' | 'rejected';
 }
 
+export interface PendingApproval {
+  approvalId: string;
+  toolName: string;
+  params: any;
+  timestamp: number;
+}
+
+
 export interface ToolCall {
   id: string;
   type: 'function';
@@ -263,7 +271,9 @@ export type OutboundMessageType =
   | 'terminalModeChanged'
   | 'quickPatternsChanged'
   | 'terminalStatus'
+  | 'refreshSessions'
   | 'thinking';
+
 
 export interface OutboundMessage {
   type: OutboundMessageType;

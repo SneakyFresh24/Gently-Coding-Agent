@@ -28,8 +28,11 @@
   >
     <span class="label">Auto-approve:</span>
     <span class="value truncate">{getEnabledActionsText()}</span>
-    <span class="chevron">{isModalOpen ? '▾' : '▸'}</span>
+    <span class="chevron">
+      <i class="codicon {isModalOpen ? 'codicon-chevron-down' : 'codicon-chevron-right'}"></i>
+    </span>
   </button>
+
 </div>
 
 <AutoApproveModal

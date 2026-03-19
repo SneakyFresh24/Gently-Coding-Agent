@@ -2,6 +2,8 @@
   import type { ModelInfo } from '../../lib/types';
   import TokenDisplay from './TokenDisplay.svelte';
   import Icon from '../ui/Icon.svelte';
+  import { messaging } from '../../lib/messaging';
+
   
   export let currentView = 'chat';
   export let tokens = 0;
@@ -9,6 +11,12 @@
   function setView(view: string) {
     currentView = view;
   }
+
+  function startNewChat() {
+    messaging.send('newSession');
+    currentView = 'chat';
+  }
+
 </script>
 
 <header class="main-header">
@@ -43,7 +51,16 @@
       >
         <Icon name="history" size={18} />
       </button>
+
+      <button 
+        class="nav-item new-chat-btn" 
+        on:click={startNewChat}
+        title="New Chat"
+      >
+        <Icon name="add" size={18} />
+      </button>
     </nav>
+
   </div>
 
   <div class="right">
@@ -119,8 +136,17 @@
   }
 
   .nav-item.active, .settings-btn.active {
-    background: var(--vscode-list-activeSelectionBackground);
     color: var(--vscode-list-activeSelectionForeground);
     opacity: 1;
   }
+
+  .new-chat-btn {
+    margin-left: 4px;
+    color: var(--vscode-button-background);
+  }
+
+  .new-chat-btn:hover {
+    color: var(--vscode-button-hoverBackground);
+  }
 </style>
+

@@ -11,7 +11,9 @@ import type {
   Task,
   TaskHistoryItem,
   DEFAULT_AUTO_APPROVAL_SETTINGS,
+  PendingApproval,
 } from '../lib/types';
+
 
 // ── Store State ──────────────────────────────────────
 
@@ -24,7 +26,9 @@ interface StoreState {
   mode: ExtensionState['mode'];
   isStreaming: boolean;
   isProcessing: boolean;
+  pendingApproval: PendingApproval | null;
 }
+
 
 const initialState: StoreState = {
   apiConfiguration: null,
@@ -48,7 +52,9 @@ const initialState: StoreState = {
   mode: 'code',
   isStreaming: false,
   isProcessing: false,
+  pendingApproval: null,
 };
+
 
 // ── Store Creation ───────────────────────────────────
 
@@ -110,7 +116,12 @@ function createExtensionStore() {
       update(s => ({ ...s, taskHistory: history }));
     },
 
+    setPendingApproval(approval: PendingApproval | null) {
+      update(s => ({ ...s, pendingApproval: approval }));
+    },
+
     reset() {
+
       set(initialState);
     },
   };

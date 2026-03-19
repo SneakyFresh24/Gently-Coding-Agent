@@ -11,7 +11,9 @@
   import { extensionStore, isBusy, hasTask } from '../../stores/extensionStore';
   import { chatStore, isStreaming } from '../../stores/chatStore';
   import { settingsStore } from '../../stores/settingsStore';
+  import { historyStore } from '../../stores/historyStore';
   import { init as initMessaging } from '../../lib/messaging';
+
 
   let { isHidden = false } = $props();
 
@@ -87,7 +89,29 @@
         chatStore.setInputValue(data.prompt);
       },
 
+      // Tool Approvals
+      onToolApprovalRequest: (data) => {
+        extensionStore.setPendingApproval(data);
+      },
+
+      // Tasks
+      onTaskStart: (data) => {
+        extensionStore.setCurrentTask({ id: data.taskId, text: data.taskName, ts: Date.now() });
+      },
+      onTaskUpdate: (_data) => {
+        // Progress update placeholder
+      },
+      onTaskComplete: () => {
+        extensionStore.setCurrentTask(null);
+      },
+
+      // Sessions
+      onRefreshSessions: () => {
+        historyStore.fetchHistory();
+      },
+
       // Unhandled
+
       onUnhandled: (data) => {
         console.log('[ChatView] Unhandled message:', data.type);
       },
