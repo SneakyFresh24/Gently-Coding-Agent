@@ -46,6 +46,7 @@ import {
 import { CONTEXT_LIMITS } from '../utils';
 import { ApprovalManager, AutoApproveManager } from '../approval/ApprovalManager';
 import { HookManager } from '../hooks/HookManager';
+import { TokenTracker } from '../utils/TokenTracker';
 
 /**
  * Configure all services in the container
@@ -76,6 +77,7 @@ export function configureServices(container: Container, context: vscode.Extensio
     }));
     container.register('autoApproveManager', (c) => new AutoApproveManager(context));
     container.register('hookManager', (c) => new HookManager(workspaceRoot));
+    container.register('tokenTracker', (c) => new TokenTracker(context));
 
     // 2. Base Services
     container.register('fileOps', () => new FileOperations());

@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
-import { SessionManager } from '../../../session/SessionManager';
-import { SessionType } from '../../../session/types/SessionTypes';
+import { HistoryManager, SessionType, Session } from '../../../services/HistoryManager';
 import { Message, ChatViewContext, fromChatMessage } from '../types/ChatTypes';
 import { FileReference } from '../../../agent/fileReferenceManager';
 import { LogService } from '../../../services/LogService';
@@ -13,7 +12,7 @@ const log = new LogService('SessionHistoryManager');
 export class SessionHistoryManager {
     constructor(
         private readonly extensionContext: vscode.ExtensionContext,
-        private readonly sessionManager?: SessionManager,
+        private readonly sessionManager?: HistoryManager,
         private readonly sendMessageToWebview?: (message: any) => void
     ) {
         log.info(`Constructor called – sessionManager = ${this.sessionManager ? 'EXISTS ✓' : 'MISSING ✗'}`);
@@ -70,7 +69,7 @@ export class SessionHistoryManager {
                 if (!activeSession) {
                     const chatSessions = await this.sessionManager.getSessionsByType(SessionType.CHAT);
                     if (chatSessions.length > 0) {
-                        activeSession = chatSessions.sort((a, b) => b.updatedAt - a.updatedAt)[0];
+                        activeSession = chatSessions.sort((a: Session, b: Session) => b.updatedAt - a.updatedAt)[0];
                         await this.sessionManager.setActiveSession(SessionType.CHAT, activeSession.id);
                     } else {
                         activeSession = await this.sessionManager.createSession(SessionType.CHAT, {
@@ -120,7 +119,7 @@ export class SessionHistoryManager {
                 // Try to reactivate the most recent existing session first
                 const chatSessions = await this.sessionManager.getSessionsByType(SessionType.CHAT);
                 if (chatSessions.length > 0) {
-                    activeSession = chatSessions.sort((a, b) => b.updatedAt - a.updatedAt)[0];
+                    activeSession = chatSessions.sort((a: Session, b: Session) => b.updatedAt - a.updatedAt)[0];
                     await this.sessionManager.setActiveSession(SessionType.CHAT, activeSession.id);
                     log.info(`Reactivated existing session: ${activeSession.id}`);
                 } else {

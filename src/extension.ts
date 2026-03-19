@@ -10,7 +10,7 @@ import { AgentManager } from './agent/agentManager/AgentManager';
 import { Container } from './agent/container';
 import { configureServices } from './agent/ServiceProvider';
 import { initializeCommands, CommandContext } from './commands';
-import { SessionManager } from './session/SessionManager';
+import { HistoryManager } from './services/HistoryManager';
 import { CommandRegistry } from './commands/CommandRegistry';
 import { PluginManager, PluginLoader } from './plugins';
 import { ModeService } from './modes';
@@ -20,7 +20,7 @@ import { OpenRouterService } from './services/OpenRouterService';
 
 let chatViewProvider: ChatViewProvider;
 let agentManager: AgentManager;
-let sessionManager: SessionManager;
+let historyManager: HistoryManager;
 let pluginManager: PluginManager;
 let modeService: ModeService;
 let guardianIntegration: GuardianIntegration;
@@ -33,18 +33,19 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // ── BYOK services ──────────────────────────────────────────────────────────
   apiKeyManager = new ApiKeyManager(context.secrets);
-  openRouterService = new OpenRouterService(apiKeyManager);
-
   // ── DI Container (neu) ─────────────────────────────────────────────────────
   const container = new Container();
   configureServices(container, context);
 
-  // ── Session manager ────────────────────────────────────────────────────────
-  sessionManager = new SessionManager(context);
-  container.force('agentSessions', sessionManager);
+  const tokenTracker = container.resolve<any>('tokenTracker');
+  openRouterService = new OpenRouterService(apiKeyManager, tokenTracker);
+
+  // ── History manager ────────────────────────────────────────────────────────
+  historyManager = new HistoryManager(context);
+  container.force('agentSessions', historyManager);
 
   // ── Plugin system ─────────────────────────────────────────────────────────
-  pluginManager = new PluginManager(sessionManager, container.resolve('toolRegistry'));
+  pluginManager = new PluginManager(historyManager as any, container.resolve('toolRegistry'));
   const pluginLoader = new PluginLoader(pluginManager);
   await pluginLoader.loadPlugins();
 
@@ -157,11 +158,11 @@ export async function deactivate() {
   console.log('Gently AI Coding Agent is now deactivated');
 
   // Flush pending disk writes
-  if (sessionManager) {
+  if (historyManager) {
     try {
-      await sessionManager.flush();
+      await historyManager.flush();
     } catch (err) {
-      console.error('Failed to flush sessions during deactivation:', err);
+      console.error('Failed to flush history during deactivation:', err);
     }
   }
 

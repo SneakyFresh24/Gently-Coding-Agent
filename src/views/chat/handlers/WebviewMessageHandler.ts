@@ -8,7 +8,7 @@ import { SessionHandler } from './SessionHandler';
 import { FileHandler } from './FileHandler';
 import { SystemHandler } from './SystemHandler';
 import { WebviewMessage } from '../types/ChatTypes';
-import { SessionType } from '../../../session/types/SessionTypes';
+import { SessionType } from '../../../services/HistoryManager';
 import { MessageValidator } from '../validation';
 import { ApiKeyManager } from '../../../services/ApiKeyManager';
 import { OpenRouterService } from '../../../services/OpenRouterService';

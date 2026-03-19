@@ -2,7 +2,7 @@
 // Plugin Types
 // =====================================================
 
-import { SessionManager } from '../../session/SessionManager';
+import { HistoryManager } from '../../services/HistoryManager';
 import { ToolRegistry } from '../../agent/tools/ToolRegistry';
 import { CommandRegistry } from '../../commands/CommandRegistry';
 
@@ -27,7 +27,7 @@ export interface Plugin {
  */
 export interface PluginContext {
   // Zugriff auf Kern-Services
-  sessionManager: SessionManager;
+  sessionManager: HistoryManager;
   toolRegistry: ToolRegistry;
   
   // Registrierungsfunktionen

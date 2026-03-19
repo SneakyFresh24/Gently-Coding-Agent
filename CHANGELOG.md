@@ -2,6 +2,48 @@
 
 All notable changes to the "Gently" extension will be documented in this file.
 
+## [0.7.3] - 2026-03-19
+
+### Added
+- **Backend History Manager**: Introduced a new `HistoryManager` service in `src/services/` to replace legacy session logic.
+- **Token Tracking System**: Added `TokenTracker` utility to persist and monitor token usage across all LLM interactions.
+- **Shield Guardian View**: Implemented a dedicated security and performance monitoring dashboard in the webview.
+- **Enhanced Navigation**: Added a multi-view router with Header, Model Selector, and real-time Token Usage display.
+- **Chat History Dashboard**: New interface for browsing, searching, and restoring past conversation sessions.
+- **Refined Settings**: Comprehensive settings panel for API key management and application preferences.
+
+### Changed
+- **Backend Refactoring**: Centralized approval and terminal types in `src/types/approval.ts` for better maintainability.
+- **Service Integration**: Updated `OpenRouterService` to automatically report token usage to the new tracking system.
+
+### Fixed
+- **Compilation Stability**: Resolved multi-file import errors and dependency injection issues in `ServiceProvider.ts`.
+- **Legacy Cleanup**: Removed redundant session folders and outdated performance test suites.
+- **A11y & Polish**: Fixed accessibility warnings and optimized CSS for a native VS Code aesthetic.
+
+## [0.7.2] - 2026-03-19
+
+### Added
+- **Major Webview Rebuild**: Replaced the legacy React/Tailwind UI with a modern Svelte 5 + Vanilla CSS architecture.
+- **Svelte 5 Runes**: Leveraged `$state`, `$derived`, and `$effect` for explicit reactivity and better performance.
+- **Cline-Inspired UI**: Redesigned the interface to follow a more streamlined, professional utility-first layout.
+- **Vanilla CSS Tokens**: Fully integrated VS Code theme tokens (`--vscode-*`) for perfect native styling and accessibility.
+- **Refactored Store System**: Centralized state management in dedicated Svelte stores (`extensionStore`, `chatStore`, `settingsStore`).
+- **Auto-Initialization**: Implemented automatic `ready` signaling from the webview to the backend.
+- **Race Condition Prevention**: Added versioning to `AutoApprovalSettings` to handle concurrently updated settings.
+- **Enhanced Input Handling**: Multi-line support with `Enter` to send and `Shift+Enter` for newlines.
+- **Auto-Approve System UI**: Dedicated bar and settings modal for granular tool execution control.
+
+### Changed
+- **Styling Architecture**: Completely removed Tailwind CSS in favor of a lean, maintainable vanilla CSS system.
+- **Messaging Bridge**: Type-safe messaging bridge with automated response handling.
+
+### Fixed
+- **UI Responsiveness**: Optimized virtualized message list and input responsiveness using Svelte 5's fine-grained reactivity.
+
+### Removed
+- **Legacy Frontend**: Deleted old React source files, CSS frameworks, and redundant build artifacts.
+
 ## [0.7.1] - 2026-03-17
 
 ### Added

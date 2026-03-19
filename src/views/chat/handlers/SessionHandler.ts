@@ -2,13 +2,12 @@
 // Session Handler - Refactored for new SessionManager API
 // =====================================================
 
-import { SessionManager } from '../../../session/SessionManager';
-import { SessionType, SessionStatus } from '../../../session/types/SessionTypes';
+import { HistoryManager, SessionType, SessionStatus, Session } from '../../../services/HistoryManager';
 import { Message } from '../types/ChatTypes';
 
 export class SessionHandler {
   constructor(
-    private readonly sessionManager: SessionManager,
+    private readonly sessionManager: HistoryManager,
     private readonly sendMessageToWebview: (message: any) => void
   ) { }
 
@@ -28,7 +27,7 @@ export class SessionHandler {
       console.log(`[SessionHandler] Active session ID: ${activeSessionId}`);
 
       // Convert to format expected by UI
-      const sessions = chatSessions.map(session => {
+      const sessions = chatSessions.map((session: Session) => {
         const chatSession = session as any; // Cast to access ChatSession properties
         const messageCount = chatSession.messages?.length || 0;
         console.log(`[SessionHandler] Session ${session.id} has ${messageCount} messages`);

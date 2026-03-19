@@ -21,7 +21,7 @@ import {
   RequestOptions
 } from './types/PluginTypes';
 
-import { SessionManager } from '../session/SessionManager';
+import { HistoryManager } from '../services/HistoryManager';
 import { ToolRegistry } from '../agent/tools/ToolRegistry';
 import { CommandRegistry } from '../commands/CommandRegistry';
 
@@ -33,7 +33,7 @@ export class PluginManager {
   private pluginContexts: Map<string, PluginContext> = new Map();
 
   constructor(
-    private sessionManager: SessionManager,
+    private sessionManager: HistoryManager,
     private toolRegistry: ToolRegistry,
     private pluginDirectory: string = path.join(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '', '.gently/plugins')
   ) { }

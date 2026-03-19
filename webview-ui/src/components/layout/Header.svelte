@@ -1,0 +1,137 @@
+<script lang="ts">
+  import ModelDropdown from './ModelDropdown.svelte';
+  import TokenDisplay from './TokenDisplay.svelte';
+  
+  export let currentView = 'chat';
+  export let selectedModel = 'deepseek-chat';
+  export let models: string[] = [];
+  export let tokens = 0;
+  
+  function setView(view: string) {
+    currentView = view;
+  }
+</script>
+
+<header class="main-header">
+  <div class="left">
+    <div class="brand">
+      <span class="logo">🤖</span>
+      <span class="name">Gently</span>
+    </div>
+    
+    <nav class="main-nav">
+      <button 
+        class="nav-item" 
+        class:active={currentView === 'chat'} 
+        on:click={() => setView('chat')}
+        title="Chat"
+      >
+        💬
+      </button>
+      <button 
+        class="nav-item" 
+        class:active={currentView === 'guardian'} 
+        on:click={() => setView('guardian')}
+        title="Guardian"
+      >
+        🛡️
+      </button>
+      <button 
+        class="nav-item" 
+        class:active={currentView === 'history'} 
+        on:click={() => setView('history')}
+        title="History"
+      >
+        📜
+      </button>
+    </nav>
+  </div>
+
+  <div class="center">
+    <ModelDropdown {selectedModel} {models} />
+  </div>
+
+  <div class="right">
+    <TokenDisplay {tokens} />
+    <button 
+      class="settings-btn" 
+      class:active={currentView === 'settings'}
+      on:click={() => setView('settings')}
+      title="Settings"
+    >
+      ⚙️
+    </button>
+  </div>
+</header>
+
+<style>
+  .main-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 48px;
+    padding: 0 12px;
+    background: var(--vscode-sideBar-background);
+    border-bottom: 1px solid var(--vscode-widget-border);
+    flex-shrink: 0;
+  }
+
+  .left, .right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    margin-right: 8px;
+  }
+
+  .name {
+    font-size: 13px;
+    color: var(--vscode-foreground);
+  }
+
+  .main-nav {
+    display: flex;
+    gap: 4px;
+    padding: 0 8px;
+    border-left: 1px solid var(--vscode-widget-border);
+  }
+
+  .nav-item, .settings-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 16px;
+    color: var(--vscode-foreground);
+    opacity: 0.6;
+    transition: all 0.2s ease;
+  }
+
+  .nav-item:hover, .settings-btn:hover {
+    background: var(--vscode-list-hoverBackground);
+    opacity: 1;
+  }
+
+  .nav-item.active, .settings-btn.active {
+    background: var(--vscode-list-activeSelectionBackground);
+    color: var(--vscode-list-activeSelectionForeground);
+    opacity: 1;
+  }
+
+  .center {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+  }
+</style>

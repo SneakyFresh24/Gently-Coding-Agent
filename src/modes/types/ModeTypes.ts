@@ -3,6 +3,7 @@
 // =====================================================
 
 import { AgentTool } from '../../agent/agentManager/AgentManager';
+import { HistoryManager } from '../../services/HistoryManager';
 
 /**
  * Basis-Schnittstelle für alle Modi
@@ -62,7 +63,7 @@ export interface ModeContext {
   
   // Agent-Kontext
   agentManager: any;
-  sessionManager: any;
+  sessionManager: HistoryManager;
   
   // UI-Kontext
   showMessage(message: string, type: 'info' | 'warning' | 'error'): void;

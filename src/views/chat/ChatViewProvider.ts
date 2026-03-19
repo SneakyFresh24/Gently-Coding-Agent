@@ -7,6 +7,8 @@ import { ApiKeyManager } from '../../services/ApiKeyManager';
 import { OpenRouterService } from '../../services/OpenRouterService';
 import { AgentManager } from '../../agent/agentManager/AgentManager';
 import { FileReferenceManager, FileReference } from '../../agent/fileReferenceManager';
+import { HistoryManager } from '../../services/HistoryManager';
+import { TokenTracker } from '../../utils/TokenTracker';
 import { generateHtml } from '../webview/htmlGenerator';
 import { TerminalManager } from '../../terminal';
 import { ModeService } from '../../modes';
@@ -34,7 +36,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private systemHandler!: SystemHandler;
 
   private terminalManager?: TerminalManager;
-  private sessionManager: any;
+  private historyManager: HistoryManager;
+  private tokenTracker: TokenTracker;
   private fileReferenceManager: FileReferenceManager;
 
   constructor(
@@ -49,6 +52,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.agentManager.getFileOperations(),
       this.agentManager.getIndexer()
     );
+
+    this.historyManager = new HistoryManager(this.context!);
+    this.tokenTracker = new TokenTracker(this.context!);
 
     this.initializeHandlersAndCallbacks();
   }
@@ -67,13 +73,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private initializeHandlers(): void {
     if (!this.context) throw new Error('Extension context is required for ChatViewProvider');
 
-    // CRITICAL: Create and inject SessionManager FIRST, before MessageHandler!
-    // MessageHandler → SessionHistoryManager reads sessionManager from DI on construction.
-    // If we inject it after MessageHandler is created, it's already too late (returns undefined).
-    this.sessionManager = this.createSessionManager();
+    // CRITICAL: Create and inject HistoryManager FIRST, before MessageHandler!
+    this.historyManager = this.createHistoryManager();
 
     this.sessionHandler = new SessionHandler(
-      this.sessionManager,
+      this.historyManager,
       (message: any) => this.sendMessageToWebview(message)
     );
 
@@ -120,23 +124,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     );
   }
 
-  private createSessionManager() {
+  private createHistoryManager() {
     if (!this.context) throw new Error('Extension context is required');
-    const { SessionManager } = require('../../session/SessionManager');
-    const sessionManager = new SessionManager(this.context);
+    const historyManager = new HistoryManager(this.context);
     
-    // Inject the session manager into the AgentManager's DI container 
+    // Inject the history manager into the AgentManager's DI container 
     // so handlers can correctly resolve it.
     try {
       const containerObj = (this.agentManager as any).container;
       if (containerObj) {
-        containerObj.force('sessionManager', sessionManager);
+        containerObj.force('sessionManager', historyManager);
+        containerObj.force('agentSessions', historyManager);
       }
     } catch (e) {
-      console.error('[ChatViewProvider] Failed to inject SessionManager into DI container', e);
+      console.error('[ChatViewProvider] Failed to inject HistoryManager into DI container', e);
     }
     
-    return sessionManager;
+    return historyManager;
   }
 
   private initializeTerminalManager(context: vscode.ExtensionContext): void {
@@ -222,6 +226,26 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this.agentManager.getToolManager().handleApprovalResponse(data.approvalId, data.approved);
             return;
           }
+          if (data.type === 'getTokenUsage') {
+            const usage = this.tokenTracker.getUsage();
+            this.sendMessageToWebview({ type: 'tokenTrackerUpdate', usage });
+            return;
+          }
+          if (data.type === 'getHistory') {
+            const sessions = await this.historyManager.getSessions();
+            this.sendMessageToWebview({ type: 'sessionsUpdate', sessions });
+            return;
+          }
+          if (data.type === 'deleteSession') {
+            await this.historyManager.deleteSession(data.sessionId);
+            const sessions = await this.historyManager.getSessions();
+            this.sendMessageToWebview({ type: 'sessionsUpdate', sessions });
+            return;
+          }
+          if (data.type === 'loadSession') {
+            // Placeholder: need to implement loading logic in MessageHandler/HistoryManager
+            return;
+          }
           await this.webviewMessageHandler.handleMessage(data, this._view!);
         } catch (error: any) {
           console.error('[ChatViewProvider] Error handling webview message:', error);
@@ -248,12 +272,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     
     await this.sendApiKeyStatus();
     await this.sendContextUpdate();
+    await this.postTokenUsage();
     await this.sessionHandler.handleGetSessions();
   }
 
   private async sendApiKeyStatus(): Promise<void> {
     const hasKey = await this.apiKeyManager.hasKey();
     this.sendMessageToWebview({ type: 'apiKeyStatus', hasKey });
+  }
+
+  private async postTokenUsage(): Promise<void> {
+    const usage = this.tokenTracker.getUsage();
+    this.sendMessageToWebview({ type: 'tokenTrackerUpdate', usage });
   }
 
   private async sendContextUpdate(): Promise<void> {

@@ -556,6 +556,36 @@ export interface ToolApprovalResponseMessage {
   approved: boolean;
 }
 
+/**
+ * Get chat history
+ */
+export interface GetHistoryMessage {
+  type: 'getHistory';
+}
+
+/**
+ * Delete a session
+ */
+export interface DeleteSessionMessage {
+  type: 'deleteSession';
+  sessionId: string;
+}
+
+/**
+ * Load a session
+ */
+export interface LoadSessionMessage {
+  type: 'loadSession';
+  sessionId: string;
+}
+
+/**
+ * Get current token usage
+ */
+export interface GetTokenUsageMessage {
+  type: 'getTokenUsage';
+}
+
 // =====================================================
 // OUTBOUND MESSAGES (Extension → Webview)
 // =====================================================
@@ -1245,7 +1275,11 @@ export type InboundWebviewMessage =
   | ShowStepResultMessage
   | SetAutoApproveSettingsMessage
   | ToggleYoloModeMessage
-  | ToolApprovalResponseMessage;
+  | ToolApprovalResponseMessage
+  | GetHistoryMessage
+  | DeleteSessionMessage
+  | LoadSessionMessage
+  | GetTokenUsageMessage;
 
 /**
  * All outbound messages (Extension → Webview)

@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { PluginManager } from '../PluginManager';
-import { SessionManager } from '../../session/SessionManager';
+import { HistoryManager } from '../../services/HistoryManager';
 import { ToolRegistry } from '../../agent/tools/ToolRegistry';
 import { Plugin, PluginManifest, PluginStatus } from '../types/PluginTypes';
 
@@ -35,7 +35,7 @@ vi.mock('fs/promises', () => ({
 
 describe('PluginManager', () => {
   let pluginManager: PluginManager;
-  let mockSessionManager: SessionManager;
+  let mockSessionManager: HistoryManager;
   let mockToolRegistry: ToolRegistry;
 
   beforeEach(() => {
@@ -44,17 +44,11 @@ describe('PluginManager', () => {
       createSession: vi.fn(),
       updateSession: vi.fn(),
       deleteSession: vi.fn(),
-      getAllSessions: vi.fn(),
       getSessionsByType: vi.fn(),
       getActiveSession: vi.fn(),
       setActiveSession: vi.fn(),
-      getSessionStats: vi.fn(),
-      cleanupExpiredSessions: vi.fn(),
-      dispose: vi.fn(),
       getChatProvider: vi.fn(),
-      getAuthProvider: vi.fn(),
-      getWorkspaceProvider: vi.fn(),
-      getStorage: vi.fn()
+      flush: vi.fn()
     } as any;
 
     mockToolRegistry = {

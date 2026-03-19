@@ -6,7 +6,8 @@
 import * as vscode from 'vscode';
 import { ApiKeyManager } from './ApiKeyManager';
 import { StreamingToolCallProcessor } from '../core/streaming/StreamingToolCallProcessor';
-import { StreamChunk, ToolCall as CoreToolCall } from '../core/streaming/types';
+import { StreamChunk, ToolCall as CoreToolCall, UsageInfo } from '../core/streaming/types';
+import { TokenTracker } from '../utils/TokenTracker';
 
 export type ToolCall = CoreToolCall;
 
@@ -46,7 +47,10 @@ export class OpenRouterService {
     private toolCallProcessor = new StreamingToolCallProcessor();
     private modelMaxTokensCache: Map<string, number> = new Map();
 
-    constructor(private readonly apiKeyManager: ApiKeyManager) { }
+    constructor(
+        private readonly apiKeyManager: ApiKeyManager,
+        private readonly tokenTracker?: TokenTracker
+    ) { }
 
     // ─── Core request ──────────────────────────────────────────────────────────
 
@@ -148,7 +152,15 @@ export class OpenRouterService {
         request: ChatRequest
     ): AsyncGenerator<StreamChunk, void, unknown> {
         this.toolCallProcessor.reset();
-        const response = await this.sendChatMessage({ ...request, stream: true });
+        
+        // Add stream_options to get usage in the final chunk
+        const bodyWithUsage = {
+            ...request,
+            stream: true,
+            stream_options: { include_usage: true }
+        };
+        
+        const response = await this.sendChatMessage(bodyWithUsage);
 
         if (!response.body) throw new Error('No response body from OpenRouter');
 
@@ -210,6 +222,25 @@ export class OpenRouterService {
                     if (delta.tool_calls) {
                         yield* this.toolCallProcessor.processToolCallDeltas(delta.tool_calls);
                     }
+
+                    // 5a. Track usage if present (OpenRouter sends this in a final chunk when include_usage: true)
+                    if (chunk.usage) {
+                        const usage: UsageInfo = {
+                            prompt_tokens: chunk.usage.prompt_tokens || 0,
+                            completion_tokens: chunk.usage.completion_tokens || 0,
+                            total_tokens: chunk.usage.total_tokens || 0
+                        };
+                        
+                        if (this.tokenTracker) {
+                            this.tokenTracker.trackUsage({
+                                promptTokens: usage.prompt_tokens,
+                                completionTokens: usage.completion_tokens,
+                                totalTokens: usage.total_tokens
+                            });
+                        }
+                        
+                        yield { type: 'usage', usage };
+                    }
                 }
             }
 
@@ -232,6 +263,16 @@ export class OpenRouterService {
             model,
         });
         const data: any = await response.json();
+        
+        // Track usage for non-streaming calls
+        if (data.usage && this.tokenTracker) {
+            this.tokenTracker.trackUsage({
+                promptTokens: data.usage.prompt_tokens || 0,
+                completionTokens: data.usage.completion_tokens || 0,
+                totalTokens: data.usage.total_tokens || 0
+            });
+        }
+        
         return data.choices?.[0]?.message?.content ?? '';
     }
 
