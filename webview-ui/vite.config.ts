@@ -1,23 +1,10 @@
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
-import tailwindcss from '@tailwindcss/vite';
 import path from 'path';
 
-// https://vitejs.dev/config/
 export default defineConfig({
   plugins: [
-    tailwindcss(), // Tailwind MUST come before Svelte!
-    svelte({
-      onwarn: (warning, handler) => {
-        // Suppress PostCSS warnings - we use Tailwind Vite plugin instead
-        if (warning.code === 'css-unused-selector' ||
-            warning.message?.includes('postcss') ||
-            warning.message?.includes('tailwindcss')) {
-          return;
-        }
-        handler(warning);
-      }
-    }),
+    svelte(),
   ],
   resolve: {
     alias: {
@@ -40,4 +27,3 @@ export default defineConfig({
     port: 5173,
   },
 });
-

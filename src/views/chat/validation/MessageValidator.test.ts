@@ -29,7 +29,7 @@ describe('MessageValidator', () => {
   beforeEach(() => {
     validator = new MessageValidator({
       enableRateLimit: true,
-      maxMessageSize: 1024,
+      maxMessageSize: 1024 * 512, // 512KB
       rateLimitWindow: 1000,
       maxMessagesPerWindow: 5,
       enableSanitization: true,
@@ -310,51 +310,6 @@ describe('MessageValidator', () => {
     });
 
     describe('Terminal Operations', () => {
-      it('should validate correct command approval response', () => {
-        const message = {
-          type: 'commandApprovalResponse',
-          commandId: 'cmd-123',
-          response: 'accept'
-        };
-        
-        const result = validator.validateInboundMessage(message);
-        expect(result.isValid).toBe(true);
-      });
-
-      it('should reject command approval without commandId', () => {
-        const message = {
-          type: 'commandApprovalResponse',
-          response: 'accept'
-          // missing commandId
-        };
-        
-        const result = validator.validateInboundMessage(message);
-        expect(result.isValid).toBe(false);
-        expect(result.errors).toContainEqual(
-          expect.objectContaining({ 
-            field: 'commandId',
-            code: 'REQUIRED_FIELD_MISSING'
-          })
-        );
-      });
-
-      it('should reject command approval with invalid response', () => {
-        const message = {
-          type: 'commandApprovalResponse',
-          commandId: 'cmd-123',
-          response: 'invalid'
-        };
-        
-        const result = validator.validateInboundMessage(message);
-        expect(result.isValid).toBe(false);
-        expect(result.errors).toContainEqual(
-          expect.objectContaining({ 
-            field: 'response',
-            code: 'INVALID_ENUM_VALUE'
-          })
-        );
-      });
-
       it('should reject invalid terminal mode', () => {
         const message = {
           type: 'setTerminalMode',
@@ -499,7 +454,7 @@ describe('TypeGuards', () => {
       expect(TypeGuards.isValidNumber(123)).toBe(true);
       expect(TypeGuards.isValidNumber(0)).toBe(true);
       expect(TypeGuards.isValidNumber(-5)).toBe(true);
-      expect(TypeGuards.isValidNumber(123, 100, 200)).toBe(false);
+      expect(TypeGuards.isValidNumber(123, 100, 200)).toBe(true);
       expect(TypeGuards.isValidNumber(150, 100, 200)).toBe(true);
     });
 

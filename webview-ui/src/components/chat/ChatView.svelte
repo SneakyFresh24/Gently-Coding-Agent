@@ -1,154 +1,136 @@
 <script lang="ts">
-  import { onMount } from "svelte";
-  import { chatActions } from "../../lib/chatActions";
-  import { extensionEvents } from "../../lib/extensionEvents";
-  import { chatStore } from "../../stores/chatStore";
-  import { settingsStore } from "../../stores/settingsStore";
+  import { onMount } from 'svelte';
+  import ChatLayout from './ChatLayout.svelte';
+  import TaskHeader from './TaskHeader.svelte';
+  import WelcomeSection from './WelcomeSection.svelte';
+  import MessagesArea from './MessagesArea.svelte';
+  import InputSection from './InputSection.svelte';
+  import AutoApproveBar from '../approval/AutoApproveBar.svelte';
 
-  // Components
-  import TabHeader from "../layout/TabHeader.svelte";
-  import TaskView from "../task/TaskView.svelte";
-  import ContextPanel from "../context/ContextPanel.svelte";
-  import StatusIndicator from "../ui/StatusIndicator.svelte";
-  import MessageList from "./MessageList.svelte";
-  import ChatInputArea from "./ChatInputArea.svelte";
-  import ChatToolbar from "./ChatToolbar.svelte";
-  import ChatOverlays from "./ChatOverlays.svelte";
-  import ErrorBanner from "./ErrorBanner.svelte";
-  import AutoApproveMenu from "../approval/AutoApproveMenu.svelte";
-  import ToolApprovalDialog from "../approval/ToolApprovalDialog.svelte";
+  import { extensionStore, isBusy, hasTask } from '../../stores/extensionStore';
+  import { chatStore, isStreaming } from '../../stores/chatStore';
+  import { settingsStore } from '../../stores/settingsStore';
+  import { init as initMessaging } from '../../lib/messaging';
 
-  import type { FileReference } from "../../stores/chatStore";
+  let { isHidden = false } = $props();
 
-  interface Props {
-    showSidebar: boolean;
-    onopenSidebar: () => void;
-  }
-
-  let { showSidebar = true, onopenSidebar }: Props = $props();
-
-  let message = $state("");
-  let activeTab = $state<"thread" | "task" | "context">("thread");
-  let pendingFileReferences = $state<FileReference[]>([]);
-  let messageList = $state<MessageList | null>(null);
-  let showAutoApproveMenu = $state(false);
-  let pendingToolApproval = $state<{ approvalId: string; toolName: string; params: any } | null>(null);
-
-  let selectedMode = $derived($settingsStore.selectedMode);
-  let error = $derived($chatStore.error);
-
-  function handleSendRune(data: {
-    message: string;
-    fileReferences: FileReference[];
-  }) {
-    chatActions.sendMessage(data.message, data.fileReferences);
-    messageList?.forceScrollToBottom();
-  }
-
-  function enhancePrompt() {
-    if (!message.trim()) return;
-    chatActions.enhancePrompt(message.trim());
-  }
-
+  // Wire up message handlers on mount
   onMount(() => {
-    return extensionEvents.init({
-      onPromptUpdate: (p) => (message = p),
-      onTabChange: (t) => (activeTab = t),
-      onFileRefAdd: (f) =>
-        (pendingFileReferences = [...pendingFileReferences, f]),
-      onToolApprovalRequest: (req) => (pendingToolApproval = req),
+    initMessaging({
+      // State & lifecycle
+      onApiKeyStatus: (data) => settingsStore.setApiKeyStatus(data.hasKey),
+      onModelsList: (data) => settingsStore.setModels(data.models),
+      onModeChanged: (data) => {
+        extensionStore.hydrate({
+          mode: data.modeId,
+        });
+      },
+      onError: (data) => chatStore.setError(data.message),
+
+      // Messages
+      onAssistantMessage: (data) => {
+        if (data.isStreaming) {
+          chatStore.appendChunk(data);
+        } else {
+          chatStore.addMessage({
+            id: data.id,
+            role: 'assistant',
+            content: data.content,
+            timestamp: data.timestamp || Date.now(),
+            toolCalls: data.toolCalls,
+            checkpoint: data.checkpoint,
+          });
+        }
+      },
+      onUserMessage: (data) => {
+        chatStore.addMessage({
+          id: data.id,
+          role: 'user',
+          content: data.content,
+          timestamp: data.timestamp || Date.now(),
+          fileReferences: data.fileReferences,
+        });
+      },
+      onAssistantMessageEnd: (data) => chatStore.completeStreaming(data),
+      onSystemMessage: (data) => {
+        chatStore.addMessage({
+          id: data.messageId || `sys_${Date.now()}`,
+          role: 'system',
+          content: data.content,
+          timestamp: Date.now(),
+          isSystemMessage: true,
+        });
+      },
+      onLoadMessages: (data) => chatStore.hydrateMessages(data.messages),
+      onClearMessages: () => chatStore.clear(),
+
+      // Generation state
+      onGeneratingStart: () => extensionStore.setStreaming(true),
+      onGeneratingEnd: () => extensionStore.setStreaming(false),
+      onProcessingStart: () => extensionStore.setProcessing(true),
+      onProcessingEnd: () => extensionStore.setProcessing(false),
+
+      // Context
+      onContextUpdate: (_data) => {
+        // Could update a context store if needed
+      },
+
+      // Auto-approve
+      onAutoApproveSettingsUpdate: (data) => {
+        extensionStore.hydrate({
+          autoApprovalSettings: data.settings,
+        });
+      },
+
+      // Prompt from Guardian
+      onSetPromptFromGuardian: (data) => {
+        chatStore.setInputValue(data.prompt);
+      },
+
+      // Unhandled
+      onUnhandled: (data) => {
+        console.log('[ChatView] Unhandled message:', data.type);
+      },
     });
   });
 </script>
 
-<div class="chat-container">
-  <TabHeader bind:activeTab {showSidebar} {onopenSidebar} />
-
-  {#if activeTab === "thread"}
-    {#if error}
-      <ErrorBanner {error} />
+<ChatLayout {isHidden}>
+  <div class="chat-container">
+    {#if $chatStore.messages.length > 0 || $hasTask}
+      <TaskHeader task={$extensionStore.currentTask} />
+      <MessagesArea messages={$chatStore.messages} />
+    {:else}
+      <WelcomeSection />
     {/if}
+  </div>
 
-    <MessageList
-      bind:this={messageList}
-      messages={$chatStore.messages}
-      {selectedMode}
+  <footer class="chat-footer">
+    <AutoApproveBar />
+    <InputSection
+      isBusy={$isBusy}
+      isStreamingProp={$isStreaming}
+      inputValue={$chatStore.inputValue}
+      selectedFiles={$chatStore.selectedFiles}
+      onInputChange={(v) => chatStore.setInputValue(v)}
+      onSend={() => chatStore.sendMessage()}
+      onCancel={() => chatStore.cancelTask()}
+      onAddFile={(f) => chatStore.addFile(f)}
+      onRemoveFile={(f) => chatStore.removeFile(f)}
     />
-  {:else if activeTab === "task"}
-    <TaskView />
-  {:else if activeTab === "context"}
-    <div class="context-view">
-      <ContextPanel />
-    </div>
-  {/if}
-
-  <StatusIndicator />
-
-  {#if activeTab === "thread"}
-    <div class="input-section">
-      <AutoApproveMenu isOpen={showAutoApproveMenu} />
-      
-      <ChatToolbar
-        {selectedMode}
-        messageLength={message.trim().length}
-        onenhancePrompt={enhancePrompt}
-        ontoggleAutoApprove={() => showAutoApproveMenu = !showAutoApproveMenu}
-      />
-
-      <ChatInputArea
-        bind:message
-        bind:pendingFileReferences
-        {selectedMode}
-        onsend={handleSendRune}
-      />
-    </div>
-  {/if}
-</div>
-
-{#if pendingToolApproval}
-  <ToolApprovalDialog
-    approvalId={pendingToolApproval.approvalId}
-    toolName={pendingToolApproval.toolName}
-    params={pendingToolApproval.params}
-    on:close={() => (pendingToolApproval = null)}
-  />
-{/if}
-
-<ChatOverlays />
+  </footer>
+</ChatLayout>
 
 <style>
   .chat-container {
+    flex: 1;
     display: flex;
     flex-direction: column;
-    height: 100%;
-    width: 100%;
     overflow: hidden;
   }
 
-  .context-view {
-    flex: 1;
-    overflow-y: auto;
-    padding: 1rem;
-  }
-
-  .input-section {
-    display: flex;
-    flex-direction: column;
-    background: rgba(30, 30, 38, 0.4);
-    backdrop-filter: blur(20px);
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 1.5rem 1.5rem 0 0;
-    margin-top: auto;
-    box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.4);
-    /* overflow: hidden removed to allow dropdowns to display upwards */
-  }
-
-  /* Force stacking order for inputs and toolbar */
-  :global(.input-area) {
-    z-index: 10 !important;
-  }
-
-  :global(.bottom-bar) {
-    z-index: 1000 !important;
+  .chat-footer {
+    border-top: 1px solid var(--vscode-panel-border);
+    background: var(--vscode-sideBar-background);
   }
 </style>

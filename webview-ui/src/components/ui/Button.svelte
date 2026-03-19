@@ -1,27 +1,28 @@
 <script lang="ts">
-  export let variant: 'primary' | 'secondary' | 'ghost' | 'icon' = 'primary';
-  export let size: 'sm' | 'md' | 'lg' = 'md';
-  export let disabled: boolean = false;
-  export let type: 'button' | 'submit' = 'button';
-  
-  const baseClasses = 'btn';
-  $: classes = [
-    baseClasses,
-    `btn-${variant}`,
-    `btn-${size}`,
-    disabled ? 'btn-disabled' : ''
-  ].filter(Boolean).join(' ');
+  let {
+    variant = 'secondary',
+    size = 'md',
+    disabled = false,
+    title = '',
+    onclick,
+    children,
+  }: {
+    variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
+    size?: 'sm' | 'md' | 'lg';
+    disabled?: boolean;
+    title?: string;
+    onclick?: (e: MouseEvent) => void;
+    children?: any;
+  } = $props();
 </script>
 
 <button
-  {type}
-  class={classes}
+  class="btn btn-{variant} btn-{size}"
   {disabled}
-  on:click
-  on:mouseenter
-  on:mouseleave
+  {title}
+  onclick={onclick}
 >
-  <slot />
+  {@render children?.()}
 </button>
 
 <style>
@@ -30,85 +31,64 @@
     align-items: center;
     justify-content: center;
     gap: var(--space-sm);
-    font-family: inherit;
-    font-weight: var(--font-weight-medium);
+    border: none;
     border-radius: var(--radius-md);
     cursor: pointer;
-    transition: all var(--transition-base);
-    border: 1px solid transparent;
+    font-family: inherit;
+    font-size: var(--font-size-sm);
+    line-height: 1;
+    transition: background var(--transition-fast), opacity var(--transition-fast);
     white-space: nowrap;
   }
-  
-  /* Sizes */
-  .btn-sm {
-    height: 28px;
-    padding: 0 var(--space-sm);
-    font-size: var(--font-sm);
-  }
-  
-  .btn-md {
-    height: 36px;
-    padding: 0 var(--space-md);
-    font-size: var(--font-base);
-  }
-  
-  .btn-lg {
-    height: 44px;
-    padding: 0 var(--space-lg);
-    font-size: var(--font-md);
-  }
-  
-  /* Variants */
-  .btn-primary {
-    background: var(--color-primary);
-    color: white;
-    border-color: var(--color-primary);
-  }
-  
-  .btn-primary:hover:not(.btn-disabled) {
-    background: var(--color-primary-hover);
-    border-color: var(--color-primary-hover);
-  }
-  
-  .btn-secondary {
-    background: var(--color-surface);
-    color: var(--color-text-primary);
-    border-color: var(--color-border);
-  }
-  
-  .btn-secondary:hover:not(.btn-disabled) {
-    background: var(--color-surface-hover);
-    border-color: var(--color-border-hover);
-  }
-  
-  .btn-ghost {
-    background: transparent;
-    color: var(--color-text-secondary);
-    border-color: transparent;
-  }
-  
-  .btn-ghost:hover:not(.btn-disabled) {
-    background: var(--color-surface);
-    color: var(--color-text-primary);
-  }
-  
-  .btn-icon {
-    background: var(--color-surface);
-    color: var(--color-text-secondary);
-    border-color: var(--color-border);
-    padding: 0;
-  }
-  
-  .btn-icon:hover:not(.btn-disabled) {
-    background: var(--color-surface-hover);
-    color: var(--color-text-primary);
-    border-color: var(--color-border-hover);
-  }
-  
-  /* Disabled */
-  .btn-disabled,
+
   .btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  /* Sizes */
+  .btn-sm {
+    padding: var(--space-xs) var(--space-md);
+    font-size: var(--font-size-xs);
+  }
+  .btn-md {
+    padding: var(--space-sm) var(--space-lg);
+  }
+  .btn-lg {
+    padding: var(--space-md) var(--space-xl);
+    font-size: var(--font-size-md);
+  }
+
+  /* Variants */
+  .btn-primary {
+    background: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--vscode-button-hoverBackground);
+  }
+
+  .btn-secondary {
+    background: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    background: var(--vscode-button-secondaryHoverBackground);
+  }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--vscode-foreground);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.12));
+  }
+
+  .btn-danger {
+    background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
+    color: var(--vscode-errorForeground, #f48771);
+  }
+  .btn-danger:hover:not(:disabled) {
+    opacity: 0.9;
   }
 </style>

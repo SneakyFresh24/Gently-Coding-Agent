@@ -1,46 +1,36 @@
-/**
- * VS Code API Wrapper
- * Provides type-safe communication with the extension
- */
+// =====================================================
+// VS Code API Wrapper – singleton for webview communication
+// =====================================================
 
-// VS Code API type definition
-interface VSCodeApi {
+interface VsCodeApi {
   postMessage(message: any): void;
   getState(): any;
   setState(state: any): void;
 }
 
-declare function acquireVsCodeApi(): VSCodeApi;
+// VS Code injects this function into webviews
+declare function acquireVsCodeApi(): VsCodeApi;
 
-class VSCodeAPIWrapper {
-  private readonly api: VSCodeApi;
+class VsCodeApiWrapper {
+  private readonly api: VsCodeApi;
 
   constructor() {
     this.api = acquireVsCodeApi();
   }
 
-  /**
-   * Post a message to the extension
-   */
-  public postMessage(message: any): void {
+  postMessage(message: any): void {
     this.api.postMessage(message);
   }
 
-  /**
-   * Get the persistent state
-   */
-  public getState(): any {
-    return this.api.getState();
+  getState<T = any>(): T | undefined {
+    return this.api.getState() as T | undefined;
   }
 
-  /**
-   * Set the persistent state
-   */
-  public setState(state: any): void {
+  setState<T = any>(state: T): T {
     this.api.setState(state);
+    return state;
   }
 }
 
-// Export singleton instance
-export const vscodeApi = new VSCodeAPIWrapper();
-
+// Singleton instance
+export const vscodeApi = new VsCodeApiWrapper();

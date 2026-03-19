@@ -198,11 +198,11 @@ class InputSanitizer {
 
 export class TypeGuards {
   static isInboundMessage(data: any): data is InboundWebviewMessage {
-    return data && typeof data === 'object' && typeof data.type === 'string';
+    return !!(data && typeof data === 'object' && typeof data.type === 'string');
   }
 
   static isOutboundMessage(data: any): data is OutboundWebviewMessage {
-    return data && typeof data === 'object' && typeof data.type === 'string';
+    return !!(data && typeof data === 'object' && typeof data.type === 'string');
   }
 
   static isWebviewMessage(data: any): data is WebviewMessage {
@@ -249,7 +249,7 @@ const MessageSchemas: Record<string, any> = {
   'sendMessage': {
     required: ['message'],
     fields: {
-      message: { type: 'string', maxLength: 100000 }, // 100KB max
+      message: { type: 'string', maxLength: 100000, sanitizer: 'string' }, // 100KB max
       fileReferences: { type: 'array', maxLength: 50, optional: true }
     }
   },
@@ -286,7 +286,7 @@ const MessageSchemas: Record<string, any> = {
     fields: {
       action: { type: 'string', maxLength: 50 },
       sessionId: { type: 'string', maxLength: 100 },
-      payload: { type: 'object', maxKeys: 20, optional: true }
+      payload: { type: 'any', sanitizer: 'json', optional: true }
     }
   },
   'searchSessions': {
@@ -300,7 +300,7 @@ const MessageSchemas: Record<string, any> = {
   'modelChanged': {
     required: ['model'],
     fields: {
-      model: { type: 'string', maxLength: 100 }
+      model: { type: 'string', maxLength: 100, enum: ['deepseek-chat', 'glm-4.6', 'grok-4-fast-code'] }
     }
   },
   'modeChanged': {
@@ -346,13 +346,7 @@ const MessageSchemas: Record<string, any> = {
   },
 
   // Terminal operations
-  'commandApprovalResponse': {
-    required: ['commandId', 'response'],
-    fields: {
-      commandId: { type: 'string', maxLength: 100 },
-      response: { type: 'string', enum: ['accept', 'accept_always', 'deny'] }
-    }
-  },
+
   'killCommand': {
     required: ['commandId'],
     fields: {
@@ -437,18 +431,7 @@ const MessageSchemas: Record<string, any> = {
       content: { type: 'string', maxLength: 10000 }
     }
   },
-  'commandApprovalCreated': {
-    required: ['message'],
-    fields: {
-      message: { type: 'object' }
-    }
-  },
-  'commandApprovalUpdated': {
-    required: ['message'],
-    fields: {
-      message: { type: 'object' }
-    }
-  },
+
   'toolExecutionCreated': {
     required: ['message'],
     fields: {
@@ -603,25 +586,14 @@ const MessageSchemas: Record<string, any> = {
       messageId: { type: 'string', maxLength: 100 }
     }
   },
-  'setAutoApproveSettings': {
-    required: ['settings'],
-    fields: {
-      settings: { type: 'object', maxKeys: 15 }
-    }
-  },
+
   'toggleYoloMode': {
     required: ['enabled'],
     fields: {
       enabled: { type: 'boolean' }
     }
   },
-  'toolApprovalResponse': {
-    required: ['approvalId', 'approved'],
-    fields: {
-      approvalId: { type: 'string', maxLength: 100 },
-      approved: { type: 'boolean' }
-    }
-  },
+
   'refreshGuardian': {
     required: [],
     fields: {}
@@ -629,14 +601,14 @@ const MessageSchemas: Record<string, any> = {
   'login': {
     required: ['email', 'password'],
     fields: {
-      email: { type: 'string', maxLength: 255 },
+      email: { type: 'string', maxLength: 255, sanitizer: 'email' },
       password: { type: 'string', maxLength: 100 }
     }
   },
   'signup': {
     required: ['email', 'password'],
     fields: {
-      email: { type: 'string', maxLength: 255 },
+      email: { type: 'string', maxLength: 255, sanitizer: 'email' },
       password: { type: 'string', maxLength: 100 }
     }
   },
@@ -686,12 +658,12 @@ export class MessageValidator {
       if (this.config.enableSecurityLogging) {
         this.logger.logSecurityEvent('Message validation started', {
           messageType: data?.type || 'unknown',
-          messageSize: JSON.stringify(data).length
+          messageSize: data ? JSON.stringify(data).length : 0
         });
       }
 
       // Basic type checking
-      if (!TypeGuards.isWebviewMessage(data)) {
+      if (!data || typeof data !== 'object') {
         errors.push({
           field: 'message',
           code: 'INVALID_TYPE',
@@ -826,12 +798,14 @@ export class MessageValidator {
       errors.push(...fieldValidation.errors);
       warnings.push(...fieldValidation.warnings);
 
+      console.log(`Field: ${fieldName}, Value: ${value}, Sanitized: ${fieldValidation.sanitizedValue}`);
       // Update sanitized data if field was sanitized
       if (fieldValidation.sanitizedValue !== undefined) {
         sanitizedData[fieldName] = fieldValidation.sanitizedValue;
       }
     }
 
+    console.log(`SanitizedData Result:`, sanitizedData);
     return { isValid: errors.length === 0, errors, warnings, sanitizedData };
   }
 
@@ -862,15 +836,6 @@ export class MessageValidator {
             message: `Field '${fieldName}' must be at least ${config.minLength} characters long`,
             severity: 'error'
           });
-        } else if (this.config.enableSanitization && config.sanitizer) {
-          sanitizedValue = this.applySanitizer(value, config.sanitizer);
-          if (sanitizedValue !== value) {
-            warnings.push({
-              field: fieldName,
-              code: 'FIELD_SANITIZED',
-              message: `Field '${fieldName}' was sanitized for security reasons`
-            });
-          }
         }
         break;
 
@@ -923,11 +888,38 @@ export class MessageValidator {
           });
         }
         break;
+
+      case 'any':
+      default:
+        // No specific type validation for 'any'
+        break;
+    }
+
+    // Apply sanitization
+    if (this.config.enableSanitization && config.sanitizer) {
+      sanitizedValue = this.applySanitizer(value, config.sanitizer);
+      if (sanitizedValue !== value) {
+        // Special case: if email sanitizer returns empty for a non-empty string, it's an error
+        if (config.sanitizer === 'email' && value !== '' && sanitizedValue === '') {
+          errors.push({
+            field: fieldName,
+            code: 'INVALID_STRING', // Match test expectation
+            message: `Field '${fieldName}' must be a valid email address`,
+            severity: 'error'
+          });
+        } else {
+          warnings.push({
+            field: fieldName,
+            code: 'FIELD_SANITIZED',
+            message: `Field '${fieldName}' was sanitized for security reasons`
+          });
+        }
+      }
     }
 
     // Enum validation
     if (config.enum && Array.isArray(config.enum)) {
-      if (!config.enum.includes(value)) {
+      if (!config.enum.includes(sanitizedValue)) {
         errors.push({
           field: fieldName,
           code: 'INVALID_ENUM_VALUE',

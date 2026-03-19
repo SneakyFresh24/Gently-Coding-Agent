@@ -1,455 +1,209 @@
-/**
- * Chat Store — Manages chat messages and streaming state
- * 
- * Pure state store. Uses extensionSync for backend communication.
- * Streaming state is derived from currentStreamingMessageId.
- */
+// =====================================================
+// Chat Store – Messages, streaming, and input state
+// =====================================================
 
 import { writable, derived, get } from 'svelte/store';
-import { extensionSync } from '../lib/extensionSync';
-import { realtimeStore } from './realtimeStore';
+import { messaging } from '../lib/messaging';
+import type { Message } from '../lib/types';
 
-export interface ToolFunction {
-  name: string;
-  arguments: string;
-}
+// ── Store State ──────────────────────────────────────
 
-export const TOOL_METADATA: Record<string, { icon: string; name: string }> = {
-  read_file: { icon: "FileText", name: "Read File" },
-  write_file: { icon: "FileEdit", name: "Write File" },
-  edit_file: { icon: "Pencil", name: "Edit File" },
-  safe_edit_file: { icon: "CheckCircle", name: "Safe Edit" },
-  apply_block_edit: { icon: "PencilLine", name: "Block Edit" },
-  list_files: { icon: "Files", name: "List Files" },
-  find_files: { icon: "Search", name: "Find Files" },
-  get_context: { icon: "Target", name: "Context" },
-  search_codebase: { icon: "FileSearch", name: "Search Code" },
-  analyze_project_structure: { icon: "Layout", name: "Analyze Project" },
-  run_command: { icon: "Terminal", name: "Run Command" },
-  get_memories: { icon: "Brain", name: "Get Memories" },
-  run_linter: { icon: "Code", name: "Run Linter" },
-  run_type_check: { icon: "ShieldCheck", name: "Type Check" },
-  execute_test: { icon: "TestTube", name: "Run Tests" },
-  remember: { icon: "Brain", name: "Remember" },
-  recall_memories: { icon: "MessageSquare", name: "Recall Information" },
-  update_memory: { icon: "Edit3", name: "Update Memory" },
-  deprecate_memory: { icon: "Archive", name: "Archive Memory" },
-  create_plan: { icon: "ClipboardList", name: "Create Plan" },
-  execute_plan: { icon: "Play", name: "Execute Plan" },
-  verify_and_auto_fix: { icon: "ShieldCheck", name: "Verify & Fix" },
-  create_checkpoint: { icon: "Save", name: "Create Checkpoint" },
-  restore_checkpoint: { icon: "RotateCcw", name: "Restore Checkpoint" },
-  list_checkpoints: { icon: "List", name: "List Checkpoints" },
-  update_memory_bank: { icon: "Database", name: "Update Memory Bank" },
-  query_long_term_memory: { icon: "Search", name: "Query Long-term" },
-};
-
-export interface ToolCall {
-  id: string;
-  type: string;
-  function: ToolFunction;
-}
-
-export interface FileReference {
-  path: string;
-  displayName: string;
-  content?: string;
-  size?: number;
-  language?: string;
-  diffStats?: { added: number; deleted: number };
-}
-
-export interface Checkpoint {
-  id: string;
-  checkpointNumber: number;
-  filesTracked: number;
-}
-
-export interface ToolExecution {
-  toolName: string;
-  isExecuting: boolean;
-  startTime: number;
-  endTime?: number;
-  duration?: number;
-  fileName?: string;
-  diffStats?: { added: number; deleted: number };
-  success?: boolean;
-}
-
-export interface CommandApproval {
-  commandId: string;
-  command: string;
-  cwd: string;
-  reason: string;
-  safetyLevel: 'safe' | 'moderate' | 'risky';
-  status: 'pending' | 'approved' | 'rejected';
-}
-
-export interface Message {
-  id: string;
-  role: 'user' | 'assistant' | 'system' | 'command-approval' | 'tool-execution';
-  content: string;
-  reasoning?: string;
-  toolCalls?: ToolCall[];
-  fileReferences?: FileReference[];
-  checkpoint?: Checkpoint;
-  timestamp: number;
-  isStreaming?: boolean;
-  isSystemMessage?: boolean;
-  commandApproval?: CommandApproval;
-  toolExecution?: ToolExecution;
-}
-
-interface ChatState {
+interface ChatStoreState {
   messages: Message[];
-  currentStreamingMessageId: string | null;
+  inputValue: string;
+  selectedFiles: string[];
+  streamingMessageId: string | null;
   error: string | null;
 }
 
-const initialState: ChatState = {
+const initialState: ChatStoreState = {
   messages: [],
-  currentStreamingMessageId: null,
+  inputValue: '',
+  selectedFiles: [],
+  streamingMessageId: null,
   error: null,
 };
 
+// ── Store Creation ───────────────────────────────────
+
 function createChatStore() {
-  const { subscribe, set, update } = writable<ChatState>(initialState);
+  const { subscribe, set, update } = writable<ChatStoreState>(initialState);
 
   return {
     subscribe,
 
-    /** Add a user message */
-    addUserMessage(content: string, fileReferences?: FileReference[]) {
-      update(state => ({
-        ...state,
-        messages: [
-          ...state.messages,
-          {
-            id: `msg-${Date.now()}-${Math.random()}`,
-            role: 'user',
-            content,
-            fileReferences,
-            timestamp: Date.now(),
-          },
-        ],
+    // ── Messages ─────────────────────────────────────
+
+    /** Add a complete message */
+    addMessage(message: Message) {
+      update(s => ({
+        ...s,
+        messages: [...s.messages, message],
+        error: null,
       }));
     },
 
-    /** Start assistant message streaming */
-    startAssistantMessage() {
-      const messageId = `msg-${Date.now()}-${Math.random()}`;
-      update(state => ({
-        ...state,
-        currentStreamingMessageId: messageId,
-        messages: [
-          ...state.messages,
-          {
-            id: messageId,
+    /** Start streaming a new assistant message */
+    startStreaming(messageId: string) {
+      const msg: Message = {
+        id: messageId,
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+        isStreaming: true,
+      };
+      update(s => ({
+        ...s,
+        messages: [...s.messages, msg],
+        streamingMessageId: messageId,
+      }));
+    },
+
+    /** Append content to the currently streaming message */
+    appendChunk(data: { id?: string; messageId?: string; content: string }) {
+      const targetId = data.id || data.messageId;
+      update(s => {
+        // If no streaming message exists, start one
+        if (!s.streamingMessageId && targetId) {
+          const msg: Message = {
+            id: targetId,
             role: 'assistant',
-            content: '',
-            reasoning: '',
-            toolCalls: [],
+            content: data.content,
             timestamp: Date.now(),
             isStreaming: true,
-          },
-        ],
-      }));
-      return messageId;
-    },
-
-    /** Append chunk to streaming message (Legacy support) */
-    appendChunk(chunk: string) {
-      update(state => {
-        if (!state.currentStreamingMessageId) return state;
-        return {
-          ...state,
-          messages: state.messages.map(msg =>
-            msg.id === state.currentStreamingMessageId
-              ? { ...msg, content: msg.content + chunk }
-              : msg
-          ),
-        };
-      });
-    },
-
-    /** Update partial message by index or current streaming ID */
-    updatePartialMessage(index: number, updates: any) {
-      update(state => {
-        const messageId = state.currentStreamingMessageId;
-        if (!messageId) return state;
-
-        return {
-          ...state,
-          messages: state.messages.map(msg => {
-            if (msg.id !== messageId) return msg;
-
-            const updated = { ...msg };
-            if (updates.content) updated.content += updates.content;
-            if (updates.reasoning) updated.reasoning += updates.reasoning;
-            
-            if (updates.toolCallDeltas) {
-              const currentToolCalls = [...(updated.toolCalls || [])];
-              Object.entries(updates.toolCallDeltas).forEach(([idx, delta]: [string, any]) => {
-                const i = parseInt(idx);
-                if (!currentToolCalls[i]) {
-                  currentToolCalls[i] = {
-                    id: delta.id || '',
-                    type: 'function',
-                    function: { name: delta.function?.name || '', arguments: '' }
-                  };
-                }
-                if (delta.function?.arguments) {
-                  currentToolCalls[i].function.arguments += delta.function.arguments;
-                }
-                if (delta.function?.name) {
-                  currentToolCalls[i].function.name = delta.function.name;
-                }
-              });
-              updated.toolCalls = currentToolCalls;
-            }
-
-            return updated;
-          })
-        };
-      });
-    },
-
-    /** End assistant message streaming (atomic) */
-    endAssistantMessage(backendMessageId?: string) {
-      update(state => {
-        if (!state.currentStreamingMessageId) return state;
-
-        const streamingMsg = state.messages.find(m => m.id === state.currentStreamingMessageId);
-
-        // Remove empty messages (no content AND no tool/execution metadata)
-        if (!streamingMsg || (streamingMsg.content.trim() === '' && !streamingMsg.toolExecution && !streamingMsg.commandApproval)) {
+          };
           return {
-            ...state,
-            messages: state.messages.filter(m => m.id !== state.currentStreamingMessageId),
-            currentStreamingMessageId: null,
+            ...s,
+            messages: [...s.messages, msg],
+            streamingMessageId: targetId,
           };
         }
 
         return {
-          ...state,
-          messages: state.messages.map(msg =>
-            msg.id === state.currentStreamingMessageId
-              ? { ...msg, id: backendMessageId || msg.id, isStreaming: false }
-              : msg
-          ),
-          currentStreamingMessageId: null,
+          ...s,
+          messages: s.messages.map(m => {
+            if (m.id === (targetId || s.streamingMessageId)) {
+              return { ...m, content: m.content + data.content };
+            }
+            return m;
+          }),
         };
       });
     },
 
-    /** Add checkpoint to a message */
-    addCheckpoint(messageId: string, checkpoint: Checkpoint) {
-      update(state => ({
-        ...state,
-        messages: state.messages.map(msg =>
-          msg.id === messageId ? { ...msg, checkpoint } : msg
+    /** Mark streaming as complete */
+    completeStreaming(data?: { messageId?: string }) {
+      update(s => ({
+        ...s,
+        messages: s.messages.map(m => {
+          if (m.id === (data?.messageId || s.streamingMessageId)) {
+            return { ...m, isStreaming: false };
+          }
+          return m;
+        }),
+        streamingMessageId: null,
+      }));
+    },
+
+    /** Update a specific message by ID */
+    updateMessage(messageId: string, updates: Partial<Message>) {
+      update(s => ({
+        ...s,
+        messages: s.messages.map(m =>
+          m.id === messageId ? { ...m, ...updates } : m
         ),
       }));
     },
 
-    /** Add command approval message */
-    addCommandApprovalMessage(approval: CommandApproval) {
-      update(state => {
-        const newMessage: Message = {
-          id: approval.commandId,
-          role: 'command-approval',
-          content: approval.command,
-          timestamp: Date.now(),
-          commandApproval: approval,
-        };
+    // ── Input ────────────────────────────────────────
 
-        extensionSync.send('commandApprovalCreated', { message: newMessage });
+    setInputValue(value: string) {
+      update(s => ({ ...s, inputValue: value }));
+    },
 
-        return {
-          ...state,
-          messages: [...state.messages, newMessage],
-        };
+    // ── Files ────────────────────────────────────────
+
+    addFile(path: string) {
+      update(s => {
+        if (s.selectedFiles.includes(path)) return s;
+        return { ...s, selectedFiles: [...s.selectedFiles, path] };
       });
     },
 
-    /** Restore command approval message (from session, no backend notification) */
-    restoreCommandApprovalMessage(id: string, approval: CommandApproval, timestamp: number) {
-      update(state => ({
-        ...state,
-        messages: [
-          ...state.messages,
-          {
-            id,
-            role: 'command-approval' as const,
-            content: approval.command,
-            timestamp,
-            commandApproval: approval,
-          },
-        ],
+    removeFile(path: string) {
+      update(s => ({
+        ...s,
+        selectedFiles: s.selectedFiles.filter(f => f !== path),
       }));
     },
 
-    /** Update command approval status */
-    updateCommandApprovalStatus(commandId: string, status: 'approved' | 'rejected') {
-      update(state => ({
-        ...state,
-        messages: state.messages.map(msg => {
-          if (msg.id === commandId && msg.role === 'command-approval' && msg.commandApproval) {
-            const updatedMsg = {
-              ...msg,
-              commandApproval: { ...msg.commandApproval, status },
-            };
+    clearFiles() {
+      update(s => ({ ...s, selectedFiles: [] }));
+    },
 
-            // Optimistically decrease pending approvals count
-            const currentCount = get(realtimeStore).pendingApprovalsCount;
-            if (currentCount > 0) {
-              realtimeStore.setPendingApprovalsCount(currentCount - 1);
-            }
+    // ── Actions ──────────────────────────────────────
 
-            extensionSync.send('commandApprovalUpdated', { message: updatedMsg });
-            return updatedMsg;
-          }
-          return msg;
-        }),
+    /** Send a message to the backend */
+    sendMessage() {
+      const state = get({ subscribe });
+      if (!state.inputValue.trim() && state.selectedFiles.length === 0) return;
+
+      messaging.send('sendMessage', {
+        message: state.inputValue,
+        fileReferences: state.selectedFiles.map(path => ({
+          path,
+          name: path.split(/[/\\]/).pop() || path,
+        })),
+      });
+
+      update(s => ({
+        ...s,
+        inputValue: '',
+        selectedFiles: [],
       }));
     },
 
-    /** Set error message with auto-dismiss */
-    setError(error: string) {
-      update(state => ({
-        ...state,
-        error,
-        currentStreamingMessageId: null,
-      }));
-
-      // Auto-dismiss after 10 seconds
-      setTimeout(() => {
-        update(state => {
-          if (state.error === error) {
-            return { ...state, error: null };
-          }
-          return state;
-        });
-      }, 10000);
+    /** Cancel the current task */
+    cancelTask() {
+      messaging.send('stopMessage');
+      update(s => ({ ...s, streamingMessageId: null }));
     },
 
-    /** Clear error */
-    clearError() {
-      update(state => ({ ...state, error: null }));
+    // ── Error ────────────────────────────────────────
+
+    setError(error: string | null) {
+      update(s => ({ ...s, error }));
     },
 
-    /** Clear all messages */
-    clearMessages() {
+    // ── Lifecycle ────────────────────────────────────
+
+    /** Replace all messages (e.g., session load) */
+    hydrateMessages(messages: Message[]) {
+      update(s => ({ ...s, messages, streamingMessageId: null }));
+    },
+
+    /** Clear everything */
+    clear() {
       set(initialState);
-    },
-
-    /** Set generating state (called by ChatView on generatingStart/End) */
-    setGenerating(_isGenerating: boolean) {
-      // No-op: isGenerating is now derived from currentStreamingMessageId.
-      // Kept for backward compatibility with ChatView.svelte routing.
-    },
-
-    /** Add system message */
-    addSystemMessage(content: string) {
-      const messageId = `msg-${Date.now()}-${Math.random()}`;
-      update(state => ({
-        ...state,
-        messages: [
-          ...state.messages,
-          {
-            id: messageId,
-            role: 'system',
-            content,
-            timestamp: Date.now(),
-            isSystemMessage: true,
-          },
-        ],
-      }));
-
-      extensionSync.send('systemMessageCreated', { messageId, content });
-    },
-
-    /** Restore system message from session (no backend notification) */
-    restoreSystemMessage(id: string, content: string, timestamp: number) {
-      update(state => ({
-        ...state,
-        messages: [
-          ...state.messages,
-          {
-            id,
-            role: 'system',
-            content,
-            timestamp,
-            isSystemMessage: true,
-          },
-        ],
-      }));
-    },
-
-    /** Restore tool execution message from session */
-    restoreToolExecutionMessage(id: string, toolExecution: ToolExecution, timestamp: number) {
-      update(state => ({
-        ...state,
-        messages: [
-          ...state.messages,
-          {
-            id,
-            role: 'tool-execution',
-            content: toolExecution.toolName,
-            timestamp,
-            toolExecution,
-          },
-        ],
-      }));
-    },
-
-    /** Add a complete (non-streaming) assistant message atomically */
-    addFullAssistantMessage(content: string, backendMessageId?: string) {
-      const messageId = backendMessageId || `msg-${Date.now()}-${Math.random()}`;
-      update(state => {
-        // Clean up any residual streaming state
-        const messages = state.currentStreamingMessageId
-          ? state.messages.filter(m => m.id !== state.currentStreamingMessageId)
-          : state.messages;
-
-        return {
-          ...state,
-          currentStreamingMessageId: null,
-          messages: [
-            ...messages,
-            {
-              id: messageId,
-              role: 'assistant' as const,
-              content,
-              timestamp: Date.now(),
-              isStreaming: false,
-            },
-          ],
-        };
-      });
     },
   };
 }
 
 export const chatStore = createChatStore();
 
-// ── Derived Stores ──────────────────────────────────────────
+// ── Derived Stores ───────────────────────────────────
 
-/** Is a message currently being streamed? */
-export const isStreaming = derived(chatStore, $s => $s.currentStreamingMessageId !== null);
+export const isStreaming = derived(
+  chatStore,
+  $s => $s.streamingMessageId !== null
+);
 
-/** Is the assistant currently generating? (derived, replaces the old field) */
-export const isGenerating = derived(chatStore, $s => $s.currentStreamingMessageId !== null);
+export const messageCount = derived(
+  chatStore,
+  $s => $s.messages.length
+);
 
-/** Current streaming message content */
-export const streamingContent = derived(chatStore, $s => {
-  if (!$s.currentStreamingMessageId) return null;
-  const msg = $s.messages.find(m => m.id === $s.currentStreamingMessageId);
-  return msg?.content ?? null;
-});
-
-/** Last message */
-export const lastMessage = derived(chatStore, $s => $s.messages[$s.messages.length - 1]);
-
-/** Message count */
-export const messageCount = derived(chatStore, $s => $s.messages.length);
+export const lastMessage = derived(
+  chatStore,
+  $s => $s.messages[$s.messages.length - 1] ?? null
+);

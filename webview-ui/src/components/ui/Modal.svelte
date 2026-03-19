@@ -1,236 +1,112 @@
 <script lang="ts">
-    import { X } from "lucide-svelte";
-    import { fade, scale } from "svelte/transition";
+  import { onMount, onDestroy } from 'svelte';
 
-    let {
-        title = "",
-        message = "",
-        confirmText = "Confirm",
-        cancelText = "Cancel",
-        type = "info",
-        isOpen = $bindable(false),
-        onconfirm,
-        oncancel,
-        onclose,
-    } = $props<{
-        title?: string;
-        message?: string;
-        confirmText?: string;
-        cancelText?: string;
-        type?: "info" | "warning" | "error" | "danger";
-        isOpen?: boolean;
-        onconfirm?: () => void;
-        oncancel?: () => void;
-        onclose?: () => void;
-    }>();
+  let {
+    isOpen = false,
+    onClose = () => {},
+    title = '',
+    children,
+  }: {
+    isOpen?: boolean;
+    onClose?: () => void;
+    title?: string;
+    children?: any;
+  } = $props();
 
-    let modalElement = $state<HTMLElement | null>(null);
+  let modalRef: HTMLDivElement | undefined = $state();
 
-    function handleConfirm() {
-        onconfirm?.();
-        close();
-    }
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') onClose();
+  }
 
-    function handleCancel() {
-        oncancel?.();
-        close();
-    }
+  function handleBackdropClick(e: MouseEvent) {
+    if (e.target === e.currentTarget) onClose();
+  }
 
-    function close() {
-        isOpen = false;
-        onclose?.();
-    }
+  onMount(() => {
+    window.addEventListener('keydown', handleKeydown);
+  });
 
-    function handleKeydown(event: KeyboardEvent) {
-        if (event.key === "Escape" && isOpen) {
-            handleCancel();
-        }
-    }
-
-    $effect(() => {
-        if (isOpen && modalElement) {
-            modalElement.focus();
-        }
-    });
+  onDestroy(() => {
+    window.removeEventListener('keydown', handleKeydown);
+  });
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
-
 {#if isOpen}
-    <!-- Backdrop -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
-        class="modal-backdrop"
-        onclick={handleCancel}
-        onkeydown={(e) => e.key === "Escape" && handleCancel()}
-        transition:fade={{ duration: 200 }}
-        role="button"
-        tabindex="-1"
-        aria-label="Close modal"
-    >
-        <!-- Modal Container -->
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div
-            class="modal-container glass-dark"
-            onclick={(e) => e.stopPropagation()}
-            onkeydown={(e) => e.stopPropagation()}
-            transition:scale={{ duration: 250, start: 0.95 }}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="modal-title"
-            tabindex="-1"
-            bind:this={modalElement}
-        >
-            <!-- Header -->
-            <div class="modal-header">
-                <h2 id="modal-title" class="modal-title">{title}</h2>
-                <button
-                    class="close-btn"
-                    onclick={handleCancel}
-                    aria-label="Close modal"
-                >
-                    <X size={18} />
-                </button>
-            </div>
-
-            <!-- Content -->
-            <div class="modal-content">
-                <p>{message}</p>
-            </div>
-
-            <!-- Footer -->
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick={handleCancel}>
-                    {cancelText}
-                </button>
-                <button
-                    class="btn btn-primary"
-                    class:danger={type === "danger" || type === "error"}
-                    onclick={handleConfirm}
-                >
-                    {confirmText}
-                </button>
-            </div>
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="modal-backdrop" onclick={handleBackdropClick}>
+    <div class="modal" bind:this={modalRef} role="dialog" aria-modal="true" aria-label={title}>
+      {#if title}
+        <div class="modal-header">
+          <h3 class="modal-title">{title}</h3>
+          <button class="modal-close" onclick={onClose} title="Close" aria-label="Close">
+            ✕
+          </button>
         </div>
+      {/if}
+      <div class="modal-body">
+        {@render children?.()}
+      </div>
     </div>
+  </div>
 {/if}
 
 <style>
-    .modal-backdrop {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100vw;
-        height: 100vh;
-        background: rgba(0, 0, 0, 0.6);
-        backdrop-filter: blur(4px);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 9999;
-        padding: 1.5rem;
-        cursor: default;
-        outline: none;
-    }
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: var(--z-modal);
+  }
 
-    .modal-container {
-        width: 100%;
-        max-width: 400px;
-        background: var(--color-surface-elevated);
-        border: 1px solid var(--color-border);
-        border-radius: var(--radius-xl);
-        box-shadow: var(--shadow-xl);
-        overflow: hidden;
-        display: flex;
-        flex-direction: column;
-        outline: none;
-        cursor: default;
-    }
+  .modal {
+    background: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    min-width: 300px;
+    max-width: 90vw;
+    max-height: 80vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
 
-    .modal-header {
-        padding: 1.25rem 1.5rem 0.75rem;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-    }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-lg) var(--space-xl);
+    border-bottom: 1px solid var(--vscode-panel-border);
+  }
 
-    .modal-title {
-        margin: 0;
-        font-size: var(--font-lg);
-        font-weight: var(--font-weight-semibold);
-        color: var(--color-text-primary);
-    }
+  .modal-title {
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    color: var(--vscode-foreground);
+  }
 
-    .close-btn {
-        background: transparent;
-        border: none;
-        color: var(--color-text-muted);
-        cursor: pointer;
-        padding: 4px;
-        border-radius: var(--radius-md);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: all var(--transition-fast);
-    }
+  .modal-close {
+    background: none;
+    border: none;
+    color: var(--vscode-foreground);
+    cursor: pointer;
+    font-size: var(--font-size-lg);
+    padding: var(--space-xs);
+    opacity: 0.6;
+    line-height: 1;
+  }
 
-    .close-btn:hover {
-        background: var(--color-surface-hover);
-        color: var(--color-text-primary);
-    }
+  .modal-close:hover {
+    opacity: 1;
+  }
 
-    .modal-content {
-        padding: 0.5rem 1.5rem 1.5rem;
-        color: var(--color-text-secondary);
-        font-size: var(--font-base);
-        line-height: 1.5;
-    }
-
-    .modal-footer {
-        padding: 1rem 1.5rem 1.25rem;
-        display: flex;
-        align-items: center;
-        justify-content: flex-end;
-        gap: 0.75rem;
-        background: rgba(255, 255, 255, 0.02);
-        border-top: 1px solid var(--color-border);
-    }
-
-    .btn {
-        padding: 0.5rem 1rem;
-        border-radius: var(--radius-md);
-        font-size: var(--font-sm);
-        font-weight: var(--font-weight-medium);
-        cursor: pointer;
-        transition: all var(--transition-fast);
-        border: 1px solid transparent;
-    }
-
-    .btn-secondary {
-        background: var(--color-surface);
-        color: var(--color-text-primary);
-        border-color: var(--color-border);
-    }
-
-    .btn-secondary:hover {
-        background: var(--color-surface-hover);
-        border-color: var(--color-border-hover);
-    }
-
-    .btn-primary {
-        background: var(--color-primary);
-        color: white;
-    }
-
-    .btn-primary:hover {
-        background: var(--color-primary-hover);
-    }
-
-    .btn-primary.danger {
-        background: var(--color-error);
-    }
-
-    .btn-primary.danger:hover {
-        filter: brightness(1.1);
-    }
+  .modal-body {
+    padding: var(--space-xl);
+    overflow-y: auto;
+  }
 </style>

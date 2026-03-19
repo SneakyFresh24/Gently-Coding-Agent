@@ -1,0 +1,471 @@
+[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
+
+[1m[46m RUN [49m[22m [36mv3.2.4 [39m[90mC:/Users/Bekim Lika/Desktop/Agent[39m
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mBasic Validation[2m > [22m[2mshould reject null/undefined messages
+[22m[39m--- MessageValidator (Schemas Loaded) v2 ---
+
+[90mstderr[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mBasic Validation[2m > [22m[2mshould reject null/undefined messages
+[22m[39m[WebviewSecurity] Message validation started: { messageType: [32m'unknown'[39m, messageSize: [33m4[39m }
+[WebviewSecurity] Validation exception: {
+  error: [32m"Cannot read properties of undefined (reading 'length')"[39m,
+  messageType: [32m'unknown'[39m
+}
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mBasic Validation[2m > [22m[2mshould reject messages without type
+[22m[39m--- MessageValidator (Schemas Loaded) v2 ---
+
+[90mstderr[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mBasic Validation[2m > [22m[2mshould reject messages without type
+[22m[39m[WebviewSecurity] Message validation started: { messageType: [32m'unknown'[39m, messageSize: [33m15[39m }
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mBasic Validation[2m > [22m[2mshould accept valid message structure
+[22m[39m--- MessageValidator (Schemas Loaded) v2 ---
+
+[90mstderr[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mBasic Validation[2m > [22m[2mshould accept valid message structure
+[22m[39m[WebviewSecurity] Message validation started: { messageType: [32m'ready'[39m, messageSize: [33m16[39m }
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mBasic Validation[2m > [22m[2mshould accept valid message structure
+[22m[39m[WebviewSecurity] Message validation completed: { messageType: [32m'ready'[39m, isValid: [33mtrue[39m, errorCount: [33m0[39m, warningCount: [33m0[39m }
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mRate Limiting[2m > [22m[2mshould allow messages within rate limit
+[22m[39m--- MessageValidator (Schemas Loaded) v2 ---
+
+[90mstderr[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mRate Limiting[2m > [22m[2mshould allow messages within rate limit
+[22m[39m[WebviewSecurity] Message validation started: { messageType: [32m'ready'[39m, messageSize: [33m16[39m }
+[WebviewSecurity] Message validation started: { messageType: [32m'ready'[39m, messageSize: [33m16[39m }
+[WebviewSecurity] Message validation started: { messageType: [32m'ready'[39m, messageSize: [33m16[39m }
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mRate Limiting[2m > [22m[2mshould allow messages within rate limit
+[22m[39m[WebviewSecurity] Message validation completed: { messageType: [32m'ready'[39m, isValid: [33mtrue[39m, errorCount: [33m0[39m, warningCount: [33m0[39m }
+[WebviewSecurity] Message validation completed: { messageType: [32m'ready'[39m, isValid: [33mtrue[39m, errorCount: [33m0[39m, warningCount: [33m0[39m }
+[WebviewSecurity] Message validation completed: { messageType: [32m'ready'[39m, isValid: [33mtrue[39m, errorCount: [33m0[39m, warningCount: [33m0[39m }
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mRate Limiting[2m > [22m[2mshould reject messages exceeding rate limit
+[22m[39m--- MessageValidator (Schemas Loaded) v2 ---
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mRate Limiting[2m > [22m[2mshould reject messages exceeding rate limit
+[22m[39m[WebviewSecurity] Message validation completed: { messageType: [32m'ready'[39m, isValid: [33mtrue[39m, errorCount: [33m0[39m, warningCount: [33m0[39m }
+[WebviewSecurity] Message validation completed: { messageType: [32m'ready'[39m, isValid: [33mtrue[39m, errorCount: [33m0[39m, warningCount: [33m0[39m }
+[WebviewSecurity] Message validation completed: { messageType: [32m'ready'[39m, isValid: [33mtrue[39m, errorCount: [33m0[39m, warningCount: [33m0[39m }
+[WebviewSecurity] Message validation completed: { messageType: [32m'ready'[39m, isValid: [33mtrue[39m, errorCount: [33m0[39m, warningCount: [33m0[39m }
+[WebviewSecurity] Message validation completed: { messageType: [32m'ready'[39m, isValid: [33mtrue[39m, errorCount: [33m0[39m, warningCount: [33m0[39m }
+
+[90mstderr[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mRate Limiting[2m > [22m[2mshould reject messages exceeding rate limit
+[22m[39m[WebviewSecurity] Message validation started: { messageType: [32m'ready'[39m, messageSize: [33m16[39m }
+[WebviewSecurity] Message validation started: { messageType: [32m'ready'[39m, messageSize: [33m16[39m }
+[WebviewSecurity] Message validation started: { messageType: [32m'ready'[39m, messageSize: [33m16[39m }
+[WebviewSecurity] Message validation started: { messageType: [32m'ready'[39m, messageSize: [33m16[39m }
+[WebviewSecurity] Message validation started: { messageType: [32m'ready'[39m, messageSize: [33m16[39m }
+[WebviewSecurity] Message validation started: { messageType: [32m'ready'[39m, messageSize: [33m16[39m }
+[WebviewSecurity] Rate limit exceeded: { timeUntilNext: [33m999[39m, messageCount: [33m5[39m }
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mRate Limiting[2m > [22m[2mshould provide rate limit status
+[22m[39m--- MessageValidator (Schemas Loaded) v2 ---
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mMessage Size Validation[2m > [22m[2mshould reject messages exceeding size limit
+[22m[39m--- MessageValidator (Schemas Loaded) v2 ---
+
+[90mstderr[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mMessage Size Validation[2m > [22m[2mshould reject messages exceeding size limit
+[22m[39m[WebviewSecurity] Message validation started: { messageType: [32m'sendMessage'[39m, messageSize: [33m2035[39m }
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mMessage Size Validation[2m > [22m[2mshould accept messages within size limit
+[22m[39m--- MessageValidator (Schemas Loaded) v2 ---
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mMessage Size Validation[2m > [22m[2mshould accept messages within size limit
+[22m[39m[WebviewSecurity] Message validation completed: {
+  messageType: [32m'sendMessage'[39m,
+  isValid: [33mtrue[39m,
+  errorCount: [33m0[39m,
+  warningCount: [33m0[39m
+}
+
+[90mstderr[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mMessage Size Validation[2m > [22m[2mshould accept messages within size limit
+[22m[39m[WebviewSecurity] Message validation started: { messageType: [32m'sendMessage'[39m, messageSize: [33m46[39m }
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mLogin Messages[2m > [22m[2mshould validate correct login message
+[22m[39m--- MessageValidator (Schemas Loaded) v2 ---
+
+[90mstderr[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mLogin Messages[2m > [22m[2mshould validate correct login message
+[22m[39m[WebviewSecurity] Message validation started: { messageType: [32m'login'[39m, messageSize: [33m68[39m }
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mLogin Messages[2m > [22m[2mshould validate correct login message
+[22m[39m[WebviewSecurity] Message validation completed: { messageType: [32m'login'[39m, isValid: [33mtrue[39m, errorCount: [33m0[39m, warningCount: [33m0[39m }
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mLogin Messages[2m > [22m[2mshould reject login with invalid email
+[22m[39m--- MessageValidator (Schemas Loaded) v2 ---
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mLogin Messages[2m > [22m[2mshould reject login with invalid email
+[22m[39m[WebviewSecurity] Message validation completed: { messageType: [32m'login'[39m, isValid: [33mtrue[39m, errorCount: [33m0[39m, warningCount: [33m0[39m }
+
+[90mstderr[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mLogin Messages[2m > [22m[2mshould reject login with invalid email
+[22m[39m[WebviewSecurity] Message validation started: { messageType: [32m'login'[39m, messageSize: [33m65[39m }
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mLogin Messages[2m > [22m[2mshould reject login without required fields
+[22m[39m--- MessageValidator (Schemas Loaded) v2 ---
+
+[90mstderr[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mLogin Messages[2m > [22m[2mshould reject login without required fields
+[22m[39m[WebviewSecurity] Message validation started: { messageType: [32m'login'[39m, messageSize: [33m43[39m }
+[WebviewSecurity] Message validation completed: {
+  messageType: [32m'login'[39m,
+  isValid: [33mfalse[39m,
+  errorCount: [33m2[39m,
+  warningCount: [33m0[39m
+}
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mSend Message[2m > [22m[2mshould validate correct send message
+[22m[39m--- MessageValidator (Schemas Loaded) v2 ---
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mSend Message[2m > [22m[2mshould validate correct send message
+[22m[39m[WebviewSecurity] Message validation completed: {
+  messageType: [32m'sendMessage'[39m,
+  isValid: [33mtrue[39m,
+  errorCount: [33m0[39m,
+  warningCount: [33m0[39m
+}
+
+[90mstderr[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mSend Message[2m > [22m[2mshould validate correct send message
+[22m[39m[WebviewSecurity] Message validation started: { messageType: [32m'sendMessage'[39m, messageSize: [33m54[39m }
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mSend Message[2m > [22m[2mshould reject send message without text
+[22m[39m--- MessageValidator (Schemas Loaded) v2 ---
+
+[90mstderr[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mSend Message[2m > [22m[2mshould reject send message without text
+[22m[39m[WebviewSecurity] Message validation started: { messageType: [32m'sendMessage'[39m, messageSize: [33m22[39m }
+[WebviewSecurity] Message validation completed: {
+  messageType: [32m'sendMessage'[39m,
+  isValid: [33mfalse[39m,
+  errorCount: [33m2[39m,
+  warningCount: [33m0[39m
+}
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mSend Message[2m > [22m[2mshould reject send message with too long text
+[22m[39m--- MessageValidator (Schemas Loaded) v2 ---
+
+[90mstderr[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mSend Message[2m > [22m[2mshould reject send message with too long text
+[22m[39m[WebviewSecurity] Message validation started: { messageType: [32m'sendMessage'[39m, messageSize: [33m100036[39m }
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mFile Operations[2m > [22m[2mshould validate correct open file message
+[22m[39m--- MessageValidator (Schemas Loaded) v2 ---
+
+[90mstderr[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mFile Operations[2m > [22m[2mshould validate correct open file message
+[22m[39m[WebviewSecurity] Message validation started: { messageType: [32m'openFile'[39m, messageSize: [33m40[39m }
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mFile Operations[2m > [22m[2mshould validate correct open file message
+[22m[39m[WebviewSecurity] Message validation completed: {
+  messageType: [32m'openFile'[39m,
+  isValid: [33mtrue[39m,
+  errorCount: [33m0[39m,
+  warningCount: [33m0[39m
+}
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mFile Operations[2m > [22m[2mshould sanitize file paths
+[22m[39m--- MessageValidator (Schemas Loaded) v2 ---
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mFile Operations[2m > [22m[2mshould sanitize file paths
+[22m[39m[WebviewSecurity] Message validation completed: {
+  messageType: [32m'openFile'[39m,
+  isValid: [33mtrue[39m,
+  errorCount: [33m0[39m,
+  warningCount: [33m1[39m
+}
+
+[90mstderr[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mFile Operations[2m > [22m[2mshould sanitize file paths
+[22m[39m[WebviewSecurity] Message validation started: { messageType: [32m'openFile'[39m, messageSize: [33m48[39m }
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mFile Operations[2m > [22m[2mshould reject open file without path
+[22m[39m--- MessageValidator (Schemas Loaded) v2 ---
+
+[90mstderr[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mFile Operations[2m > [22m[2mshould reject open file without path
+[22m[39m[WebviewSecurity] Message validation started: { messageType: [32m'openFile'[39m, messageSize: [33m19[39m }
+[WebviewSecurity] Message validation completed: {
+  messageType: [32m'openFile'[39m,
+  isValid: [33mfalse[39m,
+  errorCount: [33m2[39m,
+  warningCount: [33m0[39m
+}
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mModel Changes[2m > [22m[2mshould validate correct model change
+[22m[39m--- MessageValidator (Schemas Loaded) v2 ---
+
+[90mstderr[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mModel Changes[2m > [22m[2mshould validate correct model change
+[22m[39m[WebviewSecurity] Message validation started: { messageType: [32m'modelChanged'[39m, messageSize: [33m47[39m }
+[WebviewSecurity] Message validation started: { messageType: [32m'modelChanged'[39m, messageSize: [33m41[39m }
+[WebviewSecurity] Message validation started: { messageType: [32m'modelChanged'[39m, messageSize: [33m50[39m }
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mModel Changes[2m > [22m[2mshould validate correct model change
+[22m[39m[WebviewSecurity] Message validation completed: {
+  messageType: [32m'modelChanged'[39m,
+  isValid: [33mtrue[39m,
+  errorCount: [33m0[39m,
+  warningCount: [33m0[39m
+}
+[WebviewSecurity] Message validation completed: {
+  messageType: [32m'modelChanged'[39m,
+  isValid: [33mtrue[39m,
+  errorCount: [33m0[39m,
+  warningCount: [33m0[39m
+}
+[WebviewSecurity] Message validation completed: {
+  messageType: [32m'modelChanged'[39m,
+  isValid: [33mtrue[39m,
+  errorCount: [33m0[39m,
+  warningCount: [33m0[39m
+}
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mModel Changes[2m > [22m[2mshould reject invalid model
+[22m[39m--- MessageValidator (Schemas Loaded) v2 ---
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mModel Changes[2m > [22m[2mshould reject invalid model
+[22m[39m[WebviewSecurity] Message validation completed: {
+  messageType: [32m'modelChanged'[39m,
+  isValid: [33mtrue[39m,
+  errorCount: [33m0[39m,
+  warningCount: [33m0[39m
+}
+
+[90mstderr[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mModel Changes[2m > [22m[2mshould reject invalid model
+[22m[39m[WebviewSecurity] Message validation started: { messageType: [32m'modelChanged'[39m, messageSize: [33m47[39m }
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mTerminal Operations[2m > [22m[2mshould reject invalid terminal mode
+[22m[39m--- MessageValidator (Schemas Loaded) v2 ---
+
+[90mstderr[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mSchema Validation[2m > [22m[2mTerminal Operations[2m > [22m[2mshould reject invalid terminal mode
+[22m[39m[WebviewSecurity] Message validation started: { messageType: [32m'setTerminalMode'[39m, messageSize: [33m48[39m }
+[WebviewSecurity] Message validation completed: {
+  messageType: [32m'setTerminalMode'[39m,
+  isValid: [33mfalse[39m,
+  errorCount: [33m1[39m,
+  warningCount: [33m0[39m
+}
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mInput Sanitization[2m > [22m[2mshould sanitize email addresses
+[22m[39m--- MessageValidator (Schemas Loaded) v2 ---
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mInput Sanitization[2m > [22m[2mshould sanitize email addresses
+[22m[39m[WebviewSecurity] Message validation completed: { messageType: [32m'login'[39m, isValid: [33mtrue[39m, errorCount: [33m0[39m, warningCount: [33m0[39m }
+
+[90mstderr[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mInput Sanitization[2m > [22m[2mshould sanitize email addresses
+[22m[39m[WebviewSecurity] Message validation started: { messageType: [32m'login'[39m, messageSize: [33m68[39m }
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mInput Sanitization[2m > [22m[2mshould sanitize string fields
+[22m[39m--- MessageValidator (Schemas Loaded) v2 ---
+
+[90mstderr[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mInput Sanitization[2m > [22m[2mshould sanitize string fields
+[22m[39m[WebviewSecurity] Message validation started: { messageType: [32m'sendMessage'[39m, messageSize: [33m76[39m }
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mInput Sanitization[2m > [22m[2mshould sanitize string fields
+[22m[39m[WebviewSecurity] Message validation completed: {
+  messageType: [32m'sendMessage'[39m,
+  isValid: [33mtrue[39m,
+  errorCount: [33m0[39m,
+  warningCount: [33m0[39m
+}
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mInput Sanitization[2m > [22m[2mshould handle JSON sanitization
+[22m[39m--- MessageValidator (Schemas Loaded) v2 ---
+
+[90mstderr[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mInput Sanitization[2m > [22m[2mshould handle JSON sanitization
+[22m[39m[WebviewSecurity] Message validation started: { messageType: [32m'sessionAction'[39m, messageSize: [33m125[39m }
+[WebviewSecurity] Message validation completed: {
+  messageType: [32m'sessionAction'[39m,
+  isValid: [33mfalse[39m,
+  errorCount: [33m1[39m,
+  warningCount: [33m0[39m
+}
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mUnknown Message Types[2m > [22m[2mshould handle unknown message types with warnings
+[22m[39m--- MessageValidator (Schemas Loaded) v2 ---
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mUnknown Message Types[2m > [22m[2mshould handle unknown message types with warnings
+[22m[39m[WebviewSecurity] Message validation completed: {
+  messageType: [32m'unknownMessageType'[39m,
+  isValid: [33mtrue[39m,
+  errorCount: [33m0[39m,
+  warningCount: [33m1[39m
+}
+
+[90mstderr[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mUnknown Message Types[2m > [22m[2mshould handle unknown message types with warnings
+[22m[39m[WebviewSecurity] Message validation started: { messageType: [32m'unknownMessageType'[39m, messageSize: [33m48[39m }
+
+[90mstdout[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mError Handling[2m > [22m[2mshould handle validation exceptions gracefully
+[22m[39m--- MessageValidator (Schemas Loaded) v2 ---
+
+[90mstderr[2m | src/views/chat/validation/MessageValidator.test.ts[2m > [22m[2mMessageValidator[2m > [22m[2mError Handling[2m > [22m[2mshould handle validation exceptions gracefully
+[22m[39m[WebviewSecurity] Validation exception: {
+  error: [32m'Converting circular structure to JSON\n'[39m +
+    [32m"    --> starting at object with constructor 'Object'\n"[39m +
+    [32m"    --- property 'self' closes the circle"[39m,
+  messageType: [32m'unknown'[39m
+}
+
+ [31m❯[39m src/views/chat/validation/MessageValidator.test.ts [2m([22m[2m37 tests[22m[2m | [22m[31m6 failed[39m[2m)[22m[32m 44[2mms[22m[39m
+   [32m✓[39m MessageValidator[2m > [22mBasic Validation[2m > [22mshould reject null/undefined messages[32m 5[2mms[22m[39m
+   [32m✓[39m MessageValidator[2m > [22mBasic Validation[2m > [22mshould reject messages without type[32m 1[2mms[22m[39m
+   [32m✓[39m MessageValidator[2m > [22mBasic Validation[2m > [22mshould accept valid message structure[32m 2[2mms[22m[39m
+   [32m✓[39m MessageValidator[2m > [22mRate Limiting[2m > [22mshould allow messages within rate limit[32m 2[2mms[22m[39m
+   [32m✓[39m MessageValidator[2m > [22mRate Limiting[2m > [22mshould reject messages exceeding rate limit[32m 2[2mms[22m[39m
+   [32m✓[39m MessageValidator[2m > [22mRate Limiting[2m > [22mshould provide rate limit status[32m 1[2mms[22m[39m
+   [32m✓[39m MessageValidator[2m > [22mMessage Size Validation[2m > [22mshould reject messages exceeding size limit[32m 0[2mms[22m[39m
+   [32m✓[39m MessageValidator[2m > [22mMessage Size Validation[2m > [22mshould accept messages within size limit[32m 1[2mms[22m[39m
+   [32m✓[39m MessageValidator[2m > [22mSchema Validation[2m > [22mLogin Messages[2m > [22mshould validate correct login message[32m 1[2mms[22m[39m
+[31m   [31m×[31m MessageValidator[2m > [22mSchema Validation[2m > [22mLogin Messages[2m > [22mshould reject login with invalid email[39m[32m 9[2mms[22m[39m
+[31m     → expected true to be false // Object.is equality[39m
+   [32m✓[39m MessageValidator[2m > [22mSchema Validation[2m > [22mLogin Messages[2m > [22mshould reject login without required fields[32m 1[2mms[22m[39m
+   [32m✓[39m MessageValidator[2m > [22mSchema Validation[2m > [22mSend Message[2m > [22mshould validate correct send message[32m 0[2mms[22m[39m
+   [32m✓[39m MessageValidator[2m > [22mSchema Validation[2m > [22mSend Message[2m > [22mshould reject send message without text[32m 1[2mms[22m[39m
+[31m   [31m×[31m MessageValidator[2m > [22mSchema Validation[2m > [22mSend Message[2m > [22mshould reject send message with too long text[39m[32m 3[2mms[22m[39m
+[31m     → expected [ { field: 'message', …(3) } ] to deep equally contain ObjectContaining{…}[39m
+   [32m✓[39m MessageValidator[2m > [22mSchema Validation[2m > [22mFile Operations[2m > [22mshould validate correct open file message[32m 1[2mms[22m[39m
+   [32m✓[39m MessageValidator[2m > [22mSchema Validation[2m > [22mFile Operations[2m > [22mshould sanitize file paths[32m 1[2mms[22m[39m
+   [32m✓[39m MessageValidator[2m > [22mSchema Validation[2m > [22mFile Operations[2m > [22mshould reject open file without path[32m 1[2mms[22m[39m
+   [32m✓[39m MessageValidator[2m > [22mSchema Validation[2m > [22mModel Changes[2m > [22mshould validate correct model change[32m 1[2mms[22m[39m
+[31m   [31m×[31m MessageValidator[2m > [22mSchema Validation[2m > [22mModel Changes[2m > [22mshould reject invalid model[39m[32m 1[2mms[22m[39m
+[31m     → expected true to be false // Object.is equality[39m
+   [32m✓[39m MessageValidator[2m > [22mSchema Validation[2m > [22mTerminal Operations[2m > [22mshould reject invalid terminal mode[32m 1[2mms[22m[39m
+[31m   [31m×[31m MessageValidator[2m > [22mInput Sanitization[2m > [22mshould sanitize email addresses[39m[32m 2[2mms[22m[39m
+[31m     → expected 'TEST@EXAMPLE.COM' to be 'test@example.com' // Object.is equality[39m
+[31m   [31m×[31m MessageValidator[2m > [22mInput Sanitization[2m > [22mshould sanitize string fields[39m[32m 1[2mms[22m[39m
+[31m     → expected '  Hello with control chars \u0000\u00…' to be 'Hello with control chars' // Object.is equality[39m
+[31m   [31m×[31m MessageValidator[2m > [22mInput Sanitization[2m > [22mshould handle JSON sanitization[39m[32m 3[2mms[22m[39m
+[31m     → expected false to be true // Object.is equality[39m
+   [32m✓[39m MessageValidator[2m > [22mUnknown Message Types[2m > [22mshould handle unknown message types with warnings[32m 1[2mms[22m[39m
+   [32m✓[39m MessageValidator[2m > [22mError Handling[2m > [22mshould handle validation exceptions gracefully[32m 1[2mms[22m[39m
+   [32m✓[39m TypeGuards[2m > [22misInboundMessage[2m > [22mshould identify valid inbound messages[32m 0[2mms[22m[39m
+   [32m✓[39m TypeGuards[2m > [22misInboundMessage[2m > [22mshould reject invalid inbound messages[32m 0[2mms[22m[39m
+   [32m✓[39m TypeGuards[2m > [22misValidString[2m > [22mshould validate strings correctly[32m 0[2mms[22m[39m
+   [32m✓[39m TypeGuards[2m > [22misValidString[2m > [22mshould reject non-strings[32m 0[2mms[22m[39m
+   [32m✓[39m TypeGuards[2m > [22misValidBoolean[2m > [22mshould validate booleans correctly[32m 0[2mms[22m[39m
+   [32m✓[39m TypeGuards[2m > [22misValidBoolean[2m > [22mshould reject non-booleans[32m 0[2mms[22m[39m
+   [32m✓[39m TypeGuards[2m > [22misValidNumber[2m > [22mshould validate numbers correctly[32m 0[2mms[22m[39m
+   [32m✓[39m TypeGuards[2m > [22misValidNumber[2m > [22mshould reject non-numbers[32m 0[2mms[22m[39m
+   [32m✓[39m TypeGuards[2m > [22misValidArray[2m > [22mshould validate arrays correctly[32m 0[2mms[22m[39m
+   [32m✓[39m TypeGuards[2m > [22misValidArray[2m > [22mshould reject non-arrays[32m 0[2mms[22m[39m
+   [32m✓[39m TypeGuards[2m > [22misValidObject[2m > [22mshould validate objects correctly[32m 0[2mms[22m[39m
+   [32m✓[39m TypeGuards[2m > [22misValidObject[2m > [22mshould reject non-objects[32m 0[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 6 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m src/views/chat/validation/MessageValidator.test.ts[2m > [22mMessageValidator[2m > [22mSchema Validation[2m > [22mLogin Messages[2m > [22mshould reject login with invalid email
+[31m[1mAssertionError[22m: expected true to be false // Object.is equality[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- false[39m
+[31m+ true[39m
+
+[36m [2m❯[22m src/views/chat/validation/MessageValidator.test.ts:[2m164:32[22m[39m
+    [90m162| [39m        
+    [90m163| [39m        [35mconst[39m result [33m=[39m validator[33m.[39m[34mvalidateInboundMessage[39m(message)[33m;[39m
+    [90m164| [39m        [34mexpect[39m(result[33m.[39misValid)[33m.[39m[34mtoBe[39m([35mfalse[39m)[33m;[39m
+    [90m   | [39m                               [31m^[39m
+    [90m165| [39m        [34mexpect[39m(result[33m.[39merrors)[33m.[39m[34mtoContainEqual[39m(
+    [90m166| [39m          expect[33m.[39m[34mobjectContaining[39m({ 
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m src/views/chat/validation/MessageValidator.test.ts[2m > [22mMessageValidator[2m > [22mSchema Validation[2m > [22mSend Message[2m > [22mshould reject send message with too long text
+[31m[1mAssertionError[22m: expected [ { field: 'message', …(3) } ] to deep equally contain ObjectContaining{…}[39m
+
+[32m- Expected:[39m 
+ObjectContaining {
+  "code": "INVALID_STRING",
+  "field": "message",
+}
+
+[31m+ Received:[39m 
+[
+  {
+    "code": "MESSAGE_TOO_LARGE",
+    "field": "message",
+    "message": "Message size (100036 bytes) exceeds maximum allowed size (1024 bytes)",
+    "severity": "error",
+  },
+]
+
+[36m [2m❯[22m src/views/chat/validation/MessageValidator.test.ts:[2m226:31[22m[39m
+    [90m224| [39m        [35mconst[39m result [33m=[39m validator[33m.[39m[34mvalidateInboundMessage[39m(message)[33m;[39m
+    [90m225| [39m        [34mexpect[39m(result[33m.[39misValid)[33m.[39m[34mtoBe[39m([35mfalse[39m)[33m;[39m
+    [90m226| [39m        [34mexpect[39m(result[33m.[39merrors)[33m.[39m[34mtoContainEqual[39m(
+    [90m   | [39m                              [31m^[39m
+    [90m227| [39m          expect[33m.[39m[34mobjectContaining[39m({ 
+    [90m228| [39m            field[33m:[39m [32m'message'[39m[33m,[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m src/views/chat/validation/MessageValidator.test.ts[2m > [22mMessageValidator[2m > [22mSchema Validation[2m > [22mModel Changes[2m > [22mshould reject invalid model
+[31m[1mAssertionError[22m: expected true to be false // Object.is equality[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- false[39m
+[31m+ true[39m
+
+[36m [2m❯[22m src/views/chat/validation/MessageValidator.test.ts:[2m302:32[22m[39m
+    [90m300| [39m        
+    [90m301| [39m        [35mconst[39m result [33m=[39m validator[33m.[39m[34mvalidateInboundMessage[39m(message)[33m;[39m
+    [90m302| [39m        [34mexpect[39m(result[33m.[39misValid)[33m.[39m[34mtoBe[39m([35mfalse[39m)[33m;[39m
+    [90m   | [39m                               [31m^[39m
+    [90m303| [39m        [34mexpect[39m(result[33m.[39merrors)[33m.[39m[34mtoContainEqual[39m(
+    [90m304| [39m          expect[33m.[39m[34mobjectContaining[39m({ 
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m src/views/chat/validation/MessageValidator.test.ts[2m > [22mMessageValidator[2m > [22mInput Sanitization[2m > [22mshould sanitize email addresses
+[31m[1mAssertionError[22m: expected 'TEST@EXAMPLE.COM' to be 'test@example.com' // Object.is equality[39m
+
+Expected: [32m"test@example.com"[39m
+Received: [31m"TEST@EXAMPLE.COM"[39m
+
+[36m [2m❯[22m src/views/chat/validation/MessageValidator.test.ts:[2m341:42[22m[39m
+    [90m339| [39m      [35mconst[39m result [33m=[39m validator[33m.[39m[34mvalidateInboundMessage[39m(message)[33m;[39m
+    [90m340| [39m      [34mexpect[39m(result[33m.[39misValid)[33m.[39m[34mtoBe[39m([35mtrue[39m)[33m;[39m
+    [90m341| [39m      [34mexpect[39m(result[33m.[39msanitizedData[33m.[39memail)[33m.[39m[34mtoBe[39m([32m'test@example.com'[39m)[33m;[39m
+    [90m   | [39m                                         [31m^[39m
+    [90m342| [39m    })[33m;[39m
+    [90m343| [39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/6]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m src/views/chat/validation/MessageValidator.test.ts[2m > [22mMessageValidator[2m > [22mInput Sanitization[2m > [22mshould sanitize string fields
+[31m[1mAssertionError[22m: expected '  Hello with control chars \u0000\u00…' to be 'Hello with control chars' // Object.is equality[39m
+
+Expected: [32m"Hello with control chars"[39m
+Received: [31m"[7m  [27mHello with control chars[7m    [27m"[39m
+
+[36m [2m❯[22m src/views/chat/validation/MessageValidator.test.ts:[2m352:44[22m[39m
+    [90m350| [39m      [35mconst[39m result [33m=[39m validator[33m.[39m[34mvalidateInboundMessage[39m(message)[33m;[39m
+    [90m351| [39m      [34mexpect[39m(result[33m.[39misValid)[33m.[39m[34mtoBe[39m([35mtrue[39m)[33m;[39m
+    [90m352| [39m      expect(result.sanitizedData.message).toBe('Hello with control ch…
+    [90m   | [39m                                           [31m^[39m
+    [90m353| [39m    })[33m;[39m
+    [90m354| [39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/6]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m src/views/chat/validation/MessageValidator.test.ts[2m > [22mMessageValidator[2m > [22mInput Sanitization[2m > [22mshould handle JSON sanitization
+[31m[1mAssertionError[22m: expected false to be true // Object.is equality[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- true[39m
+[31m+ false[39m
+
+[36m [2m❯[22m src/views/chat/validation/MessageValidator.test.ts:[2m364:30[22m[39m
+    [90m362| [39m      
+    [90m363| [39m      [35mconst[39m result [33m=[39m validator[33m.[39m[34mvalidateInboundMessage[39m(message)[33m;[39m
+    [90m364| [39m      [34mexpect[39m(result[33m.[39misValid)[33m.[39m[34mtoBe[39m([35mtrue[39m)[33m;[39m
+    [90m   | [39m                             [31m^[39m
+    [90m365| [39m      [90m// JSON should be parsed and re-serialized safely[39m
+    [90m366| [39m      [34mexpect[39m([35mtypeof[39m result[33m.[39msanitizedData[33m.[39mpayload)[33m.[39m[34mtoBe[39m([32m'object'[39m)[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/6]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m6 failed[39m[22m[2m | [22m[1m[32m31 passed[39m[22m[90m (37)[39m
+[2m   Start at [22m 14:49:39
+[2m   Duration [22m 698ms[2m (transform 106ms, setup 0ms, collect 119ms, tests 44ms, environment 0ms, prepare 167ms)[22m
+
