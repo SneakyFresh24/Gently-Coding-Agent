@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import type { ModelInfo } from '../../lib/types';
+  import { messaging } from '../../lib/messaging';
   
   export let selectedModel = '';
   export let models: ModelInfo[] = [];
@@ -23,8 +24,7 @@
     selectedModel = modelId;
     isOpen = false;
     searchTerm = '';
-    // Notify app of change
-    window.postMessage({ type: 'modelChanged', model: modelId }, '*');
+    messaging.send('modelChanged', { model: modelId });
   }
 
   async function toggleDropdown() {

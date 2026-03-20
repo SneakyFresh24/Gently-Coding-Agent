@@ -279,7 +279,11 @@ describe('MessageValidator', () => {
 
     describe('Model Changes', () => {
       it('should validate correct model change', () => {
-        const validModels = ['deepseek-chat', 'glm-4.6', 'grok-4-fast-code'];
+        const validModels = [
+          'deepseek/deepseek-chat',
+          'openai/gpt-4.1-mini',
+          'anthropic/claude-3.7-sonnet'
+        ];
         
         validModels.forEach(model => {
           const message = {
@@ -292,10 +296,10 @@ describe('MessageValidator', () => {
         });
       });
 
-      it('should reject invalid model', () => {
+      it('should reject non-string model', () => {
         const message = {
           type: 'modelChanged',
-          model: 'invalid-model'
+          model: 123
         };
         
         const result = validator.validateInboundMessage(message);
@@ -303,7 +307,7 @@ describe('MessageValidator', () => {
         expect(result.errors).toContainEqual(
           expect.objectContaining({ 
             field: 'model',
-            code: 'INVALID_ENUM_VALUE'
+            code: 'INVALID_STRING'
           })
         );
       });

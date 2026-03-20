@@ -300,7 +300,7 @@ const MessageSchemas: Record<string, any> = {
   'modelChanged': {
     required: ['model'],
     fields: {
-      model: { type: 'string', maxLength: 100, enum: ['deepseek-chat', 'glm-4.6', 'grok-4-fast-code'] }
+      model: { type: 'string', maxLength: 200 }
     }
   },
   'modeChanged': {

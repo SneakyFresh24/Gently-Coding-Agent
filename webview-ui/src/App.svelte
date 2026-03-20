@@ -8,6 +8,7 @@
   import SettingsView from './components/settings/SettingsView.svelte';
 
   import { settingsStore } from './stores/settingsStore';
+  import { messaging } from './lib/messaging';
 
   let currentView = 'chat';
   let models: ModelInfo[] = [];
@@ -43,8 +44,8 @@
   onMount(() => {
     window.addEventListener('message', handleMessage);
     // Initial fetch of models and tokens
-    window.postMessage({ type: 'fetchModels' }, '*');
-    window.postMessage({ type: 'getTokenUsage' }, '*');
+    messaging.send('fetchModels');
+    messaging.send('getTokenUsage');
     
     return () => window.removeEventListener('message', handleMessage);
   });

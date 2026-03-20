@@ -119,6 +119,9 @@
       },
 
       // Sessions
+      onSessionsUpdate: (data) => {
+        historyStore.handleSessionsUpdate(data);
+      },
       onRefreshSessions: () => {
         historyStore.fetchHistory();
       },

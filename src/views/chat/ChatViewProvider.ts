@@ -231,21 +231,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this.sendMessageToWebview({ type: 'tokenTrackerUpdate', usage });
             return;
           }
-          if (data.type === 'getHistory') {
-            const sessions = await this.historyManager.getSessions();
-            this.sendMessageToWebview({ type: 'sessionsUpdate', sessions });
-            return;
-          }
-          if (data.type === 'deleteSession') {
-            await this.historyManager.deleteSession(data.sessionId);
-            const sessions = await this.historyManager.getSessions();
-            this.sendMessageToWebview({ type: 'sessionsUpdate', sessions });
-            return;
-          }
-          if (data.type === 'loadSession') {
-            // Placeholder: need to implement loading logic in MessageHandler/HistoryManager
-            return;
-          }
           await this.webviewMessageHandler.handleMessage(data, this._view!);
         } catch (error: any) {
           console.error('[ChatViewProvider] Error handling webview message:', error);
