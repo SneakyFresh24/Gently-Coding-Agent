@@ -418,20 +418,26 @@ export class ToolManager implements IAgentService {
       
       console.log(`[ToolManager] ✅ Approval request sent to webview (ID: ${approvalId})`);
 
-      this.pendingApprovals.set(approvalId, (approved: boolean) => {
-        clearTimeout(timeout);
-        console.log(`[ToolManager] 📩 Response received for ${approvalId}: ${approved ? '✅ APPROVED' : '❌ REJECTED'}`);
-        resolve(approved);
+      this.pendingApprovals.set(approvalId, {
+        resolve: (approved: boolean) => {
+          clearTimeout(timeout);
+          console.log(`[ToolManager] 📩 Response received for ${approvalId}: ${approved ? '✅ APPROVED' : '❌ REJECTED'}`);
+          resolve(approved);
+        },
+        toolName
       });
     });
   }
 
-  private pendingApprovals: Map<string, (approved: boolean) => void> = new Map();
+  private pendingApprovals: Map<string, { resolve: (approved: boolean) => void, toolName: string }> = new Map();
 
-  public handleApprovalResponse(approvalId: string, approved: boolean): void {
-    const resolve = this.pendingApprovals.get(approvalId);
-    if (resolve) {
-      resolve(approved);
+  public handleApprovalResponse(approvalId: string, approved: boolean, alwaysApprove: boolean = false): void {
+    const entry = this.pendingApprovals.get(approvalId);
+    if (entry) {
+      if (alwaysApprove && approved) {
+        this.autoApproveManager.addAutoApproval(entry.toolName);
+      }
+      entry.resolve(approved);
       this.pendingApprovals.delete(approvalId);
     }
   }
@@ -443,8 +449,8 @@ export class ToolManager implements IAgentService {
     console.log(`[ToolManager] 🛑 Aborting all ${this.pendingApprovals.size} pending approvals`);
     
     // 1. Resolve all pending approvals with 'false'
-    for (const [approvalId, resolve] of this.pendingApprovals.entries()) {
-      resolve(false);
+    for (const [approvalId, entry] of this.pendingApprovals.entries()) {
+      entry.resolve(false);
       this.pendingApprovals.delete(approvalId);
     }
     

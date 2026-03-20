@@ -223,7 +223,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             return;
           }
           if (data.type === 'toolApprovalResponse') {
-            this.agentManager.getToolManager().handleApprovalResponse(data.approvalId, data.approved);
+            this.agentManager.getToolManager().handleApprovalResponse(data.approvalId, data.approved, data.alwaysApprove);
             return;
           }
           if (data.type === 'getTokenUsage') {
@@ -269,6 +269,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     if (this.isWebviewReady) return;
     this.isWebviewReady = true;
     console.log('[ChatViewProvider] Initializing webview data');
+
+    try {
+      const autoApproveManager = this.agentManager.getServiceProvider().getService('autoApproveManager');
+      if (autoApproveManager) {
+        this.sendMessageToWebview({
+          type: 'autoApproveSettingsUpdate',
+          settings: autoApproveManager.getSettings()
+        });
+      }
+    } catch (error) {
+      console.error('[ChatViewProvider] Error sending auto-approve settings on init:', error);
+    }
     
     await this.sendApiKeyStatus();
     

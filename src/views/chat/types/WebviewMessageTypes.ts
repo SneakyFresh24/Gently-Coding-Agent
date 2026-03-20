@@ -554,6 +554,7 @@ export interface ToolApprovalResponseMessage {
   type: 'toolApprovalResponse';
   approvalId: string;
   approved: boolean;
+  alwaysApprove: boolean;
 }
 
 /**

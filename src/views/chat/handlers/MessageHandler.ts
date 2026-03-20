@@ -113,6 +113,7 @@ export class MessageHandler {
     this.agentManager.getToolManager().abortAllExecutions();
 
     this.sendMessageToWebview({ type: 'assistantMessageEnd', messageId: this.context.currentMessageId || '' });
+    this.sendMessageToWebview({ type: 'processingEnd' });
     this.sendMessageToWebview({ type: 'generatingEnd' });
   }
 

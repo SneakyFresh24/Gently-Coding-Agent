@@ -165,8 +165,6 @@ function createChatStore() {
 
     /** Cancel the current task */
     cancelTask() {
-      // Send cancel all to ensure both stream and tools stop
-      messaging.send('toolApprovalResponse', { approvalId: 'CANCEL_ALL', approved: false });
       messaging.send('stopMessage');
       // We don't reset streamingMessageId here - let the backend send generatingEnd
     },

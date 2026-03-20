@@ -70,9 +70,15 @@
 
       // Generation state
       onGeneratingStart: () => extensionStore.setStreaming(true),
-      onGeneratingEnd: () => extensionStore.setStreaming(false),
+      onGeneratingEnd: () => {
+        extensionStore.setStreaming(false);
+        extensionStore.setPendingApproval(null);
+      },
       onProcessingStart: () => extensionStore.setProcessing(true),
-      onProcessingEnd: () => extensionStore.setProcessing(false),
+      onProcessingEnd: () => {
+        extensionStore.setProcessing(false);
+        extensionStore.setPendingApproval(null);
+      },
 
       // Context
       onContextUpdate: (_data) => {
@@ -104,7 +110,7 @@
         // Progress update placeholder
       },
       onTaskComplete: (msg) => {
-        extensionStore.setCurrentTask(msg);
+        extensionStore.setCurrentTask(null);
       },
 
       onTaskProgress: (msg) => {
