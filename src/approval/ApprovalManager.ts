@@ -1,9 +1,11 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { 
   TerminalMode, 
   ApprovalRequest, 
   QuickPattern, 
-  CommandEvaluation 
+  CommandEvaluation,
+  AutoApprovalActions
 } from '../types/approval';
 
 /**
@@ -115,27 +117,90 @@ export const HybridApprovalManager = ApprovalManager;
  */
 export class AutoApproveManager {
   private static readonly STORAGE_KEY = 'gently.autoApproveSettings';
+  private static readonly ALWAYS_SAFE_TOOLS = new Set<string>([
+    'recall_memories',
+    'query_long_term_memory',
+    'analyze_project_structure',
+    'get_context',
+    'list_checkpoints',
+    'check_dev_server',
+    'check_memory_conflicts',
+    'check_pattern_suggestions',
+    'handover_to_coder',
+    'create_checkpoint'
+  ]);
+  private static readonly READ_TOOLS = new Set<string>([
+    'read_file',
+    'list_files',
+    'find_files',
+    'search_files'
+  ]);
+  private static readonly EDIT_TOOLS = new Set<string>([
+    'write_file',
+    'edit_file',
+    'safe_edit_file',
+    'apply_block_edit',
+    'delete_file',
+    'update_memory_bank',
+    'remember',
+    'update_memory',
+    'deprecate_memory',
+    'record_correction',
+    'accept_pattern_suggestion',
+    'reject_pattern_suggestion',
+    'restore_checkpoint',
+    'verify_and_auto_fix'
+  ]);
+  private static readonly COMMAND_TOOLS = new Set<string>([
+    'run_command',
+    'execute_command',
+    'run_terminal_command'
+  ]);
+  private static readonly BROWSER_TOOLS = new Set<string>([
+    'web_search',
+    'search_web'
+  ]);
   private settings: import('../types/approval').AutoApprovalSettings;
+  private readonly debugDecisions = false;
 
   constructor(private context: vscode.ExtensionContext) {
     this.settings = this.loadSettings();
   }
 
   public async shouldAutoApprove(toolName: string, params: any): Promise<boolean> {
+    if (this.settings.yoloMode) {
+      this.logDecision(toolName, 'yoloMode', true);
+      return true;
+    }
+
+    const normalizedToolName = toolName.toLowerCase();
+    if (AutoApproveManager.ALWAYS_SAFE_TOOLS.has(normalizedToolName)) {
+      this.logDecision(toolName, 'always-safe', true);
+      return true;
+    }
+
     const action = this.mapToolToAction(toolName, params);
     if (!action) {
+      console.warn(`[AutoApproveManager] Unknown tool "${toolName}" - requiring explicit approval.`);
+      this.logDecision(toolName, 'unknown', false);
       return false;
     }
 
     if (action === 'executeAllCommands') {
-      return this.settings.actions.executeAllCommands;
+      const approved = this.settings.actions.executeAllCommands;
+      this.logDecision(toolName, action, approved);
+      return approved;
     }
 
     if (action === 'executeSafeCommands') {
-      return this.settings.actions.executeAllCommands || this.settings.actions.executeSafeCommands;
+      const approved = this.settings.actions.executeAllCommands || this.settings.actions.executeSafeCommands;
+      this.logDecision(toolName, action, approved);
+      return approved;
     }
 
-    return this.settings.actions[action];
+    const approved = this.settings.actions[action];
+    this.logDecision(toolName, action, approved);
+    return approved;
   }
 
   public addAutoApproval(toolName: string): void {
@@ -189,6 +254,7 @@ export class AutoApproveManager {
         useMcp: settings?.actions?.useMcp ?? false,
       },
       enableNotifications: settings?.enableNotifications ?? true,
+      yoloMode: settings?.yoloMode ?? false,
     };
   }
 
@@ -202,21 +268,19 @@ export class AutoApproveManager {
   ): keyof import('../types/approval').AutoApprovalActions | null {
     const normalized = toolName.toLowerCase();
 
-    if (['read_file', 'list_files', 'find_files', 'search_files'].includes(normalized)) {
+    if (AutoApproveManager.READ_TOOLS.has(normalized)) {
       return this.isExternalPath(params) ? 'readFilesExternally' : 'readFiles';
     }
 
-    if (
-      ['write_file', 'edit_file', 'safe_edit_file', 'apply_block_edit', 'delete_file'].includes(normalized)
-    ) {
+    if (AutoApproveManager.EDIT_TOOLS.has(normalized)) {
       return this.isExternalPath(params) ? 'editFilesExternally' : 'editFiles';
     }
 
-    if (['run_command', 'execute_command', 'run_terminal_command'].includes(normalized)) {
+    if (AutoApproveManager.COMMAND_TOOLS.has(normalized)) {
       return this.isSafeCommand(params?.command) ? 'executeSafeCommands' : 'executeAllCommands';
     }
 
-    if (normalized.includes('browser') || normalized.includes('web')) {
+    if (AutoApproveManager.BROWSER_TOOLS.has(normalized) || normalized.includes('browser')) {
       return 'useBrowser';
     }
 
@@ -228,17 +292,57 @@ export class AutoApproveManager {
   }
 
   private isExternalPath(params: any): boolean {
-    const rawPath = params?.path || params?.file_path || params?.targetPath || params?.directory;
-    if (!rawPath || !vscode.workspace.workspaceFolders?.length) {
+    const rawPath = this.extractPath(params);
+    if (!rawPath) {
       return false;
     }
 
-    const candidate = vscode.Uri.file(rawPath);
-    return !vscode.workspace.workspaceFolders.some((folder) => {
-      const folderPath = folder.uri.fsPath.replace(/[\\\/]+$/, '').toLowerCase();
-      const candidatePath = candidate.fsPath.toLowerCase();
-      return candidatePath === folderPath || candidatePath.startsWith(`${folderPath}\\`) || candidatePath.startsWith(`${folderPath}/`);
-    });
+    const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
+    if (workspaceFolders.length === 0) {
+      // Conservative policy: without workspace context, treat any path as external.
+      return true;
+    }
+
+    for (const folder of workspaceFolders) {
+      const rootPath = path.normalize(folder.uri.fsPath);
+      const candidatePath = path.isAbsolute(rawPath)
+        ? path.normalize(rawPath)
+        : path.normalize(path.join(rootPath, rawPath));
+
+      if (this.isWithinRoot(candidatePath, rootPath)) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private extractPath(params: any): string | null {
+    const candidates = [
+      params?.path,
+      params?.file_path,
+      params?.targetPath,
+      params?.directory,
+      params?.filename,
+      params?.filePath
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string' && candidate.trim().length > 0) {
+        return candidate.trim();
+      }
+    }
+
+    return null;
+  }
+
+  private isWithinRoot(candidatePath: string, rootPath: string): boolean {
+    const normalizedCandidate = path.normalize(candidatePath).toLowerCase();
+    const normalizedRoot = path.normalize(rootPath).replace(/[\\\/]+$/, '').toLowerCase();
+    return (
+      normalizedCandidate === normalizedRoot ||
+      normalizedCandidate.startsWith(`${normalizedRoot}${path.sep}`)
+    );
   }
 
   private isSafeCommand(command?: string): boolean {
@@ -260,5 +364,12 @@ export class AutoApproveManager {
       'npm test',
       'npm run test'
     ].some((safePrefix) => trimmed === safePrefix || trimmed.startsWith(`${safePrefix} `));
+  }
+
+  private logDecision(toolName: string, policy: keyof AutoApprovalActions | 'yoloMode' | 'always-safe' | 'unknown', approved: boolean): void {
+    if (!this.debugDecisions) {
+      return;
+    }
+    console.log(`[AutoApproveManager] Decision: tool=${toolName}, policy=${policy}, approved=${approved}`);
   }
 }

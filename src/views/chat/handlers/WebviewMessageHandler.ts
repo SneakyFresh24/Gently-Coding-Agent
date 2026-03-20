@@ -302,7 +302,7 @@ export class WebviewMessageHandler {
         const autoApproveManager = agentManager.getServiceProvider().getService('autoApproveManager');
         if (autoApproveManager) {
           await autoApproveManager.setSettings(data.settings);
-          this.sendMessageToWebview({ type: 'autoApproveSettingsUpdate', settings: data.settings });
+          this.sendMessageToWebview({ type: 'autoApproveSettingsUpdate', settings: autoApproveManager.getSettings() });
         }
         break;
       }

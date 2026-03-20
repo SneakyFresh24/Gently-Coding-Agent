@@ -62,6 +62,7 @@ export interface AutoApprovalSettings {
   version: number;
   actions: AutoApprovalActions;
   enableNotifications: boolean;
+  yoloMode: boolean;
 }
 
 /**

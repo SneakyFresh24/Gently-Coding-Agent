@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import type { ModelInfo } from '../../lib/types';
   
   export let selectedModel = '';
@@ -7,6 +7,10 @@
   
   let isOpen = false;
   let searchTerm = '';
+  let selectorRef: HTMLDivElement | null = null;
+  let dropdownRef: HTMLDivElement | null = null;
+  let dropdownStyle = '';
+  const VIEWPORT_PADDING = 12;
 
 
   $: selectedModelName = models.find(m => m.id === selectedModel)?.name || selectedModel || 'Select Model';
@@ -18,12 +22,18 @@
   function selectModel(modelId: string) {
     selectedModel = modelId;
     isOpen = false;
+    searchTerm = '';
     // Notify app of change
     window.postMessage({ type: 'modelChanged', model: modelId }, '*');
   }
 
-  function toggleDropdown() {
+  async function toggleDropdown() {
     isOpen = !isOpen;
+    if (isOpen) {
+      await tick();
+      updateDropdownPosition();
+      requestAnimationFrame(() => dropdownRef?.querySelector('input')?.focus());
+    }
   }
 
   // Close when clicking outside
@@ -36,23 +46,54 @@
     }
   }
 
+  function updateDropdownPosition() {
+    if (!selectorRef || !dropdownRef) return;
+
+    const triggerRect = selectorRef.getBoundingClientRect();
+    const dropdownRect = dropdownRef.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+
+    const spaceAbove = triggerRect.top - VIEWPORT_PADDING - 8;
+    const spaceBelow = viewportHeight - triggerRect.bottom - VIEWPORT_PADDING - 8;
+    const openUpward = spaceAbove >= Math.min(dropdownRect.height, 320) || spaceAbove > spaceBelow;
+    const top = openUpward
+      ? Math.max(VIEWPORT_PADDING, triggerRect.top - Math.min(dropdownRect.height, spaceAbove))
+      : Math.min(triggerRect.bottom + 8, viewportHeight - dropdownRect.height - VIEWPORT_PADDING);
+
+    const preferredLeft = triggerRect.right - dropdownRect.width;
+    const left = Math.max(
+      VIEWPORT_PADDING,
+      Math.min(preferredLeft, viewportWidth - dropdownRect.width - VIEWPORT_PADDING)
+    );
+
+    const maxHeight = Math.max(180, openUpward ? spaceAbove : spaceBelow);
+    dropdownStyle = `top: ${Math.max(VIEWPORT_PADDING, top)}px; left: ${left}px; max-height: ${maxHeight}px;`;
+  }
+
   onMount(() => {
     window.addEventListener('click', handleOutsideClick);
-    return () => window.removeEventListener('click', handleOutsideClick);
+    window.addEventListener('resize', updateDropdownPosition);
+    window.addEventListener('scroll', updateDropdownPosition, true);
+    return () => {
+      window.removeEventListener('click', handleOutsideClick);
+      window.removeEventListener('resize', updateDropdownPosition);
+      window.removeEventListener('scroll', updateDropdownPosition, true);
+    };
   });
 </script>
 
-<div class="model-selector">
+<div class="model-selector" bind:this={selectorRef}>
   <button class="selector-btn" on:click={toggleDropdown}>
     <span class="model-name">{selectedModelName}</span>
     <span class="chevron">
-      <i class="codicon {isOpen ? 'codicon-chevron-down' : 'codicon-chevron-up'}"></i>
+      <i class="codicon {isOpen ? 'codicon-chevron-up' : 'codicon-chevron-down'}"></i>
     </span>
   </button>
 
 
   {#if isOpen}
-    <div class="dropdown">
+    <div class="dropdown" bind:this={dropdownRef} style={dropdownStyle}>
       <div class="search-container">
         <input 
           type="text" 
@@ -118,16 +159,13 @@
   }
 
   .dropdown {
-    position: absolute;
-    top: calc(100% + 8px);
-    left: 0;
+    position: fixed;
     background: var(--vscode-dropdown-background);
     border: 1px solid var(--vscode-dropdown-border);
     border-radius: 6px;
     box-shadow: var(--shadow-lg);
-    z-index: 1000;
-    min-width: 240px;
-    max-height: 320px;
+    z-index: 4000;
+    width: min(360px, calc(100vw - 24px));
     display: flex;
     flex-direction: column;
     overflow: hidden;

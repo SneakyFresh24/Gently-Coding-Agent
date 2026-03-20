@@ -6,8 +6,10 @@
 
   let {
     isOpen = $bindable(false),
+    style = '',
   }: {
     isOpen?: boolean;
+    style?: string;
   } = $props();
 
   let modalRef: HTMLDivElement | undefined = $state();
@@ -34,61 +36,59 @@
 
 {#if isOpen}
   <div class="modal-wrapper" onclick={handleClickOutside} role="button" tabindex="0" onkeydown={(e) => e.key === 'Escape' && (isOpen = false)}>
-    <div class="modal" bind:this={modalRef} onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-      <div class="modal-content">
-        <header class="modal-header">
-          <div class="title-with-icon">
-            <Icon name="shield" size={18} />
-            <h3>Auto-Approval</h3>
-          </div>
-          <button class="close-btn" onclick={() => (isOpen = false)} aria-label="Close">
-            <Icon name="close" size={16} />
-          </button>
-        </header>
+    <div class="modal" bind:this={modalRef} onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" tabindex="-1" {style}>
+      <header class="modal-header">
+        <div class="title-with-icon">
+          <Icon name="shield" size={18} />
+          <h3>Auto-Approval</h3>
+        </div>
+        <button class="close-btn" onclick={() => (isOpen = false)} aria-label="Close">
+          <Icon name="close" size={16} />
+        </button>
+      </header>
 
-        <div class="modal-body">
-          <div class="section-intro">
-            <p>Configure which actions Gently can perform automatically.</p>
-          </div>
+      <div class="modal-body">
+        <div class="section-intro">
+          <p>Configure which actions Gently can perform automatically.</p>
+        </div>
 
-          <div class="settings-list">
-            <AutoApproveItem
-              label="Read Files"
-              description="Allows reading files in your workspace."
-              enabled={$extensionStore.autoApprovalSettings.actions.readFiles}
-              onToggle={(val) => updateSettings({ readFiles: val } as any)}
-            />
-            <AutoApproveItem
-              label="Edit Files"
-              description="Allows modifying files in your workspace."
-              enabled={$extensionStore.autoApprovalSettings.actions.editFiles}
-              onToggle={(val) => updateSettings({ editFiles: val } as any)}
-            />
-            <AutoApproveItem
-              label="Safe Commands"
-              description="Allows executing safe terminal commands (e.g. ls, git status)."
-              enabled={$extensionStore.autoApprovalSettings.actions.executeSafeCommands}
-              onToggle={(val) => updateSettings({ executeSafeCommands: val } as any)}
-            />
-            <AutoApproveItem
-              label="All Commands"
-              description="Allows executing ANY terminal command."
-              enabled={$extensionStore.autoApprovalSettings.actions.executeAllCommands}
-              onToggle={(val) => updateSettings({ executeAllCommands: val } as any)}
-              risky
-            />
-          </div>
+        <div class="settings-list">
+          <AutoApproveItem
+            label="Read Files"
+            description="Allows reading files in your workspace."
+            enabled={$extensionStore.autoApprovalSettings.actions.readFiles}
+            onToggle={(val) => updateSettings({ readFiles: val } as any)}
+          />
+          <AutoApproveItem
+            label="Edit Files"
+            description="Allows modifying project files (including .gently/memory-bank)."
+            enabled={$extensionStore.autoApprovalSettings.actions.editFiles}
+            onToggle={(val) => updateSettings({ editFiles: val } as any)}
+          />
+          <AutoApproveItem
+            label="Safe Commands"
+            description="Allows executing safe terminal commands (e.g. ls, git status)."
+            enabled={$extensionStore.autoApprovalSettings.actions.executeSafeCommands}
+            onToggle={(val) => updateSettings({ executeSafeCommands: val } as any)}
+          />
+          <AutoApproveItem
+            label="All Commands"
+            description="Allows executing ANY terminal command."
+            enabled={$extensionStore.autoApprovalSettings.actions.executeAllCommands}
+            onToggle={(val) => updateSettings({ executeAllCommands: val } as any)}
+            risky
+          />
+        </div>
 
-          <div class="footer-options">
-            <div class="option-row">
-              <input 
-                type="checkbox" 
-                id="enableNotifications" 
-                checked={$extensionStore.autoApprovalSettings.enableNotifications}
-                onchange={(e) => updateSettings({ enableNotifications: e.currentTarget.checked })}
-              />
-              <label for="enableNotifications">Enable notifications</label>
-            </div>
+        <div class="footer-options">
+          <div class="option-row">
+            <input 
+              type="checkbox" 
+              id="enableNotifications" 
+              checked={$extensionStore.autoApprovalSettings.enableNotifications}
+              onchange={(e) => updateSettings({ enableNotifications: e.currentTarget.checked })}
+            />
+            <label for="enableNotifications">Enable notifications</label>
           </div>
         </div>
       </div>
@@ -101,20 +101,18 @@
     position: fixed;
     inset: 0;
     z-index: var(--z-dropdown);
-    display: flex;
-    justify-content: center;
-    align-items: flex-end;
-    padding-bottom: 60px;
   }
 
-  .modal-content {
+  .modal {
+    position: fixed;
     background: var(--vscode-sideBar-background);
     border: 1px solid var(--vscode-panel-border);
     border-radius: 12px;
-    width: 320px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
     overflow: hidden;
     animation: slideUp 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    flex-direction: column;
   }
 
   @keyframes slideUp {
@@ -167,6 +165,7 @@
 
   .modal-body {
     padding: 12px;
+    overflow-y: auto;
   }
 
   .section-intro {

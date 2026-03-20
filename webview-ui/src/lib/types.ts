@@ -110,6 +110,7 @@ export interface AutoApprovalSettings {
   version: number; // Race condition prevention
   actions: AutoApprovalActions;
   enableNotifications: boolean;
+  yoloMode: boolean;
 }
 
 export const DEFAULT_AUTO_APPROVAL_SETTINGS: AutoApprovalSettings = {
@@ -125,6 +126,7 @@ export const DEFAULT_AUTO_APPROVAL_SETTINGS: AutoApprovalSettings = {
     useMcp: false,
   },
   enableNotifications: true,
+  yoloMode: false,
 };
 
 export interface ExtensionState {

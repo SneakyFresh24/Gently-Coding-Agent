@@ -48,6 +48,7 @@ const initialState: StoreState = {
       useMcp: false,
     },
     enableNotifications: true,
+    yoloMode: false,
   },
   mode: 'code',
   isStreaming: false,

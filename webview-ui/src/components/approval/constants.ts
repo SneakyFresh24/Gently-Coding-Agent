@@ -25,7 +25,7 @@ export const ACTION_METADATA: ActionMeta[] = [
   },
   {
     id: 'editFiles',
-    label: 'Edit project files',
+    label: 'Edit project files (including .gently/memory-bank)',
     shortName: 'Edit',
     icon: 'edit',
     subAction: {

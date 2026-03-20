@@ -1,10 +1,14 @@
 <script lang="ts">
+  import { onMount, tick } from 'svelte';
   import AutoApproveModal from './AutoApproveModal.svelte';
   import { extensionStore } from '../../stores/extensionStore';
   import { ACTION_METADATA } from './constants';
   import type { AutoApprovalActions } from '../../lib/types';
 
   let isModalOpen = $state(false);
+  let buttonRef: HTMLButtonElement | null = null;
+  let modalStyle = $state('');
+  const VIEWPORT_PADDING = 12;
 
   function getEnabledActionsText(): string {
     const actions = $extensionStore.autoApprovalSettings.actions;
@@ -18,12 +22,57 @@
       .map(a => a.shortName);
     return enabled.length > 0 ? enabled.join(', ') : 'None';
   }
+
+  async function toggleModal() {
+    isModalOpen = !isModalOpen;
+    if (isModalOpen) {
+      await tick();
+      updateModalPosition();
+    }
+  }
+
+  function updateModalPosition() {
+    if (!buttonRef) return;
+
+    const triggerRect = buttonRef.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const panelWidth = Math.min(360, viewportWidth - VIEWPORT_PADDING * 2);
+    const preferredHeight = 430;
+
+    const spaceAbove = triggerRect.top - VIEWPORT_PADDING - 8;
+    const spaceBelow = viewportHeight - triggerRect.bottom - VIEWPORT_PADDING - 8;
+    const openUpward = spaceAbove >= Math.min(preferredHeight, 320) || spaceAbove > spaceBelow;
+
+    const top = openUpward
+      ? Math.max(VIEWPORT_PADDING, triggerRect.top - Math.min(preferredHeight, spaceAbove))
+      : Math.min(triggerRect.bottom + 8, viewportHeight - preferredHeight - VIEWPORT_PADDING);
+
+    const preferredLeft = triggerRect.left;
+    const left = Math.max(
+      VIEWPORT_PADDING,
+      Math.min(preferredLeft, viewportWidth - panelWidth - VIEWPORT_PADDING)
+    );
+
+    const maxHeight = Math.max(220, openUpward ? spaceAbove : spaceBelow);
+    modalStyle = `top: ${top}px; left: ${left}px; width: ${panelWidth}px; max-height: ${maxHeight}px;`;
+  }
+
+  onMount(() => {
+    window.addEventListener('resize', updateModalPosition);
+    window.addEventListener('scroll', updateModalPosition, true);
+    return () => {
+      window.removeEventListener('resize', updateModalPosition);
+      window.removeEventListener('scroll', updateModalPosition, true);
+    };
+  });
 </script>
 
 <div class="auto-approve-bar">
   <button
+    bind:this={buttonRef}
     class="bar-button"
-    onclick={() => isModalOpen = !isModalOpen}
+    onclick={toggleModal}
     aria-expanded={isModalOpen}
   >
     <span class="label">Auto-approve:</span>
@@ -37,7 +86,7 @@
 
 <AutoApproveModal
   isOpen={isModalOpen}
-  onClose={() => isModalOpen = false}
+  style={modalStyle}
 />
 
 <style>
