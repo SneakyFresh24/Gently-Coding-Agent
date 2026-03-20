@@ -437,6 +437,27 @@ export class ToolManager implements IAgentService {
   }
 
   /**
+   * Abort all pending tool executions and approvals
+   */
+  public abortAllExecutions(): void {
+    console.log(`[ToolManager] 🛑 Aborting all ${this.pendingApprovals.size} pending approvals`);
+    
+    // 1. Resolve all pending approvals with 'false'
+    for (const [approvalId, resolve] of this.pendingApprovals.entries()) {
+      resolve(false);
+      this.pendingApprovals.delete(approvalId);
+    }
+    
+    // 2. Clear lastToolName to prevent loop detection issues after abort
+    this.lastToolName = null;
+    
+    if (this.debug) {
+      console.log('[ToolManager] All tool executions aborted');
+    }
+  }
+
+
+  /**
    * Execute tool safely with error handling
    */
   async executeToolSafely(toolName: string, params: any): Promise<{ success: boolean; result?: any; error?: string }> {

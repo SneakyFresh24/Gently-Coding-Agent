@@ -43,45 +43,47 @@ export class EmbeddingCache {
 
     private async initialize(persistenceDir: string): Promise<void> {
         const dbPath = path.join(persistenceDir, 'embeddings.db');
-        try {
-            await fs.mkdir(persistenceDir, { recursive: true });
-            this.db = new Level<string, string>(dbPath);
-            await this.db.open();
-            this.initialized = true;
-            console.log(`[EmbeddingCache] Initialized at ${dbPath}`);
-        } catch (error) {
-            console.warn('[EmbeddingCache] First open failed, trying recovery...', error);
+        const lockPath = path.join(dbPath, 'LOCK');
+        const maxRetries = 3;
+        const retryDelay = 1000;
 
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                // LevelDB-style LOCK file removal
-                const lockPath = path.join(dbPath, 'LOCK');
-                if (await this.fileExists(lockPath)) {
+                await fs.mkdir(persistenceDir, { recursive: true });
+                
+                // Try recovery if LOCK exists and it's not the first attempt
+                if (attempt > 1 && await this.fileExists(lockPath)) {
                     try {
                         await fs.unlink(lockPath);
-                        console.log('[EmbeddingCache] Stale LOCK file removed, retrying...');
-                    } catch (unlinkErr: any) {
-                        if (unlinkErr.code === 'EBUSY' || unlinkErr.code === 'EPERM') {
-                            console.warn(`[EmbeddingCache] LOCK file is busy/locked by another process (${unlinkErr.code}). Falling back to memory-only mode.`);
-                            throw unlinkErr; // Re-throw to trigger memory fallback
-                        } else if (unlinkErr.code !== 'ENOENT') {
-                            console.error(`[EmbeddingCache] Unexpected error removing LOCK file:`, unlinkErr);
-                            throw unlinkErr;
-                        }
+                        console.log(`[EmbeddingCache] (Attempt ${attempt}) Stale LOCK file removed`);
+                    } catch (e) {
+                        // Ignore if already gone, otherwise log it
                     }
                 }
-                
-                // Second attempt after cleanup
+
                 this.db = new Level<string, string>(dbPath);
                 await this.db.open();
                 this.initialized = true;
-                console.log('[EmbeddingCache] Recovered successfully');
-            } catch (recoveryErr) {
-                console.error('[EmbeddingCache] Recovery failed → falling back to memory-only mode', recoveryErr);
-                this.db = null;
-                this.initialized = true;
+                console.log(`[EmbeddingCache] Initialized at ${dbPath} (Attempt ${attempt})`);
+                return;
+            } catch (error: any) {
+                const isBusy = error.code === 'EBUSY' || error.code === 'EPERM' || error.message?.includes('locked');
+                
+                if (isBusy && attempt < maxRetries) {
+                    console.warn(`[EmbeddingCache] DB is busy (Attempt ${attempt}/${maxRetries}), retrying in ${retryDelay}ms...`);
+                    await new Promise(resolve => setTimeout(resolve, retryDelay));
+                    continue;
+                }
+
+                if (attempt === maxRetries) {
+                    console.error('[EmbeddingCache] All initialization attempts failed → falling back to memory-only mode', error);
+                    this.db = null;
+                    this.initialized = true;
+                }
             }
         }
     }
+
 
     private async fileExists(p: string): Promise<boolean> {
         try {

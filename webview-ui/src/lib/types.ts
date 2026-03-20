@@ -258,7 +258,9 @@ export type OutboundMessageType =
   | 'taskStart'
   | 'taskUpdate'
   | 'taskComplete'
+  | 'taskProgress'
   | 'toolComplete'
+
   | 'messageSaved'
   | 'addFileReference'
   | 'fileSearchResults'

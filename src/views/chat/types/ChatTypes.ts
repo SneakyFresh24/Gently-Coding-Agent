@@ -70,6 +70,7 @@ export interface ChatViewContext {
   selectedMode: string;
   conversationHistory: Message[];
   shouldStopStream: boolean;
+  shouldAbortTools?: boolean;
   currentFlowId?: string;
   currentMessageId?: string;
   messageCheckpoints: Map<string, string>;

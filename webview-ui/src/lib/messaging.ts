@@ -85,8 +85,10 @@ export interface MessageHandlers {
   // New handlers
   onTaskStart?: (data: any) => void;
   onTaskUpdate?: (data: any) => void;
-  onTaskComplete?: (data: any) => void;
-  onRefreshSessions?: (data: any) => void;
+  onTaskComplete?: (message: any) => void;
+  onTaskProgress?: (message: any) => void;
+  onRefreshSessions?: (message: any) => void;
+
 }
 
 
@@ -142,6 +144,7 @@ const TYPE_TO_HANDLER: Record<string, keyof MessageHandlers> = {
   taskStart: 'onTaskStart',
   taskUpdate: 'onTaskUpdate',
   taskComplete: 'onTaskComplete',
+  taskProgress: 'onTaskProgress',
   refreshSessions: 'onRefreshSessions',
 };
 

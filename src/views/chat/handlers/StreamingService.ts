@@ -66,7 +66,19 @@ export class StreamingService {
                 return { assistantMessage: '', toolCalls: [] };
             }
         } else {
+            let timeoutId: NodeJS.Timeout | undefined;
+            const STREAMING_TIMEOUT = 120000;
+
+            const resetTimeout = () => {
+                if (timeoutId) clearTimeout(timeoutId);
+                timeoutId = setTimeout(() => {
+                    log.error('Streaming timeout exceeded (2 min)');
+                    options.shouldStopRef.current = true;
+                }, STREAMING_TIMEOUT);
+            };
+
             try {
+                resetTimeout();
                 for await (const chunk of this.openRouterService.streamChatMessage({
                     messages,
                     stream: true,
@@ -76,6 +88,7 @@ export class StreamingService {
                     model: options.model,
                     response_format: options.responseFormat
                 })) {
+                    resetTimeout();
                     if (options.shouldStopRef.current) break;
 
                     switch (chunk.type) {
@@ -138,6 +151,8 @@ export class StreamingService {
                 this.sendMessageToWebview({ type: 'error', message: error instanceof Error ? error.message : String(error) });
                 this.sendMessageToWebview({ type: 'processingEnd' });
                 return { assistantMessage: '', toolCalls: [] };
+            } finally {
+                if (timeoutId) clearTimeout(timeoutId);
             }
         }
     }

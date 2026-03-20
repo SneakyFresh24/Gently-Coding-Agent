@@ -6,7 +6,9 @@
   import MessagesArea from './MessagesArea.svelte';
   import InputSection from './InputSection.svelte';
   import AutoApproveBar from '../approval/AutoApproveBar.svelte';
+  import ToolApprovalModal from '../approval/ToolApprovalModal.svelte';
   import ModelDropdown from '../layout/ModelDropdown.svelte';
+
 
   import { extensionStore, isBusy, hasTask } from '../../stores/extensionStore';
   import { chatStore, isStreaming } from '../../stores/chatStore';
@@ -101,8 +103,13 @@
       onTaskUpdate: (_data) => {
         // Progress update placeholder
       },
-      onTaskComplete: () => {
-        extensionStore.setCurrentTask(null);
+      onTaskComplete: (msg) => {
+        extensionStore.setCurrentTask(msg);
+      },
+
+      onTaskProgress: (msg) => {
+        // You could update a progress store or just log it
+        console.log('[ChatView] Task Progress:', msg.label);
       },
 
       // Sessions
@@ -150,6 +157,9 @@
     />
   </footer>
 </ChatLayout>
+
+<ToolApprovalModal />
+
 
 <style>
   .chat-container {

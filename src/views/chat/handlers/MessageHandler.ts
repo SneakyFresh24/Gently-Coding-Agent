@@ -68,7 +68,8 @@ export class MessageHandler {
 
     this.flowManager = new ChatFlowManager(agentManager, this.sessionHistoryManager, refParser, promptMgr, streaming, pruner, this.toolCallManager, dispatcher, this.modeService, sendMessageToWebview, openRouterService);
 
-    this.context = { agentMode: false, selectedModel: 'glm-4.6', selectedMode: 'ask', conversationHistory: [], shouldStopStream: false, messageCheckpoints: new Map(), toolExecutionStartSent: new Set() };
+    this.context = { agentMode: false, selectedModel: 'glm-4.6', selectedMode: 'ask', conversationHistory: [], shouldStopStream: false, shouldAbortTools: false, messageCheckpoints: new Map(), toolExecutionStartSent: new Set() };
+
     this.loadStoredState();
     this.sessionHistoryManager.initializeSession(this.context);
   }
@@ -106,9 +107,15 @@ export class MessageHandler {
 
   stopMessage(): void {
     this.context.shouldStopStream = true;
+    this.context.shouldAbortTools = true; // Flag for potential future use in execution loops
+    
+    // Abort active tool executions & approvals
+    this.agentManager.getToolManager().abortAllExecutions();
+
     this.sendMessageToWebview({ type: 'assistantMessageEnd', messageId: this.context.currentMessageId || '' });
     this.sendMessageToWebview({ type: 'generatingEnd' });
   }
+
 
   clearHistory(): void {
     this.context.conversationHistory = [];
