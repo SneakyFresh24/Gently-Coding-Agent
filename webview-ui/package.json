@@ -19,7 +19,9 @@
     "vite": "^5.0.0"
   },
   "dependencies": {
+    "@tanstack/svelte-virtual": "^3.13.23",
     "@vscode/codicons": "^0.0.45",
+    "dompurify": "^3.3.3",
     "highlight.js": "^11.11.1",
     "lucide-svelte": "^0.544.0",
     "marked": "^16.3.0"

@@ -44,6 +44,7 @@
         class:active={currentView === 'chat'} 
         on:click={() => setView('chat')}
         title="Chat"
+        aria-label="Open chat view"
       >
         <Icon name="comment" size={18} />
       </button>
@@ -52,6 +53,7 @@
         class:active={currentView === 'guardian'} 
         on:click={() => setView('guardian')}
         title="Guardian"
+        aria-label="Open guardian view"
       >
         <Icon name="shield" size={18} />
       </button>
@@ -60,6 +62,7 @@
         class:active={currentView === 'history'} 
         on:click={() => setView('history')}
         title="History"
+        aria-label="Open history view"
       >
         <Icon name="history" size={18} />
       </button>
@@ -68,6 +71,7 @@
         class="nav-item new-chat-btn" 
         on:click={startNewChat}
         title="New Chat"
+        aria-label="Start new chat"
       >
         <Icon name="add" size={18} />
       </button>
@@ -91,6 +95,7 @@
       class:active={currentView === 'settings'}
       on:click={() => setView('settings')}
       title="Settings"
+      aria-label="Open settings view"
     >
       <Icon name="settings-gear" size={18} />
     </button>

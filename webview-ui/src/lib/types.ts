@@ -14,6 +14,13 @@ export interface FileReference {
   lineEnd?: number;
 }
 
+export interface FileSearchResult {
+  path: string;
+  displayName?: string;
+  type?: 'file' | 'folder';
+  size?: number;
+}
+
 export interface Checkpoint {
   id: string;
   checkpointNumber: number;
@@ -86,6 +93,10 @@ export interface Task {
   id: string;
   text: string;
   ts: number;
+  progress?: number;
+  completedCount?: number;
+  totalCount?: number;
+  currentIndex?: number;
 }
 
 export interface TaskHistoryItem {
@@ -285,7 +296,6 @@ export type OutboundMessageType =
   | 'terminalModeChanged'
   | 'quickPatternsChanged'
   | 'terminalStatus'
-  | 'tokenTrackerUpdate'
   | 'refreshSessions'
   | 'thinking';
 

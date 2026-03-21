@@ -1,9 +1,18 @@
 <script lang="ts">
   import { settingsStore } from '../../stores/settingsStore';
   import { onMount } from 'svelte';
+  import { messaging } from '../../lib/messaging';
 
-  let apiKey = '';
-  let showKey = false;
+  let apiKey = $state('');
+  let showKey = $state(false);
+  let activeTab = $state<'api' | 'model' | 'chat' | 'a11y' | 'advanced'>('api');
+  const tabs: Array<{ id: 'api' | 'model' | 'chat' | 'a11y' | 'advanced'; label: string }> = [
+    { id: 'api', label: 'API' },
+    { id: 'model', label: 'Model' },
+    { id: 'chat', label: 'Chat' },
+    { id: 'a11y', label: 'Accessibility' },
+    { id: 'advanced', label: 'Advanced' },
+  ];
 
   function saveApiKey() {
     if (apiKey.trim()) {
@@ -25,8 +34,16 @@
 
   onMount(() => {
     // Initial status check
-    window.postMessage({ type: 'checkApiKey' }, '*');
+    messaging.send('checkApiKey');
   });
+
+  function handleTabKeydown(e: KeyboardEvent, index: number) {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    e.preventDefault();
+    const delta = e.key === 'ArrowRight' ? 1 : -1;
+    const nextIndex = (index + delta + tabs.length) % tabs.length;
+    activeTab = tabs[nextIndex].id;
+  }
 </script>
 
 <div class="settings-view">
@@ -35,7 +52,24 @@
     <p class="subtitle">Configure your Gently experience</p>
   </header>
 
-  <section class="settings-section">
+  <div class="tab-list" role="tablist" aria-label="Settings categories">
+    {#each tabs as tab, index (tab.id)}
+      <button
+        class="tab"
+        class:active={activeTab === tab.id}
+        role="tab"
+        aria-selected={activeTab === tab.id}
+        tabindex={activeTab === tab.id ? 0 : -1}
+        onclick={() => (activeTab = tab.id)}
+        onkeydown={(e) => handleTabKeydown(e, index)}
+      >
+        {tab.label}
+      </button>
+    {/each}
+  </div>
+
+  {#if activeTab === 'api'}
+    <section class="settings-section" role="tabpanel">
     <h3>OpenRouter API</h3>
     <div class="setting-item">
       <div class="label-group">
@@ -47,7 +81,7 @@
         <div class="api-status success">
           <span class="icon">✅</span>
           <span class="text">API key is set</span>
-          <button class="delete-btn" on:click={deleteApiKey}>Delete Key</button>
+          <button class="delete-btn" onclick={deleteApiKey}>Delete Key</button>
         </div>
       {:else}
         <div class="api-input-group">
@@ -58,19 +92,21 @@
               placeholder="sk-or-v1-..." 
               bind:value={apiKey}
             />
-            <button class="toggle-visibility" on:click={() => showKey = !showKey}>
+            <button class="toggle-visibility" onclick={() => showKey = !showKey}>
               {showKey ? '👁️' : '🙈'}
             </button>
           </div>
-          <button class="save-btn" on:click={saveApiKey} disabled={!apiKey.trim()}>
+          <button class="save-btn" onclick={saveApiKey} disabled={!apiKey.trim()}>
             Save Key
           </button>
         </div>
       {/if}
     </div>
-  </section>
+    </section>
+  {/if}
 
-  <section class="settings-section">
+  {#if activeTab === 'model'}
+    <section class="settings-section" role="tabpanel">
     <h3>Model Preferences</h3>
     <div class="setting-item">
       <div class="label-group">
@@ -85,14 +121,16 @@
           max="32000" 
           step="1000"
           value={$settingsStore.maxTokens}
-          on:change={handleMaxTokensChange}
+          onchange={handleMaxTokensChange}
         />
         <span class="range-value">{($settingsStore.maxTokens / 1000).toFixed(0)}k</span>
       </div>
     </div>
-  </section>
+    </section>
+  {/if}
 
-  <section class="settings-section">
+  {#if activeTab === 'chat'}
+    <section class="settings-section" role="tabpanel">
     <h3>General</h3>
     <div class="setting-item">
       <div class="checkbox-group">
@@ -106,10 +144,35 @@
         <label for="render-markdown">Enable Markdown & Syntax Highlighting</label>
       </div>
     </div>
-  </section>
+    </section>
+  {/if}
+
+  {#if activeTab === 'a11y'}
+    <section class="settings-section" role="tabpanel">
+      <h3>Accessibility</h3>
+      <div class="setting-item">
+        <p class="description">Keyboard navigation is enabled for menus, tabs, dropdowns, and mention/slash suggestions.</p>
+      </div>
+      <div class="setting-item">
+        <p class="description">Screen reader announcements are active for message send, retries, and task completion events.</p>
+      </div>
+    </section>
+  {/if}
+
+  {#if activeTab === 'advanced'}
+    <section class="settings-section" role="tabpanel">
+      <h3>Advanced</h3>
+      <div class="setting-item">
+        <p class="description">Markdown output is sanitized with an allowlist before rendering.</p>
+      </div>
+      <div class="setting-item">
+        <p class="description">Message list uses virtual scrolling for performance in long sessions.</p>
+      </div>
+    </section>
+  {/if}
 
   <footer class="settings-footer">
-    <p>Gently AI v0.7.2 • <a href="https://github.com/SneakyFresh24/Gently-Coding-Agent" target="_blank">Documentation</a></p>
+    <p>Gently AI v0.8.0 • <a href="https://github.com/SneakyFresh24/Gently-Coding-Agent" target="_blank">Documentation</a></p>
   </footer>
 </div>
 
@@ -141,6 +204,29 @@
     margin-bottom: 32px;
     border-top: 1px solid var(--vscode-widget-border);
     padding-top: 24px;
+  }
+
+  .tab-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 16px;
+  }
+
+  .tab {
+    border: 1px solid var(--vscode-widget-border);
+    background: transparent;
+    color: var(--vscode-foreground);
+    border-radius: var(--radius-sm);
+    padding: 6px 10px;
+    font-size: var(--font-size-xs);
+    cursor: pointer;
+  }
+
+  .tab.active {
+    background: var(--vscode-list-activeSelectionBackground);
+    color: var(--vscode-list-activeSelectionForeground);
+    border-color: var(--vscode-focusBorder);
   }
 
   h3 {

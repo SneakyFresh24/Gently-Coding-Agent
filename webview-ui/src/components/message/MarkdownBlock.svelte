@@ -1,5 +1,6 @@
 <script lang="ts">
   import { marked } from 'marked';
+  import DOMPurify from 'dompurify';
   import CodeBlock from '../ui/CodeBlock.svelte';
 
   let {
@@ -13,6 +14,17 @@
     content: string;
     language?: string;
     filename?: string;
+  }
+
+  function sanitizeHtml(input: string): string {
+    return DOMPurify.sanitize(input, {
+      USE_PROFILES: { html: true },
+      ALLOWED_TAGS: [
+        'a', 'p', 'br', 'strong', 'em', 'ul', 'ol', 'li', 'blockquote', 'code',
+        'pre', 'h1', 'h2', 'h3', 'h4', 'hr', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'img'
+      ],
+      ALLOWED_ATTR: ['href', 'title', 'target', 'rel', 'src', 'alt'],
+    });
   }
 
   function parseContent(): ParsedBlock[] {
@@ -31,7 +43,7 @@
         if (text.trim()) {
           blocks.push({
             type: 'html',
-            content: marked.parse(text, { async: false }) as string,
+            content: sanitizeHtml(marked.parse(text, { async: false }) as string),
           });
         }
       }
@@ -52,7 +64,7 @@
       if (text.trim()) {
         blocks.push({
           type: 'html',
-          content: marked.parse(text, { async: false }) as string,
+          content: sanitizeHtml(marked.parse(text, { async: false }) as string),
         });
       }
     }
@@ -61,7 +73,7 @@
     if (blocks.length === 0 && content.trim()) {
       blocks.push({
         type: 'html',
-        content: marked.parse(content, { async: false }) as string,
+        content: sanitizeHtml(marked.parse(content, { async: false }) as string),
       });
     }
 

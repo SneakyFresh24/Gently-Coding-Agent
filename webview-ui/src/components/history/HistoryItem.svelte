@@ -23,7 +23,12 @@
 <div 
   class="history-item" 
   on:click={loadSession} 
-  on:keydown={(e) => e.key === 'Enter' && loadSession()}
+  on:keydown={(e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      loadSession();
+    }
+  }}
   role="button"
   tabindex="0"
 >
@@ -41,7 +46,7 @@
     </div>
   </div>
   
-  <button class="delete-btn" on:click={deleteSession} title="Delete session">
+  <button class="delete-btn" on:click={deleteSession} title="Delete session" aria-label={`Delete session ${session.title || 'Untitled Session'}`}>
     ✕
   </button>
 </div>

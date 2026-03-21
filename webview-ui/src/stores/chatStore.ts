@@ -8,12 +8,50 @@ import type { Message } from '../lib/types';
 
 // ── Store State ──────────────────────────────────────
 
+type UiErrorType = 'rate_limit' | 'network' | 'validation' | 'unknown';
+
+interface UiErrorState {
+  type: UiErrorType;
+  message: string;
+  requestId?: string;
+}
+
+interface MentionResult {
+  path: string;
+  displayName?: string;
+  type?: 'file' | 'folder';
+}
+
+interface MentionState {
+  isOpen: boolean;
+  query: string;
+  results: MentionResult[];
+  activeIndex: number;
+  atIndex: number;
+  cursorPosition: number;
+}
+
+interface TaskProgressState {
+  label: string;
+  progress: number | null;
+  totalCount: number;
+  completedCount: number;
+  currentIndex: number;
+}
+
+interface UiLoadingState {
+  isRetrying: boolean;
+}
+
 interface ChatStoreState {
   messages: Message[];
   inputValue: string;
   selectedFiles: string[];
   streamingMessageId: string | null;
-  error: string | null;
+  error: UiErrorState | null;
+  mention: MentionState;
+  taskProgress: TaskProgressState | null;
+  loading: UiLoadingState;
 }
 
 const initialState: ChatStoreState = {
@@ -22,7 +60,46 @@ const initialState: ChatStoreState = {
   selectedFiles: [],
   streamingMessageId: null,
   error: null,
+  mention: {
+    isOpen: false,
+    query: '',
+    results: [],
+    activeIndex: 0,
+    atIndex: -1,
+    cursorPosition: 0,
+  },
+  taskProgress: null,
+  loading: {
+    isRetrying: false,
+  },
 };
+
+function parseTodoInfo(text: string): TaskProgressState | null {
+  const lines = (text || '').split('\n');
+  const matches = lines.filter((line) => /^[-*]\s+\[[ xX]\]/.test(line));
+  if (matches.length === 0) return null;
+
+  const completedCount = matches.filter((line) => /\[[xX]\]/.test(line)).length;
+  const firstOpenIndex = matches.findIndex((line) => !/\[[xX]\]/.test(line));
+  const currentIndex = firstOpenIndex === -1 ? matches.length : firstOpenIndex + 1;
+  const progress = matches.length > 0 ? Math.round((completedCount / matches.length) * 100) : 0;
+
+  return {
+    label: 'Checklist progress',
+    progress,
+    totalCount: matches.length,
+    completedCount,
+    currentIndex,
+  };
+}
+
+function classifyError(message: string): UiErrorType {
+  const normalized = (message || '').toLowerCase();
+  if (normalized.includes('rate') || normalized.includes('429')) return 'rate_limit';
+  if (normalized.includes('network') || normalized.includes('timeout') || normalized.includes('fetch')) return 'network';
+  if (normalized.includes('validation') || normalized.includes('invalid')) return 'validation';
+  return 'unknown';
+}
 
 // ── Store Creation ───────────────────────────────────
 
@@ -40,6 +117,10 @@ function createChatStore() {
         ...s,
         messages: [...s.messages, message],
         error: null,
+        loading: {
+          ...s.loading,
+          isRetrying: false,
+        },
       }));
     },
 
@@ -121,6 +202,56 @@ function createChatStore() {
       update(s => ({ ...s, inputValue: value }));
     },
 
+    setMentionContext(atIndex: number, cursorPosition: number, query: string) {
+      update((s) => ({
+        ...s,
+        mention: {
+          ...s.mention,
+          isOpen: true,
+          atIndex,
+          cursorPosition,
+          query,
+          activeIndex: 0,
+        },
+      }));
+    },
+
+    setMentionResults(results: MentionResult[]) {
+      update((s) => ({
+        ...s,
+        mention: {
+          ...s.mention,
+          isOpen: true,
+          results,
+          activeIndex: Math.min(s.mention.activeIndex, Math.max(results.length - 1, 0)),
+        },
+      }));
+    },
+
+    setMentionActiveIndex(activeIndex: number) {
+      update((s) => ({
+        ...s,
+        mention: {
+          ...s.mention,
+          activeIndex,
+        },
+      }));
+    },
+
+    closeMentionMenu() {
+      update((s) => ({
+        ...s,
+        mention: {
+          ...s.mention,
+          isOpen: false,
+          query: '',
+          results: [],
+          activeIndex: 0,
+          atIndex: -1,
+        },
+      }));
+    },
+
     // ── Files ────────────────────────────────────────
 
     addFile(path: string) {
@@ -160,6 +291,14 @@ function createChatStore() {
         ...s,
         inputValue: '',
         selectedFiles: [],
+        mention: {
+          ...s.mention,
+          isOpen: false,
+          query: '',
+          results: [],
+          activeIndex: 0,
+          atIndex: -1,
+        },
       }));
     },
 
@@ -172,8 +311,76 @@ function createChatStore() {
 
     // ── Error ────────────────────────────────────────
 
-    setError(error: string | null) {
-      update(s => ({ ...s, error }));
+    setError(error: string | null, requestId?: string) {
+      update(s => ({
+        ...s,
+        error: error
+          ? {
+            type: classifyError(error),
+            message: error,
+            requestId,
+          }
+          : null,
+        loading: {
+          ...s.loading,
+          isRetrying: false,
+        },
+      }));
+    },
+
+    clearError() {
+      update((s) => ({ ...s, error: null }));
+    },
+
+    retryLastMessage() {
+      const state = get({ subscribe });
+      const messages = [...state.messages].reverse();
+      const lastUserMessage = messages.find((msg) => msg.role === 'user');
+      if (!lastUserMessage?.content?.trim()) return;
+
+      messaging.send('sendMessage', {
+        message: lastUserMessage.content,
+        fileReferences: lastUserMessage.fileReferences || [],
+      });
+
+      update((s) => ({
+        ...s,
+        error: null,
+      }));
+    },
+
+    setRetrying(isRetrying: boolean) {
+      update((s) => ({
+        ...s,
+        loading: {
+          ...s.loading,
+          isRetrying,
+        },
+      }));
+    },
+
+    updateTaskProgress(payload: { label?: string; progress?: number; text?: string }) {
+      update((s) => {
+        const parsed = payload.text ? parseTodoInfo(payload.text) : null;
+        const fallback = parseTodoInfo(payload.label || '');
+        const nextProgress = parsed || fallback || s.taskProgress;
+        const normalizedProgress = typeof payload.progress === 'number' ? Math.max(0, Math.min(100, payload.progress)) : (nextProgress?.progress ?? null);
+
+        return {
+          ...s,
+          taskProgress: {
+            label: payload.label || nextProgress?.label || 'Task progress',
+            progress: normalizedProgress,
+            totalCount: nextProgress?.totalCount || 0,
+            completedCount: nextProgress?.completedCount || 0,
+            currentIndex: nextProgress?.currentIndex || 0,
+          },
+        };
+      });
+    },
+
+    clearTaskProgress() {
+      update((s) => ({ ...s, taskProgress: null }));
     },
 
     // ── Lifecycle ────────────────────────────────────
@@ -207,4 +414,14 @@ export const messageCount = derived(
 export const lastMessage = derived(
   chatStore,
   $s => $s.messages[$s.messages.length - 1] ?? null
+);
+
+export const mentionState = derived(
+  chatStore,
+  ($s) => $s.mention
+);
+
+export const taskProgressState = derived(
+  chatStore,
+  ($s) => $s.taskProgress
 );
