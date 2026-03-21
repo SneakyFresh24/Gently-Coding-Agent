@@ -3,12 +3,14 @@
 // =====================================================
 
 import { HistoryManager, SessionType, SessionStatus, Session } from '../../../services/HistoryManager';
+import { ModelPricing, OpenRouterService } from '../../../services/OpenRouterService';
 
 export class SessionHandler {
   constructor(
     private readonly sessionManager: HistoryManager,
     private readonly sendMessageToWebview: (message: any) => void,
-    private readonly applyRuntimeSessionState?: (messages: any[], model: string | null) => Promise<void>
+    private readonly applyRuntimeSessionState?: (messages: any[], model: string | null) => Promise<void>,
+    private readonly openRouterService?: OpenRouterService
   ) { }
 
   private normalizeSessionModel(model: unknown): string | null {
@@ -104,6 +106,10 @@ export class SessionHandler {
         );
       }
 
+      if (activeSession) {
+        await this.sendTokenUsageForSession(activeSession);
+      }
+
       // Restore tasks and context to UI and ContextManager if active session has them saved
       if (activeSession) {
         this.sendMessageToWebview({
@@ -141,7 +147,10 @@ export class SessionHandler {
       const sessionData = {
         name: 'New Chat',
         temperature: 0.7,
-        maxTokens: 4000
+        maxTokens: 4000,
+        metadata: {
+          tokenUsage: this.getDefaultTokenUsage()
+        }
       };
 
       const session = await this.sessionManager.createSession(SessionType.CHAT, sessionData);
@@ -169,6 +178,8 @@ export class SessionHandler {
       if (this.applyRuntimeSessionState) {
         await this.applyRuntimeSessionState([], null);
       }
+
+      await this.sendTokenUsageForSession(session);
     } catch (error) {
       console.error('[SessionHandler] Error creating new session:', error);
       this.sendMessageToWebview({
@@ -294,6 +305,7 @@ export class SessionHandler {
             if (this.applyRuntimeSessionState) {
               await this.applyRuntimeSessionState([], null);
             }
+            await this.sendTokenUsageEmpty();
           }
           break;
         case 'pin':
@@ -659,5 +671,95 @@ export class SessionHandler {
       activePlanId: planId,
       lastPlanUpdate: new Date().toISOString()
     });
+  }
+
+  async sendActiveSessionTokenUsage(): Promise<void> {
+    const activeSession = await this.sessionManager.getActiveSession(SessionType.CHAT);
+    if (activeSession) {
+      await this.sendTokenUsageForSession(activeSession);
+      return;
+    }
+    await this.sendTokenUsageEmpty();
+  }
+
+  private getDefaultTokenUsage() {
+    return {
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      cacheReadInputTokens: 0,
+      cacheWriteInputTokens: 0,
+      estimatedCostUsd: null,
+      lastUpdated: Date.now()
+    };
+  }
+
+  private getTokenUsageFromSession(session: Session) {
+    const usage = session.metadata?.tokenUsage;
+    return {
+      promptTokens: Number(usage?.promptTokens || 0),
+      completionTokens: Number(usage?.completionTokens || 0),
+      totalTokens: Number(usage?.totalTokens || 0),
+      cacheReadInputTokens: Number(usage?.cacheReadInputTokens || 0),
+      cacheWriteInputTokens: Number(usage?.cacheWriteInputTokens || 0),
+      estimatedCostUsd: usage?.estimatedCostUsd == null ? null : Number(usage.estimatedCostUsd),
+      lastUpdated: Number(usage?.lastUpdated || 0)
+    };
+  }
+
+  private async sendTokenUsageForSession(session: Session): Promise<void> {
+    const modelId = this.normalizeSessionModel(session.metadata?.model);
+    const usage = this.getTokenUsageFromSession(session);
+    const maxTokens = modelId && this.openRouterService
+      ? await this.openRouterService.getContextLength(modelId)
+      : 200000;
+    const pricing = modelId && this.openRouterService
+      ? await this.openRouterService.getModelPricing(modelId)
+      : null;
+    const cost = usage.estimatedCostUsd ?? this.calculateEstimatedCost(usage, pricing);
+
+    this.sendMessageToWebview({
+      type: 'tokenTrackerUpdate',
+      usage,
+      maxTokens,
+      pricing,
+      cost
+    });
+  }
+
+  private async sendTokenUsageEmpty(): Promise<void> {
+    this.sendMessageToWebview({
+      type: 'tokenTrackerUpdate',
+      usage: this.getDefaultTokenUsage(),
+      maxTokens: 200000,
+      pricing: null,
+      cost: null
+    });
+  }
+
+  private calculateEstimatedCost(
+    usage: {
+      promptTokens: number;
+      completionTokens: number;
+      cacheReadInputTokens: number;
+      cacheWriteInputTokens: number;
+    },
+    pricing: ModelPricing | null
+  ): number | null {
+    if (!pricing) return null;
+    const promptPrice = pricing.prompt ?? 0;
+    const completionPrice = pricing.completion ?? 0;
+    const cacheReadPrice = pricing.cache_read ?? 0;
+    const cacheWritePrice = pricing.cache_write ?? 0;
+    if (![promptPrice, completionPrice, cacheReadPrice, cacheWritePrice].some((v) => v > 0)) {
+      return null;
+    }
+
+    return (
+      (promptPrice / 1_000_000) * usage.promptTokens +
+      (completionPrice / 1_000_000) * usage.completionTokens +
+      (cacheReadPrice / 1_000_000) * usage.cacheReadInputTokens +
+      (cacheWritePrice / 1_000_000) * usage.cacheWriteInputTokens
+    );
   }
 }

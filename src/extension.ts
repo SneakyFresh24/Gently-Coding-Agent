@@ -37,8 +37,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const container = new Container();
   configureServices(container, context);
 
-  const tokenTracker = container.resolve<any>('tokenTracker');
-  openRouterService = new OpenRouterService(apiKeyManager, tokenTracker);
+  openRouterService = new OpenRouterService(apiKeyManager);
 
   // ── History manager ────────────────────────────────────────────────────────
   historyManager = new HistoryManager(context);

@@ -3,12 +3,27 @@
   
   export let tokens = 0;
   export let maxTokens = 200000;
+  export let promptTokens = 0;
+  export let completionTokens = 0;
+  export let cacheReads = 0;
+  export let cacheWrites = 0;
+  export let pricing: { prompt?: number; completion?: number; cache_read?: number; cache_write?: number } | null = null;
+  export let cost: number | null = null;
   
   let isHovered = false;
   
   $: percentage = Math.min(100, Math.round((tokens / maxTokens) * 100));
-  $: formattedTokens = tokens.toLocaleString();
-  $: formattedMax = (maxTokens / 1000).toFixed(0) + 'k';
+  $: formattedTokens = formatLargeNumber(tokens);
+  $: formattedMax = formatLargeNumber(maxTokens);
+  $: thresholdClass = percentage >= 95 ? 'critical' : percentage >= 90 ? 'danger' : percentage >= 75 ? 'warning' : 'safe';
+
+  function formatLargeNumber(value: number): string {
+    if (!Number.isFinite(value)) return '0';
+    const abs = Math.abs(value);
+    if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}m`;
+    if (abs >= 1_000) return `${(value / 1_000).toFixed(1).replace(/\.0$/, '')}k`;
+    return Math.round(value).toString();
+  }
 </script>
 
 <div 
@@ -25,12 +40,21 @@
     <span class="max">{formattedMax}</span>
   </div>
   <div class="progress-bar">
-    <div class="fill" style="width: {percentage}%"></div>
+    <div class="fill {thresholdClass}" style="transform: translateX(-{100 - percentage}%);"></div>
   </div>
 
   {#if isHovered}
     <div class="hover-card">
-      <ContextWindowSummary {tokens} {maxTokens} />
+      <ContextWindowSummary
+        {tokens}
+        {maxTokens}
+        {promptTokens}
+        {completionTokens}
+        {cacheReads}
+        {cacheWrites}
+        {pricing}
+        {cost}
+      />
     </div>
   {/if}
 </div>
@@ -80,8 +104,22 @@
 
   .fill {
     height: 100%;
+    width: 100%;
     background: var(--vscode-progressBar-background);
-    transition: width 0.3s ease;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease, background-color 0.2s ease;
+  }
+
+  .fill.warning {
+    background: #d9a441;
+  }
+
+  .fill.danger {
+    background: #d97341;
+  }
+
+  .fill.critical {
+    background: #d94a41;
   }
 
   .hover-card {

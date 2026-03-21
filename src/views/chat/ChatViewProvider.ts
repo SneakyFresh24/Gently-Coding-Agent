@@ -8,7 +8,6 @@ import { OpenRouterService } from '../../services/OpenRouterService';
 import { AgentManager } from '../../agent/agentManager/AgentManager';
 import { FileReferenceManager, FileReference } from '../../agent/fileReferenceManager';
 import { HistoryManager } from '../../services/HistoryManager';
-import { TokenTracker } from '../../utils/TokenTracker';
 import { generateHtml } from '../webview/htmlGenerator';
 import { TerminalManager } from '../../terminal';
 import { ModeService } from '../../modes';
@@ -37,7 +36,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   private terminalManager?: TerminalManager;
   private historyManager: HistoryManager;
-  private tokenTracker: TokenTracker;
   private fileReferenceManager: FileReferenceManager;
 
   constructor(
@@ -54,7 +52,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     );
 
     this.historyManager = new HistoryManager(this.context!);
-    this.tokenTracker = new TokenTracker(this.context!);
 
     this.initializeHandlersAndCallbacks();
   }
@@ -102,7 +99,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       (message: any) => this.sendMessageToWebview(message),
       async (messages: any[], model: string | null) => {
         await this.messageHandler.applySessionState(messages, model);
-      }
+      },
+      this.openRouterService
     );
 
     this.fileHandler = new FileHandler(
@@ -230,8 +228,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             return;
           }
           if (data.type === 'getTokenUsage') {
-            const usage = this.tokenTracker.getUsage();
-            this.sendMessageToWebview({ type: 'tokenTrackerUpdate', usage });
+            await this.sessionHandler.sendActiveSessionTokenUsage();
             return;
           }
           await this.webviewMessageHandler.handleMessage(data, this._view!);
@@ -289,18 +286,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     await this.sendContextUpdate();
-    await this.postTokenUsage();
     await this.sessionHandler.handleGetSessions();
   }
 
   private async sendApiKeyStatus(): Promise<void> {
     const hasKey = await this.apiKeyManager.hasKey();
     this.sendMessageToWebview({ type: 'apiKeyStatus', hasKey });
-  }
-
-  private async postTokenUsage(): Promise<void> {
-    const usage = this.tokenTracker.getUsage();
-    this.sendMessageToWebview({ type: 'tokenTrackerUpdate', usage });
   }
 
   private async sendContextUpdate(): Promise<void> {

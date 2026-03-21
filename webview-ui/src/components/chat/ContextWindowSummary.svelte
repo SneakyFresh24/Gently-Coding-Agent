@@ -1,25 +1,57 @@
 <script lang="ts">
   export let tokens = 0;
   export let maxTokens = 200000;
-  export let cost = 0;
+  export let promptTokens = 0;
+  export let completionTokens = 0;
+  export let cost: number | null = null;
   export let cacheReads = 0;
   export let cacheWrites = 0;
+  export let pricing: { prompt?: number; completion?: number; cache_read?: number; cache_write?: number } | null = null;
 
   $: percentage = Math.min(100, Math.round((tokens / maxTokens) * 100));
-  $: formattedTokens = tokens.toLocaleString();
-  $: formattedMax = (maxTokens / 1000).toFixed(0) + 'k';
-  $: formattedCost = cost > 0 ? `$${cost.toFixed(4)}` : '$0.0000';
+  $: formattedTokens = formatLargeNumber(tokens);
+  $: formattedMax = formatLargeNumber(maxTokens);
+  $: resolvedCost = cost ?? calculateEstimatedCost();
+  $: hasPricing = !!pricing && [pricing.prompt, pricing.completion, pricing.cache_read, pricing.cache_write].some((v) => (v || 0) > 0);
+  $: formattedCost = resolvedCost == null ? 'N/A' : `$${resolvedCost.toFixed(4)}`;
+  $: thresholdClass = percentage >= 95 ? 'critical' : percentage >= 90 ? 'danger' : percentage >= 75 ? 'warning' : 'safe';
+
+  function formatLargeNumber(value: number): string {
+    if (!Number.isFinite(value)) return '0';
+    const abs = Math.abs(value);
+    if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}m`;
+    if (abs >= 1_000) return `${(value / 1_000).toFixed(1).replace(/\.0$/, '')}k`;
+    return Math.round(value).toString();
+  }
+
+  function calculateEstimatedCost(): number | null {
+    if (!pricing) return null;
+    const promptPrice = pricing.prompt ?? 0;
+    const completionPrice = pricing.completion ?? 0;
+    const cacheReadPrice = pricing.cache_read ?? 0;
+    const cacheWritePrice = pricing.cache_write ?? 0;
+    if (![promptPrice, completionPrice, cacheReadPrice, cacheWritePrice].some((v) => v > 0)) {
+      return null;
+    }
+
+    return (
+      (promptPrice / 1_000_000) * promptTokens +
+      (completionPrice / 1_000_000) * completionTokens +
+      (cacheReadPrice / 1_000_000) * cacheReads +
+      (cacheWritePrice / 1_000_000) * cacheWrites
+    );
+  }
 </script>
 
 <div class="context-summary">
   <div class="summary-header">
     <span class="title">Context Window</span>
-    <span class="percentage">{percentage}%</span>
+    <span class="percentage {thresholdClass}">{percentage}%</span>
   </div>
 
   <div class="progress-container">
     <div class="progress-bar">
-      <div class="fill" style="width: {percentage}%"></div>
+      <div class="fill {thresholdClass}" style="transform: translateX(-{100 - percentage}%);"></div>
     </div>
   </div>
 
@@ -38,18 +70,35 @@
     </div>
   </div>
 
+  <div class="divider"></div>
+  <div class="cache-info">
+    <div class="stat-item">
+      <span class="label">Input Tokens</span>
+      <span class="value">{formatLargeNumber(promptTokens)}</span>
+    </div>
+    <div class="stat-item">
+      <span class="label">Output Tokens</span>
+      <span class="value">{formatLargeNumber(completionTokens)}</span>
+    </div>
+  </div>
+
   {#if cacheReads > 0 || cacheWrites > 0}
     <div class="divider"></div>
     <div class="cache-info">
       <div class="stat-item">
         <span class="label">Cache Reads</span>
-        <span class="value">{cacheReads.toLocaleString()}</span>
+        <span class="value">{formatLargeNumber(cacheReads)}</span>
       </div>
       <div class="stat-item">
         <span class="label">Cache Writes</span>
-        <span class="value">{cacheWrites.toLocaleString()}</span>
+        <span class="value">{formatLargeNumber(cacheWrites)}</span>
       </div>
     </div>
+  {/if}
+
+  {#if !hasPricing}
+    <div class="divider"></div>
+    <div class="pricing-note">Pricing unavailable for this model.</div>
   {/if}
 </div>
 
@@ -79,6 +128,18 @@
     font-weight: 700;
   }
 
+  .percentage.warning {
+    color: #d9a441;
+  }
+
+  .percentage.danger {
+    color: #d97341;
+  }
+
+  .percentage.critical {
+    color: #d94a41;
+  }
+
   .progress-container {
     height: 4px;
     background: var(--vscode-widget-border);
@@ -89,7 +150,22 @@
 
   .fill {
     height: 100%;
+    width: 100%;
     background: var(--vscode-progressBar-background);
+    transform: translateX(-100%);
+    transition: transform 0.25s ease, background-color 0.2s ease;
+  }
+
+  .fill.warning {
+    background: #d9a441;
+  }
+
+  .fill.danger {
+    background: #d97341;
+  }
+
+  .fill.critical {
+    background: #d94a41;
   }
 
   .stats-grid {
@@ -123,5 +199,10 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 8px;
+  }
+
+  .pricing-note {
+    color: var(--vscode-descriptionForeground);
+    font-size: 10px;
   }
 </style>

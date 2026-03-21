@@ -81,6 +81,7 @@ export interface MessageHandlers {
   onActivityUpdate?: (data: any) => void;
   onWorkspaceInfo?: (data: any) => void;
   onThinking?: (data: any) => void;
+  onTokenTrackerUpdate?: (data: any) => void;
 
   // Catch-all for unhandled types
   onUnhandled?: (data: any) => void;
@@ -152,6 +153,7 @@ const TYPE_TO_HANDLER: Record<string, keyof MessageHandlers> = {
   taskComplete: 'onTaskComplete',
   taskProgress: 'onTaskProgress',
   refreshSessions: 'onRefreshSessions',
+  tokenTrackerUpdate: 'onTokenTrackerUpdate',
 };
 
 

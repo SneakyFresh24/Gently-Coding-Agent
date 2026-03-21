@@ -10,13 +10,35 @@
   import { messaging } from './lib/messaging';
 
   let currentView = 'chat';
-  let tokens = 0;
+  let tokenUsage = {
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    cacheReadInputTokens: 0,
+    cacheWriteInputTokens: 0,
+    estimatedCostUsd: null as number | null,
+    lastUpdated: 0
+  };
+  let tokenMax = 200000;
+  let tokenPricing: { prompt?: number; completion?: number; cache_read?: number; cache_write?: number } | null = null;
+  let tokenCost: number | null = null;
 
   function handleMessage(event: MessageEvent) {
     const message = event.data;
     switch (message.type) {
       case 'tokenTrackerUpdate':
-        tokens = message.usage?.totalTokens || 0;
+        tokenUsage = {
+          promptTokens: Number(message.usage?.promptTokens || 0),
+          completionTokens: Number(message.usage?.completionTokens || 0),
+          totalTokens: Number(message.usage?.totalTokens || 0),
+          cacheReadInputTokens: Number(message.usage?.cacheReadInputTokens || 0),
+          cacheWriteInputTokens: Number(message.usage?.cacheWriteInputTokens || 0),
+          estimatedCostUsd: message.usage?.estimatedCostUsd ?? null,
+          lastUpdated: Number(message.usage?.lastUpdated || 0)
+        };
+        tokenMax = Number(message.maxTokens || 200000);
+        tokenPricing = message.pricing || null;
+        tokenCost = message.cost ?? null;
         break;
       case 'modelsList':
         if (message.models && message.models.length > 0) {
@@ -26,7 +48,7 @@
       case 'modelChanged':
         settingsStore.setSelectedModel(message.model);
         break;
-      case 'onApiKeyStatus':
+      case 'apiKeyStatus':
         settingsStore.setApiKeyStatus(message.hasKey);
         break;
     }
@@ -45,7 +67,12 @@
 <main class="app-container">
   <Header 
     bind:currentView 
-    {tokens} 
+    tokenState={{
+      usage: tokenUsage,
+      maxTokens: tokenMax,
+      pricing: tokenPricing,
+      cost: tokenCost
+    }}
   />
   
   <div class="content-area">

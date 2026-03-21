@@ -15,6 +15,8 @@ export interface UsageInfo {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
+    cache_read_input_tokens?: number;
+    cache_write_input_tokens?: number;
 }
 
 export type StreamChunk = 

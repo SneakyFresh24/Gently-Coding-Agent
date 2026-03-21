@@ -3,6 +3,7 @@ import { OpenRouterService, ChatMessage } from '../../../services/OpenRouterServ
 import { LogService } from '../../../services/LogService';
 import { StreamResponseHandler } from '../../../core/streaming/StreamResponseHandler';
 import { MessageStateHandler } from '../../../core/task/MessageStateHandler';
+import { UsageInfo } from '../../../core/streaming/types';
 
 const log = new LogService('StreamingService');
 
@@ -24,7 +25,7 @@ export class StreamingService {
             isFollowUp?: boolean;
             shouldStopRef: { current: boolean };
         }
-    ): Promise<{ assistantMessage: string; toolCalls: any[] }> {
+    ): Promise<{ assistantMessage: string; toolCalls: any[]; usage?: UsageInfo }> {
         const streamHandler = new StreamResponseHandler();
         const msgIndex = 0; // Default index for the assistant message in this stream
 
@@ -45,6 +46,13 @@ export class StreamingService {
                 const choice = data.choices?.[0];
                 let assistantMessage = '';
                 let toolCalls: any[] = [];
+                const usage: UsageInfo | undefined = data.usage ? {
+                    prompt_tokens: data.usage.prompt_tokens || 0,
+                    completion_tokens: data.usage.completion_tokens || 0,
+                    total_tokens: data.usage.total_tokens || 0,
+                    cache_read_input_tokens: data.usage.cache_read_input_tokens || 0,
+                    cache_write_input_tokens: data.usage.cache_write_input_tokens || 0
+                } : undefined;
                 if (choice?.message?.content) assistantMessage = choice.message.content;
                 if (choice?.message?.tool_calls) toolCalls = choice.message.tool_calls;
                 
@@ -59,7 +67,7 @@ export class StreamingService {
                         messageId: `msg_${Date.now()}`
                     });
                 }
-                return { assistantMessage, toolCalls };
+                return { assistantMessage, toolCalls, usage };
             } catch (error) {
                 log.error('Non-streaming follow-up failed:', error);
                 this.sendMessageToWebview({ type: 'processingEnd' });
@@ -79,6 +87,7 @@ export class StreamingService {
             };
 
             try {
+                let usage: UsageInfo | undefined;
                 resetTimeout();
                 for await (const chunk of this.openRouterService.streamChatMessage({
                     messages,
@@ -136,6 +145,9 @@ export class StreamingService {
                                 label: `Ready: ${chunk.toolCall.function.name}` 
                             });
                             break;
+                        case 'usage':
+                            usage = chunk.usage;
+                            break;
 
                         case 'error':
                             throw chunk.error;
@@ -145,7 +157,8 @@ export class StreamingService {
                 const finalState = streamHandler.getFullState();
                 return { 
                     assistantMessage: finalState.content, 
-                    toolCalls: finalState.toolCalls 
+                    toolCalls: finalState.toolCalls,
+                    usage
                 };
             } catch (error) {
                 log.error('Streaming failed:', error);

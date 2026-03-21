@@ -9,8 +9,10 @@ import { ToolCallManager } from '../toolcall';
 import { ToolCallDispatcher } from './ExecutionDispatchers';
 import { LogService } from '../../../services/LogService';
 import { ModeService } from '../../../modes/ModeService';
-import { OpenRouterService } from '../../../services/OpenRouterService';
+import { ModelPricing, OpenRouterService } from '../../../services/OpenRouterService';
 import { OutboundWebviewMessage } from '../types/WebviewMessageTypes';
+import { UsageInfo } from '../../../core/streaming/types';
+import { SessionType } from '../../../services/HistoryManager';
 
 const log = new LogService('ChatFlowManager');
 
@@ -113,6 +115,7 @@ export class ChatFlowManager {
         let contextLengthRetried = false;
         let assistantMessage = '';
         let toolCalls: any[] = [];
+        let usage: UsageInfo | undefined;
         while (true) {
             try {
                 const result = await this.streamingService.streamResponse(messages, {
@@ -126,6 +129,7 @@ export class ChatFlowManager {
                 });
                 assistantMessage = result.assistantMessage;
                 toolCalls = result.toolCalls;
+                usage = result.usage;
                 break;
             } catch (error) {
                 if (this.openRouterService.isRateLimitError(error)) {
@@ -196,7 +200,7 @@ export class ChatFlowManager {
         }
 
         if (assistantMessage.length > 0 || toolCalls.length > 0) {
-            await this.completeStreaming(context, assistantMessage, toolCalls, isFollowUp);
+            await this.completeStreaming(context, assistantMessage, toolCalls, usage, modelContextLength, isFollowUp);
             this.sendMessageToWebview({ type: 'generatingEnd' });
         }
         
@@ -204,7 +208,14 @@ export class ChatFlowManager {
         this.sendMessageToWebview({ type: 'activityUpdate', label: null });
     }
 
-    private async completeStreaming(context: ChatViewContext, assistantMessage: string, toolCalls: any[], isFollowUp: boolean): Promise<void> {
+    private async completeStreaming(
+        context: ChatViewContext,
+        assistantMessage: string,
+        toolCalls: any[],
+        usage: UsageInfo | undefined,
+        modelContextLength: number,
+        isFollowUp: boolean
+    ): Promise<void> {
         const messageId = `msg-${Date.now()}`;
         const assistantMsg: Message = { id: messageId, timestamp: Date.now(), role: 'assistant', content: assistantMessage, tool_calls: toolCalls.length > 0 ? toolCalls : undefined };
 
@@ -213,6 +224,7 @@ export class ChatFlowManager {
         this.sendMessageToWebview({ type: 'generatingEnd' });
         
         await this.sessionHistoryManager.saveMessageToHistory(assistantMsg);
+        await this.updateActiveSessionTokenUsage(context, usage, modelContextLength);
 
         // Clear activity label after saving to history
         this.sendMessageToWebview({ type: 'activityUpdate', label: null });
@@ -220,6 +232,96 @@ export class ChatFlowManager {
         if (toolCalls.length > 0) {
             await this.toolCallDispatcher.handleToolCalls(toolCalls, messageId, context);
         }
+    }
+
+    private async updateActiveSessionTokenUsage(
+        context: ChatViewContext,
+        usage: UsageInfo | undefined,
+        modelContextLength: number
+    ): Promise<void> {
+        const activeSession = await this.sessionHistoryManager.getActiveSession(SessionType.CHAT);
+        if (!activeSession) return;
+
+        const existing = this.getTokenUsageFromMetadata(activeSession.metadata?.tokenUsage);
+        const incoming = this.getIncomingUsage(usage);
+        const merged = {
+            promptTokens: existing.promptTokens + incoming.promptTokens,
+            completionTokens: existing.completionTokens + incoming.completionTokens,
+            totalTokens: existing.totalTokens + incoming.totalTokens,
+            cacheReadInputTokens: existing.cacheReadInputTokens + incoming.cacheReadInputTokens,
+            cacheWriteInputTokens: existing.cacheWriteInputTokens + incoming.cacheWriteInputTokens,
+            estimatedCostUsd: null as number | null,
+            lastUpdated: Date.now()
+        };
+
+        const pricing = context.selectedModel ? await this.openRouterService.getModelPricing(context.selectedModel) : null;
+        merged.estimatedCostUsd = this.calculateEstimatedCost(merged, pricing);
+
+        const metadata = {
+            ...(activeSession.metadata || {}),
+            tokenUsage: merged
+        };
+
+        const chatProvider = this.sessionHistoryManager.getChatProvider();
+        if (chatProvider) {
+            await chatProvider.updateSession(activeSession.id, { metadata });
+        }
+
+        this.sendMessageToWebview({
+            type: 'tokenTrackerUpdate',
+            usage: merged,
+            maxTokens: modelContextLength,
+            pricing,
+            cost: merged.estimatedCostUsd
+        } as any);
+    }
+
+    private getIncomingUsage(usage: UsageInfo | undefined) {
+        return {
+            promptTokens: usage?.prompt_tokens || 0,
+            completionTokens: usage?.completion_tokens || 0,
+            totalTokens: usage?.total_tokens || 0,
+            cacheReadInputTokens: usage?.cache_read_input_tokens || 0,
+            cacheWriteInputTokens: usage?.cache_write_input_tokens || 0
+        };
+    }
+
+    private getTokenUsageFromMetadata(value: any) {
+        return {
+            promptTokens: Number(value?.promptTokens || 0),
+            completionTokens: Number(value?.completionTokens || 0),
+            totalTokens: Number(value?.totalTokens || 0),
+            cacheReadInputTokens: Number(value?.cacheReadInputTokens || 0),
+            cacheWriteInputTokens: Number(value?.cacheWriteInputTokens || 0),
+            estimatedCostUsd: value?.estimatedCostUsd == null ? null : Number(value.estimatedCostUsd),
+            lastUpdated: Number(value?.lastUpdated || 0)
+        };
+    }
+
+    private calculateEstimatedCost(
+        usage: {
+            promptTokens: number;
+            completionTokens: number;
+            cacheReadInputTokens: number;
+            cacheWriteInputTokens: number;
+        },
+        pricing: ModelPricing | null
+    ): number | null {
+        if (!pricing) return null;
+
+        const promptPrice = pricing.prompt ?? 0;
+        const completionPrice = pricing.completion ?? 0;
+        const cacheReadPrice = pricing.cache_read ?? 0;
+        const cacheWritePrice = pricing.cache_write ?? 0;
+        const hasAnyPrice = [promptPrice, completionPrice, cacheReadPrice, cacheWritePrice].some((v) => v > 0);
+        if (!hasAnyPrice) return null;
+
+        return (
+            (promptPrice / 1_000_000) * usage.promptTokens +
+            (completionPrice / 1_000_000) * usage.completionTokens +
+            (cacheReadPrice / 1_000_000) * usage.cacheReadInputTokens +
+            (cacheWritePrice / 1_000_000) * usage.cacheWriteInputTokens
+        );
     }
 
     private validateHistory(context: ChatViewContext): void {

@@ -271,6 +271,17 @@ export class WebviewMessageHandler {
         break;
 
       case 'sessionAction':
+        if (data.action === 'delete') {
+          const choice = await vscode.window.showWarningMessage(
+            'Are you sure you want to delete this chat session? This action cannot be undone.',
+            { modal: true },
+            'Delete Session'
+          );
+          if (choice !== 'Delete Session') {
+            this.sendMessageToWebview({ type: 'info', message: 'Session deletion canceled.' });
+            break;
+          }
+        }
         await this.sessionHandler.handleSessionAction(data.action, data.sessionId, data.payload);
         break;
 

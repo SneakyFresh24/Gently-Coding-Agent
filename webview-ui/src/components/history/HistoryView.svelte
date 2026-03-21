@@ -14,9 +14,7 @@
   }
 
   function handleDelete(event: CustomEvent<{id: string}>) {
-    if (confirm('Are you sure you want to delete this session?')) {
-      historyStore.deleteSession(event.detail.id);
-    }
+    historyStore.deleteSession(event.detail.id);
   }
 
   onMount(() => {

@@ -1,12 +1,24 @@
 <script lang="ts">
-  import type { ModelInfo } from '../../lib/types';
   import TokenDisplay from './TokenDisplay.svelte';
   import Icon from '../ui/Icon.svelte';
   import { messaging } from '../../lib/messaging';
 
   
   export let currentView = 'chat';
-  export let tokens = 0;
+  export let tokenState: {
+    usage: {
+      promptTokens: number;
+      completionTokens: number;
+      totalTokens: number;
+      cacheReadInputTokens: number;
+      cacheWriteInputTokens: number;
+      estimatedCostUsd: number | null;
+      lastUpdated: number;
+    };
+    maxTokens: number;
+    pricing: { prompt?: number; completion?: number; cache_read?: number; cache_write?: number } | null;
+    cost: number | null;
+  };
   
   function setView(view: string) {
     currentView = view;
@@ -64,7 +76,16 @@
   </div>
 
   <div class="right">
-    <TokenDisplay {tokens} />
+    <TokenDisplay
+      tokens={tokenState.usage.totalTokens}
+      maxTokens={tokenState.maxTokens}
+      promptTokens={tokenState.usage.promptTokens}
+      completionTokens={tokenState.usage.completionTokens}
+      cacheReads={tokenState.usage.cacheReadInputTokens}
+      cacheWrites={tokenState.usage.cacheWriteInputTokens}
+      pricing={tokenState.pricing}
+      cost={tokenState.cost}
+    />
     <button 
       class="settings-btn" 
       class:active={currentView === 'settings'}
@@ -149,4 +170,3 @@
     color: var(--vscode-button-hoverBackground);
   }
 </style>
-

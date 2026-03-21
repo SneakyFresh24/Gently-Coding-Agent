@@ -148,6 +148,12 @@ export interface ModelInfo {
   name: string;
   context_length: number;
   max_output: number;
+  pricing?: {
+    prompt?: number;
+    completion?: number;
+    cache_read?: number;
+    cache_write?: number;
+  };
 }
 
 // ── Inbound Messages (Webview → Extension) ───────────
@@ -265,6 +271,7 @@ export type OutboundMessageType =
   | 'taskComplete'
   | 'taskProgress'
   | 'toolComplete'
+  | 'tokenTrackerUpdate'
 
   | 'messageSaved'
   | 'addFileReference'
@@ -278,6 +285,7 @@ export type OutboundMessageType =
   | 'terminalModeChanged'
   | 'quickPatternsChanged'
   | 'terminalStatus'
+  | 'tokenTrackerUpdate'
   | 'refreshSessions'
   | 'thinking';
 

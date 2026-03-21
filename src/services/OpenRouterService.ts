@@ -38,6 +38,13 @@ export interface Tool {
     };
 }
 
+export interface ModelPricing {
+    prompt?: number;
+    completion?: number;
+    cache_read?: number;
+    cache_write?: number;
+}
+
 export class OpenRouterHttpError extends Error {
     readonly status: number;
     readonly code?: string;
@@ -74,6 +81,7 @@ export class OpenRouterService {
     private toolCallProcessor = new StreamingToolCallProcessor();
     private modelMaxTokensCache: Map<string, number> = new Map();
     private modelContextLengthCache: Map<string, number> = new Map();
+    private modelPricingCache: Map<string, ModelPricing> = new Map();
 
     constructor(
         private readonly apiKeyManager: ApiKeyManager,
@@ -233,6 +241,27 @@ export class OpenRouterService {
                         continue; 
                     }
 
+                    // Track usage if present (OpenRouter can send this in a final chunk without choices)
+                    if (chunk.usage) {
+                        const usage: UsageInfo = {
+                            prompt_tokens: chunk.usage.prompt_tokens || 0,
+                            completion_tokens: chunk.usage.completion_tokens || 0,
+                            total_tokens: chunk.usage.total_tokens || 0,
+                            cache_read_input_tokens: chunk.usage.cache_read_input_tokens || 0,
+                            cache_write_input_tokens: chunk.usage.cache_write_input_tokens || 0
+                        };
+
+                        if (this.tokenTracker) {
+                            this.tokenTracker.trackUsage({
+                                promptTokens: usage.prompt_tokens,
+                                completionTokens: usage.completion_tokens,
+                                totalTokens: usage.total_tokens
+                            });
+                        }
+
+                        yield { type: 'usage', usage };
+                    }
+
                     // 1. Explicit Error Handling
                     if (chunk.error) {
                         yield { type: 'error', error: new Error(`OpenRouter API Error: ${chunk.error.message || 'Unknown error'}`) };
@@ -266,24 +295,6 @@ export class OpenRouterService {
                         yield* this.toolCallProcessor.processToolCallDeltas(delta.tool_calls);
                     }
 
-                    // 5a. Track usage if present (OpenRouter sends this in a final chunk when include_usage: true)
-                    if (chunk.usage) {
-                        const usage: UsageInfo = {
-                            prompt_tokens: chunk.usage.prompt_tokens || 0,
-                            completion_tokens: chunk.usage.completion_tokens || 0,
-                            total_tokens: chunk.usage.total_tokens || 0
-                        };
-                        
-                        if (this.tokenTracker) {
-                            this.tokenTracker.trackUsage({
-                                promptTokens: usage.prompt_tokens,
-                                completionTokens: usage.completion_tokens,
-                                totalTokens: usage.total_tokens
-                            });
-                        }
-                        
-                        yield { type: 'usage', usage };
-                    }
                 }
             }
 
@@ -368,7 +379,7 @@ export class OpenRouterService {
     }
 
     /** List available models from OpenRouter (for UI pickers) */
-    async listModels(): Promise<{ id: string; name: string; context_length: number; max_output: number }[]> {
+    async listModels(): Promise<{ id: string; name: string; context_length: number; max_output: number; pricing?: ModelPricing }[]> {
         const key = await this.apiKeyManager.getKey();
         if (!key) return [];
 
@@ -381,14 +392,24 @@ export class OpenRouterService {
             const models = (data.data ?? []).map((m: any) => {
                 const maxOutput = m.top_provider?.max_completion_tokens || 0;
                 const contextLength = m.context_length ?? 0;
+                const pricing: ModelPricing | undefined = m.pricing ? {
+                    prompt: this.parsePricingValue(m.pricing.prompt),
+                    completion: this.parsePricingValue(m.pricing.completion),
+                    cache_read: this.parsePricingValue(m.pricing.cache_read),
+                    cache_write: this.parsePricingValue(m.pricing.cache_write)
+                } : undefined;
                 // Update cache while we vary the list
                 this.modelMaxTokensCache.set(m.id, maxOutput);
                 this.modelContextLengthCache.set(m.id, contextLength);
+                if (pricing) {
+                    this.modelPricingCache.set(m.id, pricing);
+                }
                 return {
                     id: m.id,
                     name: m.name,
                     context_length: contextLength,
                     max_output: maxOutput,
+                    pricing
                 };
             });
             return models;
@@ -420,6 +441,20 @@ export class OpenRouterService {
         const models = await this.listModels();
         const model = models.find(m => m.id === modelId);
         return (model?.context_length && model.context_length > 0) ? model.context_length : 200000;
+    }
+
+    async getModelPricing(modelId: string): Promise<ModelPricing | null> {
+        if (this.modelPricingCache.has(modelId)) {
+            return this.modelPricingCache.get(modelId) || null;
+        }
+
+        const models = await this.listModels();
+        const model = models.find(m => m.id === modelId);
+        if (model?.pricing) {
+            this.modelPricingCache.set(modelId, model.pricing);
+            return model.pricing;
+        }
+        return null;
     }
 
     isContextLengthError(error: unknown): error is OpenRouterHttpError {
@@ -463,6 +498,17 @@ export class OpenRouterService {
             return delta > 0 ? delta : undefined;
         }
 
+        return undefined;
+    }
+
+    private parsePricingValue(value: unknown): number | undefined {
+        if (typeof value === 'number') {
+            return Number.isFinite(value) ? value : undefined;
+        }
+        if (typeof value === 'string') {
+            const parsed = Number.parseFloat(value);
+            return Number.isFinite(parsed) ? parsed : undefined;
+        }
         return undefined;
     }
 
