@@ -10,21 +10,9 @@
   function getFileName(path: string): string {
     return path.split(/[/\\]/).pop() || path;
   }
-
-  const quotePreview = $derived(
-    message.content
-      .split('\n')
-      .find((line) => line.trim().startsWith('>'))?.replace(/^>\s?/, '') || ''
-  );
 </script>
 
 <div class="user-message">
-  <div class="user-header">You</div>
-  {#if quotePreview}
-    <div class="quote-preview" title={quotePreview}>
-      Replying to: {quotePreview}
-    </div>
-  {/if}
   <div class="message-content">{message.content}</div>
 
   {#if message.fileReferences && message.fileReferences.length > 0}
@@ -44,29 +32,6 @@
     border-radius: var(--radius-lg);
     padding: var(--space-lg);
     margin-left: var(--space-3xl);
-    position: relative;
-  }
-
-  .user-header {
-    position: sticky;
-    top: 0;
-    font-size: var(--font-size-xxs);
-    color: var(--vscode-descriptionForeground);
-    margin-bottom: var(--space-xs);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    background: inherit;
-  }
-
-  .quote-preview {
-    font-size: var(--font-size-xxs);
-    color: var(--vscode-descriptionForeground);
-    border-left: 2px solid var(--vscode-textBlockQuote-border, var(--vscode-panel-border));
-    padding-left: var(--space-sm);
-    margin-bottom: var(--space-sm);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   .message-content {

@@ -36,7 +36,7 @@
 
 {#if isOpen}
   <div class="modal-wrapper" onclick={handleClickOutside} role="button" tabindex="0" onkeydown={(e) => e.key === 'Escape' && (isOpen = false)}>
-    <div class="modal" bind:this={modalRef} onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()} role="dialog" aria-modal="true" tabindex="-1" {style}>
+    <div class="modal" bind:this={modalRef} onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" tabindex="-1" {style}>
       <header class="modal-header">
         <div class="title-with-icon">
           <Icon name="shield" size={18} />

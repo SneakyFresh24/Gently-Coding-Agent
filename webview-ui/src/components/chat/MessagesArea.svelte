@@ -4,6 +4,11 @@
   import { onMount, tick } from 'svelte';
   import { createVirtualizer } from '@tanstack/svelte-virtual';
 
+  const VIRTUALIZATION_THRESHOLD = 80;
+  const ESTIMATE_SIZE = 220;
+  const OVERSCAN = 8;
+  const BOTTOM_THRESHOLD_PX = 60;
+
   let {
     messages = [],
   }: {
@@ -12,41 +17,60 @@
 
   let containerRef: HTMLDivElement | undefined = $state();
   let autoScroll = true;
-  const VIRTUAL_ROW_ESTIMATE = 104;
+  const isVirtualized = $derived(messages.length >= VIRTUALIZATION_THRESHOLD);
 
-  const rowVirtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
+  const virtualizerStore = createVirtualizer<HTMLDivElement, HTMLDivElement>({
     count: 0,
     getScrollElement: () => containerRef ?? null,
-    estimateSize: () => VIRTUAL_ROW_ESTIMATE,
-    overscan: 8,
+    estimateSize: () => ESTIMATE_SIZE,
+    overscan: OVERSCAN,
   });
 
   function handleScroll() {
     if (!containerRef) return;
     const { scrollTop, scrollHeight, clientHeight } = containerRef;
-    // Consider "at bottom" if within 60px
-    autoScroll = scrollHeight - scrollTop - clientHeight < 60;
+    autoScroll = scrollHeight - scrollTop - clientHeight < BOTTOM_THRESHOLD_PX;
+  }
+
+  function measureVirtualRow(node: HTMLDivElement, _content: string) {
+    $virtualizerStore.measureElement(node);
+
+    return {
+      update() {
+        $virtualizerStore.measureElement(node);
+      },
+    };
   }
 
   async function scrollToBottom() {
-    if (!autoScroll || !containerRef || messages.length === 0) return;
+    if (!autoScroll || !containerRef) return;
+
     await tick();
-    $rowVirtualizer.scrollToIndex(messages.length - 1, { align: 'end' });
+
+    if (isVirtualized && messages.length > 0) {
+      $virtualizerStore.scrollToIndex(messages.length - 1, { align: 'end' });
+      return;
+    }
+
+    containerRef.scrollTop = containerRef.scrollHeight;
   }
 
   $effect(() => {
-    messages.length;
-    $rowVirtualizer.setOptions({
+    $virtualizerStore.setOptions({
       count: messages.length,
       getScrollElement: () => containerRef ?? null,
-      estimateSize: () => VIRTUAL_ROW_ESTIMATE,
-      overscan: 8,
+      estimateSize: () => ESTIMATE_SIZE,
+      overscan: OVERSCAN,
     });
   });
 
-  // Scroll when messages change
   $effect(() => {
-    messages; // dependency
+    messages;
+
+    if (isVirtualized) {
+      $virtualizerStore.measure();
+    }
+
     scrollToBottom();
   });
 
@@ -60,18 +84,30 @@
   bind:this={containerRef}
   onscroll={handleScroll}
 >
-  <div class="virtual-spacer" style={`height: ${$rowVirtualizer.getTotalSize()}px;`}>
-    {#each $rowVirtualizer.getVirtualItems() as row (messages[row.index]?.id || row.key)}
-      {#if messages[row.index]}
-        <div
-          class="virtual-row"
-          style={`transform: translateY(${row.start}px);`}
-        >
-          <MessageRow message={messages[row.index]} />
-        </div>
-      {/if}
+  {#if isVirtualized}
+    <div
+      class="virtual-viewport"
+      style={`height: ${$virtualizerStore.getTotalSize()}px;`}
+    >
+      {#each $virtualizerStore.getVirtualItems() as virtualItem (virtualItem.key)}
+        {@const message = messages[virtualItem.index]}
+        {#if message}
+          <div
+            class="virtual-row"
+            data-index={virtualItem.index}
+            style={`transform: translateY(${virtualItem.start}px);`}
+            use:measureVirtualRow={message.content}
+          >
+            <MessageRow {message} />
+          </div>
+        {/if}
+      {/each}
+    </div>
+  {:else}
+    {#each messages as message (message.id)}
+      <MessageRow {message} />
     {/each}
-  </div>
+  {/if}
 </div>
 
 <style>
@@ -81,15 +117,15 @@
     overflow-y: auto;
   }
 
-  .virtual-spacer {
+  .virtual-viewport {
     position: relative;
     width: 100%;
   }
 
   .virtual-row {
-    left: 0;
     position: absolute;
     top: 0;
+    left: 0;
     width: 100%;
   }
 </style>

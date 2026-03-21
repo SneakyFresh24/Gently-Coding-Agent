@@ -2,7 +2,6 @@
   import { onMount } from 'svelte';
   import { historyStore, filteredSessions } from '../../stores/historyStore';
   import HistoryItem from './HistoryItem.svelte';
-  import LoadingIndicator from '../ui/LoadingIndicator.svelte';
 
   let searchQuery = '';
 
@@ -44,7 +43,7 @@
   <div class="history-list">
     {#if $historyStore.isLoading}
       <div class="loading-state">
-        <LoadingIndicator label="Loading history" />
+        <div class="spinner"></div>
         <p>Loading history...</p>
       </div>
     {:else if $filteredSessions.length === 0}
@@ -117,6 +116,20 @@
     align-items: center;
     padding: 48px;
     text-align: center;
+  }
+
+  .loading-state .spinner {
+    width: 24px;
+    height: 24px;
+    border: 2px solid var(--vscode-progressBar-background);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 12px;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 
   .empty-state .icon {

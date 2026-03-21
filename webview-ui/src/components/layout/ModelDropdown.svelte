@@ -36,16 +36,6 @@
     }
   }
 
-  function handleSelectorKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      void toggleDropdown();
-    }
-    if (e.key === 'Escape') {
-      isOpen = false;
-    }
-  }
-
   // Close when clicking outside
   function handleOutsideClick(e: MouseEvent) {
     if (isOpen) {
@@ -94,14 +84,7 @@
 </script>
 
 <div class="model-selector" bind:this={selectorRef}>
-  <button
-    class="selector-btn"
-    on:click={toggleDropdown}
-    on:keydown={handleSelectorKeydown}
-    aria-label="Select model"
-    aria-expanded={isOpen}
-    aria-haspopup="listbox"
-  >
+  <button class="selector-btn" on:click={toggleDropdown}>
     <span class="model-name">{selectedModelName}</span>
     <span class="chevron">
       <i class="codicon {isOpen ? 'codicon-chevron-up' : 'codicon-chevron-down'}"></i>
@@ -117,16 +100,14 @@
           placeholder="Search models..." 
           bind:value={searchTerm}
           on:click|stopPropagation
-          aria-label="Search models"
         />
       </div>
-      <div class="model-list" role="listbox" aria-label="Model options">
+      <div class="model-list">
         {#each filteredModels as model (model.id)}
           <button 
             class="model-item" 
             class:active={model.id === selectedModel}
             on:click={() => selectModel(model.id)}
-            aria-label={`Select model ${model.name}`}
           >
             <div class="model-info">
               <span class="model-label">{model.name}</span>
