@@ -219,6 +219,9 @@ export interface InboundMessage {
 export type OutboundMessageType =
   | 'apiKeyStatus'
   | 'modelsList'
+  | 'modelChanged'
+  | 'retryingWithReducedTokens'
+  | 'retryingRateLimit'
   | 'error'
   | 'info'
   | 'modeChanged'

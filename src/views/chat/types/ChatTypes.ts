@@ -66,7 +66,7 @@ export type { WebviewMessage, InboundWebviewMessage, OutboundWebviewMessage } fr
 
 export interface ChatViewContext {
   agentMode: boolean;
-  selectedModel: string;
+  selectedModel: string | null;
   selectedMode: string;
   conversationHistory: Message[];
   shouldStopStream: boolean;

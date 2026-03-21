@@ -5,6 +5,7 @@
   let {
     isBusy = false,
     isStreamingProp = false,
+    hasModel = true,
     inputValue = '',
     selectedFiles = [] as string[],
     onInputChange,
@@ -15,6 +16,7 @@
   }: {
     isBusy?: boolean;
     isStreamingProp?: boolean;
+    hasModel?: boolean;
     inputValue?: string;
     selectedFiles?: string[];
     onInputChange?: (value: string) => void;
@@ -30,7 +32,7 @@
     // Enter to send, Shift+Enter for newline
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (!isBusy && inputValue.trim()) {
+      if (!isBusy && hasModel && inputValue.trim()) {
         onSend?.();
       }
     }
@@ -66,6 +68,9 @@
       {/each}
     </div>
   {/if}
+  {#if !hasModel}
+    <div class="model-warning">Select an OpenRouter model before sending a message.</div>
+  {/if}
 
   <div class="input-row">
     <textarea
@@ -97,7 +102,7 @@
         <Button
           variant="primary"
           size="sm"
-          disabled={!inputValue.trim()}
+          disabled={!inputValue.trim() || !hasModel}
           onclick={onSend}
         >
           Send
@@ -127,6 +132,12 @@
     border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
     border-radius: var(--radius-lg);
     padding: var(--space-sm) var(--space-md);
+  }
+
+  .model-warning {
+    font-size: var(--font-size-xs);
+    color: var(--vscode-descriptionForeground);
+    margin-bottom: var(--space-sm);
   }
 
   .input-row:focus-within {

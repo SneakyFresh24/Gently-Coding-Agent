@@ -3,7 +3,6 @@
 // Compatible interface for direct model orchestration
 // =====================================================
 
-import * as vscode from 'vscode';
 import { ApiKeyManager } from './ApiKeyManager';
 import { StreamingToolCallProcessor } from '../core/streaming/StreamingToolCallProcessor';
 import { StreamChunk, ToolCall as CoreToolCall, UsageInfo } from '../core/streaming/types';
@@ -39,6 +38,34 @@ export interface Tool {
     };
 }
 
+export class OpenRouterHttpError extends Error {
+    readonly status: number;
+    readonly code?: string;
+    readonly model?: string;
+    readonly maxTokens?: number;
+    readonly retryAfterMs?: number;
+    readonly metadata?: any;
+
+    constructor(params: {
+        status: number;
+        message: string;
+        code?: string;
+        model?: string;
+        maxTokens?: number;
+        retryAfterMs?: number;
+        metadata?: any;
+    }) {
+        super(params.message);
+        this.name = 'OpenRouterHttpError';
+        this.status = params.status;
+        this.code = params.code;
+        this.model = params.model;
+        this.maxTokens = params.maxTokens;
+        this.retryAfterMs = params.retryAfterMs;
+        this.metadata = params.metadata;
+    }
+}
+
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 const APP_SITE = 'https://github.com/gently-ai/gently-vscode-extension';
 const APP_TITLE = 'Gently - AI Coding Agent';
@@ -46,6 +73,7 @@ const APP_TITLE = 'Gently - AI Coding Agent';
 export class OpenRouterService {
     private toolCallProcessor = new StreamingToolCallProcessor();
     private modelMaxTokensCache: Map<string, number> = new Map();
+    private modelContextLengthCache: Map<string, number> = new Map();
 
     constructor(
         private readonly apiKeyManager: ApiKeyManager,
@@ -67,26 +95,18 @@ export class OpenRouterService {
         };
     }
 
-    private getModel(): string {
-        try {
-            return vscode.workspace.getConfiguration('gently').get<string>('selectedModel') || 'deepseek/deepseek-chat';
-        } catch {
-            return 'deepseek/deepseek-chat';
-        }
-    }
-
     async sendChatMessage(request: ChatRequest): Promise<Response> {
         const headers = await this.buildHeaders();
-        const model = request.model || this.getModel();
+        const model = request.model;
 
         // Validate & clean messages
         const messages = this.cleanMessages(request.messages);
 
         const body: any = {
-            model,
             messages,
             stream: request.stream ?? false,
         };
+        if (model) body.model = model;
 
         if (request.temperature !== undefined) body.temperature = request.temperature;
         if (request.max_tokens !== undefined) body.max_tokens = request.max_tokens;
@@ -94,7 +114,7 @@ export class OpenRouterService {
         if (request.response_format) body.response_format = request.response_format;
         if (request.plugins && request.plugins.length > 0) body.plugins = request.plugins;
 
-        console.log(`[OpenRouterService] Sending request: model=${model}, messages=${messages.length}, stream=${body.stream}`);
+        console.log(`[OpenRouterService] Sending request: model=${model || '<openrouter-default>'}, messages=${messages.length}, stream=${body.stream}`);
 
         const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
             method: 'POST',
@@ -106,18 +126,38 @@ export class OpenRouterService {
             let errorData: any = {};
             try { errorData = await response.json(); } catch { }
             console.error('[OpenRouterService] API error:', response.status, errorData);
+            const errorMessage = errorData?.error?.message || response.statusText || 'Unknown error';
+            const errorCode = errorData?.error?.code;
+            const retryAfterMs = this.parseRetryAfterMs(response.headers.get('retry-after'));
+            const errorMetadata = errorData?.error?.metadata;
 
             if (response.status === 401) {
                 throw new Error('Invalid OpenRouter API key. Please update your key in Gently settings.');
             }
             if (response.status === 429) {
-                const msg = errorData?.error?.message || 'Rate limit exceeded';
-                throw new Error(`OpenRouter rate limit: ${msg}`);
+                throw new OpenRouterHttpError({
+                    status: response.status,
+                    code: typeof errorCode === 'number' ? String(errorCode) : errorCode,
+                    message: `OpenRouter rate limit: ${errorMessage}`,
+                    model,
+                    maxTokens: request.max_tokens,
+                    retryAfterMs,
+                    metadata: errorMetadata
+                });
             }
             if (response.status >= 500) {
                 throw new Error(`OpenRouter server error (${response.status}). Please try again.`);
             }
-            throw new Error(`OpenRouter error (${response.status}): ${errorData?.error?.message || response.statusText}`);
+
+            throw new OpenRouterHttpError({
+                status: response.status,
+                code: typeof errorCode === 'number' ? String(errorCode) : errorCode,
+                message: `OpenRouter error (${response.status}): ${errorMessage}`,
+                model,
+                maxTokens: request.max_tokens,
+                retryAfterMs,
+                metadata: errorMetadata
+            });
         }
 
         return response;
@@ -138,6 +178,9 @@ export class OpenRouterService {
                 }
                 return; // Success
             } catch (error) {
+                if (error instanceof OpenRouterHttpError) {
+                    throw error;
+                }
                 lastError = error;
                 if (attempt < maxRetries) {
                     console.warn(`[OpenRouterService] Stream attempt ${attempt + 1} failed, retrying in ${delay}ms...`, error);
@@ -337,12 +380,14 @@ export class OpenRouterService {
             const data: any = await resp.json();
             const models = (data.data ?? []).map((m: any) => {
                 const maxOutput = m.top_provider?.max_completion_tokens || 0;
+                const contextLength = m.context_length ?? 0;
                 // Update cache while we vary the list
                 this.modelMaxTokensCache.set(m.id, maxOutput);
+                this.modelContextLengthCache.set(m.id, contextLength);
                 return {
                     id: m.id,
                     name: m.name,
-                    context_length: m.context_length ?? 0,
+                    context_length: contextLength,
                     max_output: maxOutput,
                 };
             });
@@ -364,6 +409,61 @@ export class OpenRouterService {
         const models = await this.listModels();
         const model = models.find(m => m.id === modelId);
         return (model?.max_output && model.max_output > 0) ? model.max_output : 8192; // Fallback to 8k
+    }
+
+    async getContextLength(modelId: string): Promise<number> {
+        if (this.modelContextLengthCache.has(modelId)) {
+            const cached = this.modelContextLengthCache.get(modelId);
+            if (cached && cached > 0) return cached;
+        }
+
+        const models = await this.listModels();
+        const model = models.find(m => m.id === modelId);
+        return (model?.context_length && model.context_length > 0) ? model.context_length : 200000;
+    }
+
+    isContextLengthError(error: unknown): error is OpenRouterHttpError {
+        if (!(error instanceof OpenRouterHttpError)) return false;
+        if (error.status !== 400) return false;
+
+        const msg = (error.message || '').toLowerCase();
+        if (error.code === 'context_length_exceeded') return true;
+        return (
+            msg.includes('maximum context length') ||
+            msg.includes('requested about') ||
+            msg.includes('reduce the length') ||
+            msg.includes('context length')
+        );
+    }
+
+    isGuardrailPrivacyError(error: unknown): error is OpenRouterHttpError {
+        if (!(error instanceof OpenRouterHttpError)) return false;
+        if (error.status !== 404) return false;
+
+        const msg = (error.message || '').toLowerCase();
+        return msg.includes('no endpoints available matching your guardrail restrictions') &&
+            msg.includes('data policy');
+    }
+
+    isRateLimitError(error: unknown): error is OpenRouterHttpError {
+        return error instanceof OpenRouterHttpError && error.status === 429;
+    }
+
+    private parseRetryAfterMs(retryAfter: string | null): number | undefined {
+        if (!retryAfter) return undefined;
+
+        const asSeconds = Number(retryAfter);
+        if (Number.isFinite(asSeconds) && asSeconds > 0) {
+            return Math.floor(asSeconds * 1000);
+        }
+
+        const asDate = Date.parse(retryAfter);
+        if (!Number.isNaN(asDate)) {
+            const delta = asDate - Date.now();
+            return delta > 0 ? delta : undefined;
+        }
+
+        return undefined;
     }
 
     dispose(): void {

@@ -26,7 +26,8 @@ export class ChatFlowManager {
         private readonly toolCallDispatcher: ToolCallDispatcher,
         private readonly modeService: ModeService,
         private readonly sendMessageToWebview: (message: OutboundWebviewMessage) => void,
-        private readonly openRouterService: OpenRouterService
+        private readonly openRouterService: OpenRouterService,
+        private readonly handleGuardrailPrivacyError?: () => Promise<void>
     ) { }
 
     async handleUserMessage(
@@ -81,9 +82,14 @@ export class ChatFlowManager {
     }
 
     async generateAndStreamResponse(context: ChatViewContext, message: string, retryCount: number = 0, isFollowUp: boolean = false): Promise<void> {
+        if (!context.selectedModel) {
+            throw new Error('Please select a model before sending a message.');
+        }
+
         const mode = this.modeService.getCurrentMode();
         const temperature = mode?.temperature ?? 0.7;
-        const maxTokens = context.selectedModel ? await this.openRouterService.getMaxTokens(context.selectedModel) : (mode?.maxTokens ?? 4096);
+        const modelMaxOutput = await this.openRouterService.getMaxTokens(context.selectedModel);
+        const modelContextLength = await this.openRouterService.getContextLength(context.selectedModel);
 
         this.sendMessageToWebview({ type: 'activityUpdate', label: 'Preparing prompt...' });
         const systemPrompt = await this.promptManager.prepareSystemPrompt(context, retryCount);
@@ -94,22 +100,100 @@ export class ChatFlowManager {
         ];
 
         const tools = this.getToolsForMode(context);
-        const responseFormat = tools && context.selectedModel === 'deepseek-chat' ? { type: 'json_object' as const } : undefined;
+        const responseFormat = tools && context.selectedModel === 'deepseek/deepseek-chat' ? { type: 'json_object' as const } : undefined;
+        const configuredMaxTokens = this.getConfiguredMaxTokens();
+        let maxTokens = this.computeMaxOutputTokens(messages, tools, modelContextLength, modelMaxOutput, configuredMaxTokens);
 
         // Always send generatingStart to ensure the UI indicator is active,
         // even for follow-up responses (e.g. after tool execution)
         this.sendMessageToWebview({ type: 'generatingStart' });
 
         context.shouldStopStream = false;
-        const { assistantMessage, toolCalls } = await this.streamingService.streamResponse(messages, {
-            temperature,
-            maxTokens,
-            model: context.selectedModel,
-            tools,
-            responseFormat,
-            isFollowUp,
-            shouldStopRef: { get current() { return context.shouldStopStream; } } as any
-        });
+        let rateLimitRetryCount = 0;
+        let contextLengthRetried = false;
+        let assistantMessage = '';
+        let toolCalls: any[] = [];
+        while (true) {
+            try {
+                const result = await this.streamingService.streamResponse(messages, {
+                    temperature,
+                    maxTokens,
+                    model: context.selectedModel,
+                    tools,
+                    responseFormat,
+                    isFollowUp,
+                    shouldStopRef: { get current() { return context.shouldStopStream; } } as any
+                });
+                assistantMessage = result.assistantMessage;
+                toolCalls = result.toolCalls;
+                break;
+            } catch (error) {
+                if (this.openRouterService.isRateLimitError(error)) {
+                    const maxRateLimitRetries = 2;
+                    const retryAttempt = rateLimitRetryCount + 1;
+                    const retryDelayMs = this.getRateLimitDelayMs(error.retryAfterMs, retryAttempt);
+
+                    if (!context.shouldStopStream && retryAttempt <= maxRateLimitRetries) {
+                        log.warn(`Rate limit detected. Retrying attempt ${retryAttempt}/${maxRateLimitRetries} in ${retryDelayMs}ms (model=${context.selectedModel})`);
+                        log.info(`Rate-limit retry planned: attempt=${retryAttempt} delayMs=${retryDelayMs} model=${context.selectedModel} max_tokens=${maxTokens}`);
+                        this.sendMessageToWebview({
+                            type: 'retryingRateLimit',
+                            attempt: retryAttempt,
+                            maxAttempts: maxRateLimitRetries,
+                            delayMs: retryDelayMs,
+                            model: context.selectedModel
+                        } as any);
+                        this.sendMessageToWebview({ type: 'activityUpdate', label: `Provider busy. Retrying in ${Math.ceil(retryDelayMs / 1000)}s...` });
+                        await this.sleepWithStop(retryDelayMs, context);
+                        if (context.shouldStopStream) {
+                            throw new Error('Request stopped by user.');
+                        }
+                        this.sendMessageToWebview({ type: 'generatingStart' });
+                        rateLimitRetryCount += 1;
+                        continue;
+                    }
+
+                    const freeModelHint = context.selectedModel.includes(':free')
+                        ? ' Free providers are often saturated. Try again shortly or choose another model.'
+                        : '';
+                    log.error(`Rate limit retries exhausted: status=429 model=${context.selectedModel} max_tokens=${maxTokens}`, error);
+                    throw new Error(`Provider is currently rate-limited. Please wait and retry.${freeModelHint}`);
+                }
+
+                if (this.openRouterService.isGuardrailPrivacyError(error)) {
+                    log.error(`Guardrail privacy mismatch: status=404 model=${context.selectedModel} max_tokens=${maxTokens}`, error);
+                    if (this.handleGuardrailPrivacyError) {
+                        await this.handleGuardrailPrivacyError();
+                    }
+                    throw new Error('OpenRouter blocked this request due to privacy/guardrail settings. To use free models, enable "free endpoints that may publish prompts" in https://openrouter.ai/settings/privacy');
+                }
+
+                if (
+                    !contextLengthRetried &&
+                    !context.shouldStopStream &&
+                    this.openRouterService.isContextLengthError(error)
+                ) {
+                    const reduced = Math.max(256, Math.floor(maxTokens * 0.75));
+                    if (reduced < maxTokens) {
+                        log.info(`Retry planned with reduced max_tokens ${maxTokens} -> ${reduced} (model=${context.selectedModel})`);
+                        log.warn(`Context-length exceeded. Retrying once with reduced max_tokens ${maxTokens} -> ${reduced} (model=${context.selectedModel})`);
+                        this.sendMessageToWebview({ type: 'retryingWithReducedTokens', originalMax: maxTokens, newMax: reduced, reason: 'context_length' } as any);
+                        this.sendMessageToWebview({ type: 'activityUpdate', label: 'Retrying with reduced output tokens...' });
+                        this.sendMessageToWebview({ type: 'generatingStart' });
+                        maxTokens = reduced;
+                        contextLengthRetried = true;
+                        continue;
+                    }
+                }
+
+                if (this.openRouterService.isContextLengthError(error)) {
+                    log.error(`Context-length retry failed: status=400 model=${context.selectedModel} max_tokens=${maxTokens}`, error);
+                } else {
+                    log.error(`OpenRouter request failed: model=${context.selectedModel} max_tokens=${maxTokens}`, error);
+                }
+                throw error;
+            }
+        }
 
         if (assistantMessage.length > 0 || toolCalls.length > 0) {
             await this.completeStreaming(context, assistantMessage, toolCalls, isFollowUp);
@@ -154,6 +238,55 @@ export class ChatFlowManager {
         const tools = mode.getToolsForMode(this.agentManager);
         log.info(`getToolsForMode: mode=${mode.id}, returning ${tools?.length || 0} tools`);
         return tools;
+    }
+
+    private estimateInputTokens(messages: Array<{ content: string; tool_calls?: any[] }>, tools?: any[]): number {
+        const joinedContent = messages.map((m) => m.content || '').join('\n');
+        const toolCallContent = messages
+            .map((m) => (m.tool_calls && m.tool_calls.length > 0 ? JSON.stringify(m.tool_calls) : ''))
+            .join('\n');
+        const toolDefs = tools && tools.length > 0 ? JSON.stringify(tools) : '';
+        const rawChars = joinedContent.length + toolCallContent.length + toolDefs.length;
+        const rawEstimate = Math.ceil(rawChars / 4);
+        return Math.ceil(rawEstimate * 1.15);
+    }
+
+    private getConfiguredMaxTokens(): number {
+        const configured = vscode.workspace.getConfiguration('gently').get<number>('maxTokens');
+        if (typeof configured === 'number' && configured > 0) return configured;
+        return Number.MAX_SAFE_INTEGER;
+    }
+
+    private computeMaxOutputTokens(
+        messages: Array<{ content: string; tool_calls?: any[] }>,
+        tools: any[] | undefined,
+        modelContextLength: number,
+        modelMaxOutput: number,
+        userConfiguredMax: number
+    ): number {
+        const baseReserve = 1024;
+        const estimatedInput = this.estimateInputTokens(messages, tools);
+        const safeMax = modelContextLength - estimatedInput - baseReserve;
+        const bounded = Math.min(userConfiguredMax, modelMaxOutput, safeMax);
+        return Math.max(256, bounded);
+    }
+
+    private getRateLimitDelayMs(retryAfterMs: number | undefined, retryAttempt: number): number {
+        const backoff = Math.pow(2, retryAttempt - 1) * 1000;
+        if (typeof retryAfterMs === 'number' && retryAfterMs > 0) {
+            return Math.max(backoff, retryAfterMs);
+        }
+        return backoff;
+    }
+
+    private async sleepWithStop(delayMs: number, context: ChatViewContext): Promise<void> {
+        const step = 100;
+        let elapsed = 0;
+        while (elapsed < delayMs) {
+            if (context.shouldStopStream) return;
+            await new Promise((resolve) => setTimeout(resolve, Math.min(step, delayMs - elapsed)));
+            elapsed += step;
+        }
     }
 
     dispose(): void {

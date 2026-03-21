@@ -63,7 +63,8 @@ export class StreamingService {
             } catch (error) {
                 log.error('Non-streaming follow-up failed:', error);
                 this.sendMessageToWebview({ type: 'processingEnd' });
-                return { assistantMessage: '', toolCalls: [] };
+                this.sendMessageToWebview({ type: 'generatingEnd' });
+                throw error;
             }
         } else {
             let timeoutId: NodeJS.Timeout | undefined;
@@ -148,9 +149,9 @@ export class StreamingService {
                 };
             } catch (error) {
                 log.error('Streaming failed:', error);
-                this.sendMessageToWebview({ type: 'error', message: error instanceof Error ? error.message : String(error) });
                 this.sendMessageToWebview({ type: 'processingEnd' });
-                return { assistantMessage: '', toolCalls: [] };
+                this.sendMessageToWebview({ type: 'generatingEnd' });
+                throw error;
             } finally {
                 if (timeoutId) clearTimeout(timeoutId);
             }

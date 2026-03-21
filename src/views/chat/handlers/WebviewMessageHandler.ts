@@ -88,6 +88,7 @@ export class WebviewMessageHandler {
         // Fetch models immediately after setting key
         try {
           const models = await this.openRouterService.listModels();
+          this.messageHandler.setAvailableModels(models);
           this.sendMessageToWebview({ type: 'modelsList', models });
         } catch (err) {
           console.error('[WebviewMessageHandler] Error fetching models after key set:', err);
@@ -109,6 +110,7 @@ export class WebviewMessageHandler {
       case 'fetchModels': {
         try {
           const models = await this.openRouterService.listModels();
+          this.messageHandler.setAvailableModels(models);
           this.sendMessageToWebview({ type: 'modelsList', models });
         } catch (error: any) {
           console.error('[WebviewMessageHandler] Error fetching models:', error);
@@ -123,7 +125,7 @@ export class WebviewMessageHandler {
 
       case 'modelChanged':
         // Accept any OpenRouter model slug
-        this.messageHandler.setSelectedModel(data.model as any);
+        await this.messageHandler.setSelectedModel(data.model as any);
         console.log(`[WebviewMessageHandler] Model changed: ${data.model}`);
         break;
 

@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { ModelInfo } from './lib/types';
   import Header from './components/layout/Header.svelte';
   import ChatView from './components/chat/ChatView.svelte';
   import GuardianView from './components/guardian/GuardianView.svelte';
@@ -11,8 +10,6 @@
   import { messaging } from './lib/messaging';
 
   let currentView = 'chat';
-  let models: ModelInfo[] = [];
-  let selectedModel = '';
   let tokens = 0;
 
   function handleMessage(event: MessageEvent) {
@@ -23,16 +20,10 @@
         break;
       case 'modelsList':
         if (message.models && message.models.length > 0) {
-          models = message.models;
           settingsStore.setModels(message.models);
-          if (!selectedModel) {
-            selectedModel = models[0].id;
-            settingsStore.setSelectedModel(selectedModel);
-          }
         }
         break;
       case 'modelChanged':
-        selectedModel = message.model;
         settingsStore.setSelectedModel(message.model);
         break;
       case 'onApiKeyStatus':

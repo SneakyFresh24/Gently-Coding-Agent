@@ -74,7 +74,7 @@ Current workspace: ${vscode.workspace.name || 'No workspace open'}`;
             `Wichtige Architektur-Entscheidungen und Regeln werden automatisch von Guardian in decisions.md und rules.md gespeichert.\n` +
             `Berücksichtige diese Dokumente immer bei Architektur-Änderungen oder neuen Features.\n`;
 
-        const modelLower = context.selectedModel.toLowerCase();
+        const modelLower = (context.selectedModel || '').toLowerCase();
         if (modelLower.includes('minimax') || modelLower.includes('m2.5') || modelLower.includes('glm')) {
             systemPrompt += `\n\nWICHTIG: Nach Tool-Ausführung IMMER eine klare Antwort geben – niemals leer lassen.`;
         }
@@ -132,6 +132,10 @@ export class ConversationPruner {
         }
 
         const messagesToSummarize = context.conversationHistory.slice(0, pruneIndex);
+        if (!context.selectedModel) {
+            log.warn('Skipping conversation summary because no model is selected.');
+            return;
+        }
 
         try {
             log.info(`Getting summary of oldest ${pruneIndex} messages...`);
@@ -147,7 +151,7 @@ ${messagesToSummarize.map(m => `[${m.role}]: ${m.content}`).join('\n')}
             let summary = '';
             for await (const chunk of this.openRouterService.streamChatMessage({
                 messages: [{ role: 'user', content: summaryPrompt }],
-                model: typeof context.selectedModel === 'string' ? context.selectedModel : 'deepseek-chat',
+                model: context.selectedModel,
                 stream: true,
                 temperature: 0.1,
                 max_tokens: 1000

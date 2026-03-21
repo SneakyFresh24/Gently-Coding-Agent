@@ -33,7 +33,7 @@
       <span class="date">{date}</span>
     </div>
     <div class="bottom-row">
-      <span class="model">{session.model}</span>
+      <span class="model">{session.model || 'No model selected'}</span>
       <span class="dot">•</span>
       <span class="msgs">{session.messageCount} messages</span>
       <span class="dot">•</span>

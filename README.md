@@ -1,7 +1,7 @@
-# Gently 🧠 (v0.5.3)
+# Gently 🧠 (v0.8.0)
 
 > The privacy-first AI agent for VS Code with integrated semantic search, architectural guardrails, and deterministic code analysis.
-[![Version](https://img.shields.io/badge/version-0.5.3-blue)](https://marketplace.visualstudio.com/items?itemName=gently.gently)
+[![Version](https://img.shields.io/badge/version-0.8.0-blue)](https://marketplace.visualstudio.com/items?itemName=gently.gently)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![VS Code](https://img.shields.io/badge/vscode-^1.85.0-007ACC)](https://code.visualstudio.com/)
 
@@ -54,7 +54,7 @@
 
 **From VSIX:**
 ```bash
-code --install-extension gently-0.5.3.vsix
+code --install-extension gently-0.8.0.vsix
 ```
 
 ### 2. Configuration
@@ -68,9 +68,9 @@ code --install-extension gently-0.5.3.vsix
    - Click "Configure API Key"
    - Enter your OpenRouter API key
 
-3. **Select a Model** (optional):
-   - Default: `deepseek/deepseek-chat`
-   - Alternatives: `anthropic/claude-3.5-sonnet`, `openai/gpt-4o`
+3. **Select a Model** (required):
+   - There is no implicit default model.
+   - Pick any OpenRouter model slug from the model dropdown (for example: `openai/gpt-4o-mini`, `anthropic/claude-3.5-sonnet`, `minimax/minimax-m2.5:free`).
 
 ### 3. Start Using
 
@@ -140,7 +140,7 @@ User Query
 | `gently.temperature` | number | 0.7 | AI response creativity (0.0-2.0) |
 | `gently.maxTokens` | number | 8000 | Maximum response tokens |
 | `gently.agentMode` | boolean | false | Enable autonomous agent mode |
-| `gently.selectedModel` | string | deepseek/deepseek-chat | OpenRouter model slug |
+| `gently.selectedModel` | string | *(unset)* | OpenRouter model slug selected by the user |
 | `gently.validation.enabled` | boolean | true | Enable code validation |
 | `gently.guardian.enabled` | boolean | true | Enable Guardian monitoring |
 | `gently.guardian.autoStart` | boolean | true | Auto-start Guardian on activation |
@@ -249,6 +249,14 @@ npm run package
 - **No Code Storage**: Your code is never stored on external servers
 - **Local Settings**: API keys stored securely in VS Code Secret Storage
 - **Guardian Security**: Built-in security pattern analysis
+
+## 🧯 OpenRouter Error Handling
+
+- **429 Rate Limit / Provider Busy**: Gently performs short automatic backoff retries and shows retry progress in chat.
+- **400 Context Length Exceeded**: Gently retries once with reduced output tokens and notifies you in chat.
+- **404 Guardrail/Privacy Mismatch**: Gently shows an actionable message and points to OpenRouter privacy settings:
+  - [https://openrouter.ai/settings/privacy](https://openrouter.ai/settings/privacy)
+  - For free models, ensure "Enable free endpoints that may publish prompts" is enabled if required by your policy.
 
 ## 📊 Performance
 

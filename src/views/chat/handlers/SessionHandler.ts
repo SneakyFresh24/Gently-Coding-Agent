@@ -3,13 +3,21 @@
 // =====================================================
 
 import { HistoryManager, SessionType, SessionStatus, Session } from '../../../services/HistoryManager';
-import { Message } from '../types/ChatTypes';
 
 export class SessionHandler {
   constructor(
     private readonly sessionManager: HistoryManager,
-    private readonly sendMessageToWebview: (message: any) => void
+    private readonly sendMessageToWebview: (message: any) => void,
+    private readonly applyRuntimeSessionState?: (messages: any[], model: string | null) => Promise<void>
   ) { }
+
+  private normalizeSessionModel(model: unknown): string | null {
+    if (typeof model !== 'string') return null;
+    const trimmed = model.trim();
+    if (!trimmed) return null;
+    if (trimmed === 'unknown' || trimmed === 'glm-4.6' || trimmed === 'deepseek-chat') return null;
+    return /^[^/\s]+\/[^/\s]+$/.test(trimmed) ? trimmed : null;
+  }
 
   async handleGetSessions(): Promise<void> {
     try {
@@ -36,7 +44,7 @@ export class SessionHandler {
           title: session.name || 'Untitled',
           createdAt: session.createdAt,
           updatedAt: session.updatedAt,
-          model: session.metadata.model || 'unknown',
+          model: this.normalizeSessionModel(session.metadata.model) || '',
           messages: chatSession.messages || [],
           messageCount,
           agentMode: session.metadata.agentMode || false,
@@ -89,6 +97,13 @@ export class SessionHandler {
         });
       }
 
+      if (activeSession && this.applyRuntimeSessionState) {
+        await this.applyRuntimeSessionState(
+          activeChatSession?.messages || [],
+          this.normalizeSessionModel(activeSession.metadata?.model)
+        );
+      }
+
       // Restore tasks and context to UI and ContextManager if active session has them saved
       if (activeSession) {
         this.sendMessageToWebview({
@@ -125,7 +140,6 @@ export class SessionHandler {
       console.log('[SessionHandler] Creating new session...');
       const sessionData = {
         name: 'New Chat',
-        model: 'deepseek-chat',
         temperature: 0.7,
         maxTokens: 4000
       };
@@ -151,6 +165,10 @@ export class SessionHandler {
         tasks: null,
         context: null
       });
+
+      if (this.applyRuntimeSessionState) {
+        await this.applyRuntimeSessionState([], null);
+      }
     } catch (error) {
       console.error('[SessionHandler] Error creating new session:', error);
       this.sendMessageToWebview({
@@ -201,6 +219,13 @@ export class SessionHandler {
         type: 'loadMessages',
         messages
       });
+
+      if (this.applyRuntimeSessionState) {
+        await this.applyRuntimeSessionState(
+          messages,
+          this.normalizeSessionModel(session.metadata?.model)
+        );
+      }
 
       // Restore specialized session state to store
       this.sendMessageToWebview({
@@ -266,6 +291,9 @@ export class SessionHandler {
             this.sendMessageToWebview({
               type: 'clearMessages'
             });
+            if (this.applyRuntimeSessionState) {
+              await this.applyRuntimeSessionState([], null);
+            }
           }
           break;
         case 'pin':
@@ -325,6 +353,10 @@ export class SessionHandler {
         type: 'clearMessages'
       });
 
+      if (this.applyRuntimeSessionState) {
+        await this.applyRuntimeSessionState([], null);
+      }
+
       // Update sessions list
       await this.handleGetSessions();
 
@@ -368,7 +400,7 @@ export class SessionHandler {
           title: session.name || 'Untitled',
           createdAt: session.createdAt,
           updatedAt: session.updatedAt,
-          model: session.metadata.model || 'unknown',
+          model: this.normalizeSessionModel(session.metadata.model) || '',
           messages: chatSession.messages || [],
           messageCount: chatSession.messages?.length || 0,
           agentMode: session.metadata.agentMode || false,
@@ -538,7 +570,6 @@ export class SessionHandler {
       // Create new session with imported data
       const newSessionData = {
         name: sessionData.title || 'Imported Session',
-        model: 'deepseek-chat',
         temperature: 0.7,
         maxTokens: 4000
       };

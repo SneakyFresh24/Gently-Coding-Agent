@@ -16,6 +16,7 @@ import { ModeService } from '../../../modes/ModeService';
 import { StreamingService } from './StreamingService';
 import { ChatFlowManager } from './ChatFlowManager';
 import { OutboundWebviewMessage } from '../types/WebviewMessageTypes';
+import { SessionType } from '../../../services/HistoryManager';
 
 export class MessageHandler {
   private context!: ChatViewContext;
@@ -23,6 +24,7 @@ export class MessageHandler {
   private sessionHistoryManager: SessionHistoryManager;
   private toolCallManager: ToolCallManager;
   private flowManager: ChatFlowManager;
+  private availableModelIds = new Set<string>();
 
   constructor(
     private readonly extensionContext: vscode.ExtensionContext,
@@ -66,9 +68,24 @@ export class MessageHandler {
       (m: string | undefined) => followUp.sendFollowUpMessage(this.context, m || '')
     );
 
-    this.flowManager = new ChatFlowManager(agentManager, this.sessionHistoryManager, refParser, promptMgr, streaming, pruner, this.toolCallManager, dispatcher, this.modeService, sendMessageToWebview, openRouterService);
+    this.flowManager = new ChatFlowManager(
+      agentManager,
+      this.sessionHistoryManager,
+      refParser,
+      promptMgr,
+      streaming,
+      pruner,
+      this.toolCallManager,
+      dispatcher,
+      this.modeService,
+      sendMessageToWebview,
+      openRouterService,
+      async () => {
+        await this.setSelectedModel(null);
+      }
+    );
 
-    this.context = { agentMode: false, selectedModel: 'glm-4.6', selectedMode: 'ask', conversationHistory: [], shouldStopStream: false, shouldAbortTools: false, messageCheckpoints: new Map(), toolExecutionStartSent: new Set() };
+    this.context = { agentMode: false, selectedModel: null, selectedMode: 'ask', conversationHistory: [], shouldStopStream: false, shouldAbortTools: false, messageCheckpoints: new Map(), toolExecutionStartSent: new Set() };
 
     this.loadStoredState();
     this.sessionHistoryManager.initializeSession(this.context);
@@ -80,12 +97,20 @@ export class MessageHandler {
   }
 
   async sendMessage(userMessage: string, silent: boolean = false, fileReferences?: any[], retryCount: number = 0): Promise<void> {
+    if (!this.isValidOpenRouterModelId(this.context.selectedModel)) {
+      this.sendMessageToWebview({
+        type: 'error',
+        message: 'Please select a valid OpenRouter model before sending a message.'
+      });
+      return;
+    }
     await this.flowManager.handleUserMessage(this.context, userMessage, { silent, fileReferences, retryCount });
   }
 
   private loadStoredState(): void {
     this.context.agentMode = this.extensionContext.globalState.get('gently.agentMode', false);
-    this.context.selectedModel = this.extensionContext.globalState.get('gently.selectedModel', 'glm-4.6');
+    const storedModel = this.extensionContext.globalState.get<string | null>('gently.selectedModel', null);
+    this.context.selectedModel = this.normalizeModelId(storedModel);
     this.context.selectedMode = this.extensionContext.globalState.get('gently.selectedMode', 'ask');
   }
 
@@ -96,9 +121,82 @@ export class MessageHandler {
     this.extensionContext.globalState.update('gently.agentMode', this.context.agentMode);
   }
 
-  setSelectedModel(model: string): void {
-    this.context.selectedModel = model;
-    this.extensionContext.globalState.update('gently.selectedModel', model);
+  async setSelectedModel(model: string | null): Promise<void> {
+    const normalizedModel = this.normalizeModelId(model);
+    this.context.selectedModel = normalizedModel;
+    await this.extensionContext.globalState.update('gently.selectedModel', normalizedModel);
+    await this.persistSelectedModelToActiveSession(normalizedModel);
+    this.sendMessageToWebview({ type: 'modelChanged', model: normalizedModel || '' } as any);
+    this.sendMessageToWebview({ type: 'refreshSessions' } as any);
+  }
+
+  setAvailableModels(models: Array<{ id: string }> | string[]): void {
+    const ids = models.map((m) => typeof m === 'string' ? m : m.id).filter((id) => typeof id === 'string' && id.trim().length > 0);
+    this.availableModelIds = new Set(ids);
+    if (this.context.selectedModel && !this.isValidOpenRouterModelId(this.context.selectedModel)) {
+      this.context.selectedModel = null;
+      void this.extensionContext.globalState.update('gently.selectedModel', null);
+      void this.persistSelectedModelToActiveSession(null);
+      this.sendMessageToWebview({ type: 'modelChanged', model: '' } as any);
+    }
+  }
+
+  async applySessionState(sessionMessages: any[], sessionModel: string | null): Promise<void> {
+    this.context.conversationHistory = (sessionMessages || [])
+      .filter((m: any) => m && (m.role === 'user' || m.role === 'assistant' || m.role === 'system' || m.role === 'tool'))
+      .map((m: any) => fromChatMessage({
+        role: m.role,
+        content: m.content || '',
+        tool_call_id: m.tool_call_id,
+        tool_calls: m.tool_calls
+      }, m.id));
+
+    const normalizedModel = this.normalizeModelId(sessionModel);
+    this.context.selectedModel = normalizedModel;
+    await this.extensionContext.globalState.update('gently.selectedModel', normalizedModel);
+    this.sendMessageToWebview({ type: 'modelChanged', model: normalizedModel || '' } as any);
+  }
+
+  private normalizeModelId(model: string | null | undefined): string | null {
+    if (typeof model !== 'string') return null;
+    const trimmed = model.trim();
+    if (!this.isValidOpenRouterModelId(trimmed)) return null;
+    return trimmed;
+  }
+
+  private isValidOpenRouterModelId(model: string | null | undefined): model is string {
+    if (typeof model !== 'string') return false;
+    const trimmed = model.trim();
+    if (!trimmed) return false;
+
+    // Explicitly block legacy/internal pseudo IDs.
+    const disallowed = new Set(['unknown', 'glm-4.6', 'deepseek-chat']);
+    if (disallowed.has(trimmed)) return false;
+
+    // If we have a fresh model list, enforce strict whitelist.
+    if (this.availableModelIds.size > 0) {
+      return this.availableModelIds.has(trimmed);
+    }
+
+    // Fallback validation when list is not available yet.
+    return /^[^/\s]+\/[^/\s]+$/.test(trimmed);
+  }
+
+  private async persistSelectedModelToActiveSession(model: string | null): Promise<void> {
+    const activeSession = await this.sessionHistoryManager.getActiveSession(SessionType.CHAT);
+    if (!activeSession) return;
+
+    const metadata = { ...(activeSession.metadata || {}) };
+    if (model) {
+      metadata.model = model;
+    } else {
+      delete metadata.model;
+    }
+
+    const chatProvider = this.sessionHistoryManager.getChatProvider();
+    if (chatProvider) {
+      await chatProvider.updateSession(activeSession.id, { metadata });
+    }
   }
 
   getSessionManager(): SessionHistoryManager {

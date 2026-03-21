@@ -76,11 +76,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     // CRITICAL: Create and inject HistoryManager FIRST, before MessageHandler!
     this.historyManager = this.createHistoryManager();
 
-    this.sessionHandler = new SessionHandler(
-      this.historyManager,
-      (message: any) => this.sendMessageToWebview(message)
-    );
-
     this.messageHandler = new MessageHandler(
       this.context,
       this.openRouterService,
@@ -99,6 +94,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         // 3. UI Update
         this.sendContextUpdate();
+      }
+    );
+
+    this.sessionHandler = new SessionHandler(
+      this.historyManager,
+      (message: any) => this.sendMessageToWebview(message),
+      async (messages: any[], model: string | null) => {
+        await this.messageHandler.applySessionState(messages, model);
       }
     );
 
@@ -256,8 +259,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     console.log('[ChatViewProvider] Initializing webview data');
 
     try {
-      const autoApproveManager = this.agentManager.getServiceProvider().getService('autoApproveManager');
-      if (autoApproveManager) {
+      const autoApproveManager = this.agentManager.getServiceProvider().getService('autoApproveManager') as {
+        getSettings?: () => any;
+      } | undefined;
+      if (autoApproveManager?.getSettings) {
         this.sendMessageToWebview({
           type: 'autoApproveSettingsUpdate',
           settings: autoApproveManager.getSettings()
@@ -275,6 +280,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       try {
         const models = await this.openRouterService.listModels();
         if (models && models.length > 0) {
+          this.messageHandler.setAvailableModels(models);
           this.sendMessageToWebview({ type: 'modelsList', models });
         }
       } catch (error) {
@@ -340,7 +346,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   public setSelectedModel(model: string): void {
-    this.messageHandler.setSelectedModel(model);
+    void this.messageHandler.setSelectedModel(model);
     this.context?.globalState.update('gently.selectedModel', model);
   }
 

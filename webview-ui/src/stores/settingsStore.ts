@@ -45,13 +45,7 @@ function createSettingsStore() {
     },
 
     setModels(models: ModelInfo[]) {
-      update(s => {
-        const nextState = { ...s, availableModels: models, isLoadingModels: false };
-        if (!s.selectedModel && models.length > 0) {
-          nextState.selectedModel = models[0].id;
-        }
-        return nextState;
-      });
+      update(s => ({ ...s, availableModels: models, isLoadingModels: false }));
     },
 
     setSelectedModel(modelId: string) {

@@ -51,7 +51,7 @@ function createHistoryStore() {
         messageCount: Number(
           session.messageCount ?? (Array.isArray(session.messages) ? session.messages.length : 0)
         ),
-        model: session.model || session.metadata?.model || 'unknown',
+        model: session.model || session.metadata?.model || '',
       }))
     );
   };

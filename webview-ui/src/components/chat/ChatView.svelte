@@ -24,6 +24,25 @@
       // State & lifecycle
       onApiKeyStatus: (data) => settingsStore.setApiKeyStatus(data.hasKey),
       onModelsList: (data) => settingsStore.setModels(data.models),
+      onModelChanged: (data) => settingsStore.setSelectedModel(data.model || ''),
+      onRetryingWithReducedTokens: (data) => {
+        chatStore.addMessage({
+          id: `sys_retry_${Date.now()}`,
+          role: 'system',
+          content: `Retrying with reduced output tokens (${data.originalMax} -> ${data.newMax})...`,
+          timestamp: Date.now(),
+          isSystemMessage: true,
+        });
+      },
+      onRetryingRateLimit: (data) => {
+        chatStore.addMessage({
+          id: `sys_rate_retry_${Date.now()}`,
+          role: 'system',
+          content: `Provider busy, retrying (${data.attempt}/${data.maxAttempts}) in ${Math.ceil(data.delayMs / 1000)}s...`,
+          timestamp: Date.now(),
+          isSystemMessage: true,
+        });
+      },
       onModeChanged: (data) => {
         extensionStore.hydrate({
           mode: data.modeId,
@@ -156,6 +175,7 @@
     <InputSection
       isBusy={$isBusy}
       isStreamingProp={$isStreaming}
+      hasModel={!!$settingsStore.selectedModel}
       inputValue={$chatStore.inputValue}
       selectedFiles={$chatStore.selectedFiles}
       onInputChange={(v) => chatStore.setInputValue(v)}

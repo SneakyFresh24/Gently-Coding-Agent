@@ -2,6 +2,27 @@
 
 All notable changes to the "Gently" extension will be documented in this file.
 
+## [0.8.0] - 2026-03-21
+
+### Added
+- **Structured OpenRouter HTTP Errors**: Introduced typed `OpenRouterHttpError` handling with status/code/model/maxTokens and provider metadata support.
+- **Rate-Limit Retry Visibility**: Added `retryingRateLimit` webview event to surface 429 backoff retries in the chat UI.
+- **Context Retry Visibility**: Added explicit `retryingWithReducedTokens` event for one-time output-token reduction retries.
+
+### Changed
+- **No Implicit Model Defaults**: Removed hardcoded runtime model fallbacks; model selection is now explicit and session-driven.
+- **Session Model Source of Truth**: Active session metadata now drives runtime model state on new/switch/delete flows.
+- **OpenRouter Error Resilience**:
+  - 404 guardrail/privacy mismatch now triggers actionable user guidance (including OpenRouter privacy settings hint).
+  - 400 context-length overflow now performs a single controlled retry with reduced `max_tokens`.
+  - 429 provider/rate-limit errors now use short exponential backoff retries (with Retry-After support when available).
+- **Token Budgeting**: Output token budget now accounts for estimated input size, safety factor, reserve, model limits, and user max-token configuration.
+
+### Fixed
+- **Model Desync Issues**: Resolved stale/wrong model usage across session switching and message send path.
+- **Invalid Model IDs**: Prevented legacy/non-OpenRouter IDs (`glm-4.6`, `deepseek-chat`, `unknown`) from being used in runtime requests.
+- **Streaming State Consistency**: Improved processing/generating lifecycle consistency during retry/error scenarios.
+
 ## [0.7.3] - 2026-03-19
 
 ### Added

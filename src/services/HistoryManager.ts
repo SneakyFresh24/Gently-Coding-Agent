@@ -101,10 +101,6 @@ export class HistoryManager {
             ? raw.metadata
             : {};
 
-        if (!metadata.model) {
-            metadata.model = 'unknown';
-        }
-
         return {
             id,
             name,
@@ -246,9 +242,12 @@ export class HistoryManager {
         const now = Date.now();
         const sessionId = `session_${now}_${Math.random().toString(36).slice(2, 8)}`;
         const metadata = {
-            model: data?.model || 'unknown',
             ...(data?.metadata || {})
         };
+
+        if (data?.model) {
+            metadata.model = data.model;
+        }
 
         const session: Session = {
             id: sessionId,

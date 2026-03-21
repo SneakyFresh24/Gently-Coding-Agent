@@ -688,6 +688,35 @@ export interface ModelsListMessage {
 }
 
 /**
+ * Active model changed (Extension → Webview)
+ */
+export interface ActiveModelChangedMessage {
+  type: 'modelChanged';
+  model: string;
+}
+
+/**
+ * Retry with reduced output tokens after context-length error
+ */
+export interface RetryingWithReducedTokensMessage {
+  type: 'retryingWithReducedTokens';
+  originalMax: number;
+  newMax: number;
+  reason: 'context_length';
+}
+
+/**
+ * Retry with backoff after provider rate-limit
+ */
+export interface RetryingRateLimitMessage {
+  type: 'retryingRateLimit';
+  attempt: number;
+  maxAttempts: number;
+  delayMs: number;
+  model: string;
+}
+
+/**
  * Sessions list updated
  */
 export interface SessionsUpdateMessage {
@@ -1294,6 +1323,9 @@ export type OutboundWebviewMessage =
   | LogoutErrorMessage
   | AuthStatusMessage
   | ApiKeyStatusMessage
+  | ActiveModelChangedMessage
+  | RetryingWithReducedTokensMessage
+  | RetryingRateLimitMessage
   | ModelsListMessage
   | SessionsUpdateMessage
   | LoadMessagesMessage

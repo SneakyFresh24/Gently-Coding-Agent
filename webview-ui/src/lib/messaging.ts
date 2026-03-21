@@ -9,6 +9,9 @@ export interface MessageHandlers {
   // State & lifecycle
   onApiKeyStatus?: (data: any) => void;
   onModelsList?: (data: any) => void;
+  onModelChanged?: (data: any) => void;
+  onRetryingWithReducedTokens?: (data: any) => void;
+  onRetryingRateLimit?: (data: any) => void;
   onModeChanged?: (data: any) => void;
   onError?: (data: any) => void;
   onInfo?: (data: any) => void;
@@ -96,6 +99,9 @@ export interface MessageHandlers {
 const TYPE_TO_HANDLER: Record<string, keyof MessageHandlers> = {
   apiKeyStatus: 'onApiKeyStatus',
   modelsList: 'onModelsList',
+  modelChanged: 'onModelChanged',
+  retryingWithReducedTokens: 'onRetryingWithReducedTokens',
+  retryingRateLimit: 'onRetryingRateLimit',
   modeChanged: 'onModeChanged',
   error: 'onError',
   info: 'onInfo',
