@@ -50,6 +50,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // ── Agent manager (jetzt mit Container) ────────────────────────────────────
   agentManager = new AgentManager(context);
+  agentManager.bindOpenRouterService(openRouterService);
 
   // ── Mode service ──────────────────────────────────────────────────────────
   modeService = new ModeService(context);

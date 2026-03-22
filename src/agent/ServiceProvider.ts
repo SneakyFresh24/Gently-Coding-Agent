@@ -47,6 +47,46 @@ import { CONTEXT_LIMITS } from '../utils';
 import { ApprovalManager, AutoApproveManager } from '../approval/ApprovalManager';
 import { HookManager } from '../hooks/HookManager';
 import { TokenTracker } from '../utils/TokenTracker';
+import { OpenRouterService } from '../services/OpenRouterService';
+
+function resolveVerificationModel(context: vscode.ExtensionContext): string {
+    const config = vscode.workspace.getConfiguration('gently');
+    const configuredVerificationModel = config.get<string>('verificationModel')?.trim();
+    if (configuredVerificationModel) return configuredVerificationModel;
+
+    const selectedModelFromState = context.globalState.get<string | null>('gently.selectedModel', null)?.trim();
+    if (selectedModelFromState) return selectedModelFromState;
+
+    const selectedModelFromConfig = config.get<string>('selectedModel')?.trim();
+    if (selectedModelFromConfig) return selectedModelFromConfig;
+
+    const envVerification = process.env.GENTLY_VERIFICATION_MODEL?.trim();
+    if (envVerification) return envVerification;
+
+    const envModel = process.env.GENTLY_MODEL?.trim();
+    if (envModel) return envModel;
+
+    return 'openai/gpt-4o-mini';
+}
+
+function createVerificationAgent(
+    c: Container,
+    context: vscode.ExtensionContext
+): VerificationAgent | undefined {
+    const orService = c.resolve<any>('openRouterService') as OpenRouterService | undefined;
+    if (!orService) return undefined;
+
+    const verificationModel = resolveVerificationModel(context);
+    console.log(`[ServiceProvider] Verification model resolved: ${verificationModel}`);
+
+    return new VerificationAgent(
+        orService,
+        c.resolve<any>('terminalManager') || null,
+        c.resolve('fileOps'),
+        c.resolve('workspaceRoot'),
+        verificationModel
+    );
+}
 
 /**
  * Configure all services in the container
@@ -129,7 +169,7 @@ export function configureServices(container: Container, context: vscode.Extensio
     container.register('memoryBankTools', (c) => new MemoryBankTools(c.resolve('memoryBankManager')));
     container.register('projectTools', (c) => new ProjectTools(c.resolve('projectAnalyzer')));
     container.register('checkpointTools', (c) => new CheckpointTools(c.resolve('checkpointManager')));
-    container.register('verificationTools', (c) => new VerificationTools(() => c.resolve('verificationAgent')));
+    container.register('verificationTools', (c) => new VerificationTools(() => createVerificationAgent(c, context)));
     container.register('planningTools', (c) => new PlanningTools(
         c.resolve('planningManager'),
         c.resolve<any>('terminalManager') || null,
@@ -200,20 +240,7 @@ export function configureServices(container: Container, context: vscode.Extensio
 
     // 5. Validation/Verification (Requires OpenRouterService)
     container.register('verificationAgent', (c) => {
-        const orService = c.resolve<any>('openRouterService');
-        if (!orService) return undefined;
-        const verificationModel =
-            process.env.GENTLY_VERIFICATION_MODEL ||
-            process.env.GENTLY_MODEL ||
-            'deepseek/deepseek-chat';
-
-        return new VerificationAgent(
-            orService,
-            c.resolve<any>('terminalManager') || null,
-            c.resolve('fileOps'),
-            c.resolve('workspaceRoot'),
-            verificationModel
-        );
+        return createVerificationAgent(c, context);
     });
 
     container.register('validationManager', (c) => {

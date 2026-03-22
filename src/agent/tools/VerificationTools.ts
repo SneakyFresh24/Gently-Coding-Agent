@@ -19,7 +19,9 @@ export class VerificationTools {
             if (!verificationAgent) {
                 return {
                     success: false,
-                    message: 'Verification Agent is not initialized. Cannot run verify_and_auto_fix.'
+                    message: 'Verification Agent is not available.',
+                    hint: 'Please ensure an API key is configured and a model is selected.',
+                    recoveryAction: 'openSettings'
                 };
             }
 

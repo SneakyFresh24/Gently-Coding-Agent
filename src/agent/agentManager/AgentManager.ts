@@ -162,6 +162,11 @@ export class AgentManager {
     ) ?? Promise.resolve();
   }
 
+  bindOpenRouterService(openRouterService: OpenRouterService): void {
+    this.container.force('openRouterService', openRouterService);
+    agentLogger.info('OpenRouter service bound to AgentManager DI container');
+  }
+
   // --- Core Methods ---
 
   async getContext(): Promise<AgentContext> {
