@@ -1,6 +1,5 @@
 import { Level } from 'level';
 import { LRUCache } from 'lru-cache';
-import { XXHash64 } from 'xxhash-addon';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 
@@ -15,12 +14,17 @@ export class EmbeddingCache {
     private memoryCache: LRUCache<string, number[]>;
     private initialized: boolean = false;
     private initPromise: Promise<void> | null = null;
+    private readonly dbPath: string;
     private readonly ttlMs: number;
     private nativeHasherClass: any = null;
     private hasNativeHasher: boolean = false;
+    private degradedMode: boolean = false;
+    private degradedReason: string | null = null;
+    private warnedDegradedState: boolean = false;
 
     constructor(options: CacheOptions) {
         this.ttlMs = (options.ttlDays || 30) * 24 * 60 * 60 * 1000;
+        this.dbPath = path.join(options.persistenceDir, 'embeddings.db');
 
         this.memoryCache = new LRUCache<string, number[]>({
             max: options.maxMemoryEntries || 2000,
@@ -42,46 +46,46 @@ export class EmbeddingCache {
     }
 
     private async initialize(persistenceDir: string): Promise<void> {
-        const dbPath = path.join(persistenceDir, 'embeddings.db');
-        const lockPath = path.join(dbPath, 'LOCK');
+        const lockPath = path.join(this.dbPath, 'LOCK');
         const maxRetries = 3;
         const retryDelay = 1000;
+        let lastError: unknown;
+        let lastClassification: string = 'unknown';
 
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 await fs.mkdir(persistenceDir, { recursive: true });
-                
-                // Try recovery if LOCK exists and it's not the first attempt
+
                 if (attempt > 1 && await this.fileExists(lockPath)) {
-                    try {
-                        await fs.unlink(lockPath);
-                        console.log(`[EmbeddingCache] (Attempt ${attempt}) Stale LOCK file removed`);
-                    } catch (e) {
-                        // Ignore if already gone, otherwise log it
-                    }
+                    await this.tryRemoveStaleLock(lockPath, attempt);
                 }
 
-                this.db = new Level<string, string>(dbPath);
+                this.db = new Level<string, string>(this.dbPath);
                 await this.db.open();
                 this.initialized = true;
-                console.log(`[EmbeddingCache] Initialized at ${dbPath} (Attempt ${attempt})`);
+                this.degradedMode = false;
+                this.degradedReason = null;
+                console.log(`[EmbeddingCache] LevelDB initialized at ${this.dbPath} (Attempt ${attempt})`);
                 return;
             } catch (error: any) {
-                const isBusy = error.code === 'EBUSY' || error.code === 'EPERM' || error.message?.includes('locked');
-                
-                if (isBusy && attempt < maxRetries) {
-                    console.warn(`[EmbeddingCache] DB is busy (Attempt ${attempt}/${maxRetries}), retrying in ${retryDelay}ms...`);
-                    await new Promise(resolve => setTimeout(resolve, retryDelay));
-                    continue;
-                }
+                lastError = error;
+                this.db = null;
+                const classification = this.classifyLevelDbError(error);
+                lastClassification = classification;
+                const retryable = this.isRetryableClassification(classification);
 
-                if (attempt === maxRetries) {
-                    console.error('[EmbeddingCache] All initialization attempts failed → falling back to memory-only mode', error);
-                    this.db = null;
-                    this.initialized = true;
+                if (retryable && attempt < maxRetries) {
+                    console.warn(`[EmbeddingCache] LevelDB init retry (${attempt}/${maxRetries}) due to ${classification}. Retrying in ${retryDelay}ms...`);
+                    await this.sleep(retryDelay);
+                    continue;
                 }
             }
         }
+
+        this.enterDegradedMode(
+            `LevelDB initialization failed (${lastClassification}).`,
+            lastError
+        );
     }
 
 
@@ -92,6 +96,81 @@ export class EmbeddingCache {
         } catch {
             return false;
         }
+    }
+
+    private async tryRemoveStaleLock(lockPath: string, attempt: number): Promise<void> {
+        try {
+            await fs.unlink(lockPath);
+            console.warn(`[EmbeddingCache] Removed stale LOCK file before retry (Attempt ${attempt})`);
+        } catch (error: any) {
+            if (error?.code !== 'ENOENT') {
+                console.warn(`[EmbeddingCache] Could not remove LOCK file (${lockPath}): ${error?.message || String(error)}`);
+            }
+        }
+    }
+
+    private classifyLevelDbError(error: any): string {
+        const code = String(error?.code || '').toUpperCase();
+        const message = String(error?.message || '').toLowerCase();
+
+        if (code === 'EBUSY' || message.includes('lock') || message.includes('resource busy')) {
+            return 'lock-busy';
+        }
+        if (code === 'EPERM' || code === 'EACCES' || message.includes('access is denied') || message.includes('permission')) {
+            return 'permission';
+        }
+        if (
+            message.includes('node_module_version') ||
+            message.includes('module did not self-register') ||
+            message.includes('was compiled against a different node.js version') ||
+            message.includes('could not locate the bindings file')
+        ) {
+            return 'native-binding';
+        }
+        if (code === 'ENOENT' || code === 'ENOTDIR') {
+            return 'path';
+        }
+        return 'unknown';
+    }
+
+    private isRetryableClassification(classification: string): boolean {
+        return classification === 'lock-busy';
+    }
+
+    private enterDegradedMode(reason: string, error?: unknown): void {
+        this.db = null;
+        this.degradedMode = true;
+        this.degradedReason = reason;
+        this.initialized = true;
+        this.warnDegradedMode(error);
+    }
+
+    private warnDegradedMode(error?: unknown): void {
+        if (this.warnedDegradedState) return;
+        this.warnedDegradedState = true;
+        console.error(
+            `[EmbeddingCache] MEMORY-ONLY degraded mode active. Reason: ${this.degradedReason}. ` +
+            `Persistent LevelDB cache is unavailable. ` +
+            `Recommended recovery: run "npm rebuild level xxhash-addon" and "npm run rebuild".`
+        );
+        if (error) {
+            console.error('[EmbeddingCache] LevelDB failure details:', error);
+        }
+    }
+
+    private async handleRuntimeDbError(operation: string, error: any): Promise<void> {
+        const classification = this.classifyLevelDbError(error);
+        if (classification === 'lock-busy' || classification === 'native-binding' || classification === 'permission' || classification === 'path') {
+            this.enterDegradedMode(`LevelDB runtime failure during ${operation} (${classification}).`, error);
+            return;
+        }
+        if (error?.code !== 'LEVEL_NOT_FOUND' && error?.code !== 'LEVEL_NOT_OPEN') {
+            console.warn(`[EmbeddingCache] LevelDB ${operation} error:`, error?.message || String(error));
+        }
+    }
+
+    private async sleep(ms: number): Promise<void> {
+        await new Promise(resolve => setTimeout(resolve, ms));
     }
 
     /**
@@ -126,6 +205,9 @@ export class EmbeddingCache {
      */
     async get(content: string, modelName: string): Promise<number[] | null> {
         if (!this.initialized) await this.initPromise;
+        if (this.degradedMode) {
+            this.warnDegradedMode();
+        }
 
         const key = this.generateKey(content, modelName);
 
@@ -148,9 +230,7 @@ export class EmbeddingCache {
                 this.memoryCache.set(key, embedding);
                 return embedding;
             } catch (error: any) {
-                if (error.code !== 'LEVEL_NOT_FOUND' && error.code !== 'LEVEL_NOT_OPEN') {
-                    console.warn('[EmbeddingCache] Disk get error:', error.message);
-                }
+                await this.handleRuntimeDbError('get', error);
             }
         }
 
@@ -162,6 +242,9 @@ export class EmbeddingCache {
      */
     async set(content: string, modelName: string, embedding: number[]): Promise<void> {
         if (!this.initialized) await this.initPromise;
+        if (this.degradedMode) {
+            this.warnDegradedMode();
+        }
 
         const key = this.generateKey(content, modelName);
         const data = JSON.stringify({
@@ -175,12 +258,9 @@ export class EmbeddingCache {
         // 2. Disk set
         if (this.db) {
             try {
-                // LevelDB 10+ might throw if closed
                 await this.db.put(key, data);
             } catch (error: any) {
-                if (error.code !== 'LEVEL_NOT_OPEN') {
-                    console.warn('[EmbeddingCache] Disk put error:', error.message);
-                }
+                await this.handleRuntimeDbError('put', error);
             }
         }
     }
@@ -190,6 +270,9 @@ export class EmbeddingCache {
      */
     async setBatch(items: Array<{ content: string; embedding: number[] }>, modelName: string): Promise<void> {
         if (!this.initialized) await this.initPromise;
+        if (this.degradedMode) {
+            this.warnDegradedMode();
+        }
 
         if (!this.db) {
             for (const item of items) {
@@ -214,7 +297,7 @@ export class EmbeddingCache {
         try {
             await this.db.batch(ops);
         } catch (error: any) {
-            console.warn('[EmbeddingCache] Disk batch error:', error.message);
+            await this.handleRuntimeDbError('batch', error);
         }
     }
 
@@ -226,7 +309,11 @@ export class EmbeddingCache {
 
         this.memoryCache.clear();
         if (this.db) {
-            await this.db.clear();
+            try {
+                await this.db.clear();
+            } catch (error: any) {
+                await this.handleRuntimeDbError('clear', error);
+            }
         }
     }
 
@@ -235,7 +322,13 @@ export class EmbeddingCache {
      */
     async close(): Promise<void> {
         if (this.db) {
-            await this.db.close();
+            try {
+                await this.db.close();
+            } catch (error: any) {
+                await this.handleRuntimeDbError('close', error);
+            } finally {
+                this.db = null;
+            }
         }
     }
 }

@@ -9,14 +9,17 @@ import { ToolCallManager } from '../toolcall';
 import { ToolCallDispatcher } from './ExecutionDispatchers';
 import { LogService } from '../../../services/LogService';
 import { ModeService } from '../../../modes/ModeService';
-import { ModelPricing, OpenRouterService } from '../../../services/OpenRouterService';
+import { ChatMessage, ModelPricing, OpenRouterService } from '../../../services/OpenRouterService';
 import { OutboundWebviewMessage } from '../types/WebviewMessageTypes';
 import { UsageInfo } from '../../../core/streaming/types';
 import { SessionType } from '../../../services/HistoryManager';
+import { TokenBudgetManager } from './TokenBudgetManager';
 
 const log = new LogService('ChatFlowManager');
 
 export class ChatFlowManager {
+    private readonly tokenBudgetManager = new TokenBudgetManager();
+
     constructor(
         private readonly agentManager: AgentManager,
         private readonly sessionHistoryManager: SessionHistoryManager,
@@ -95,8 +98,7 @@ export class ChatFlowManager {
 
         this.sendMessageToWebview({ type: 'activityUpdate', label: 'Preparing prompt...' });
         const systemPrompt = await this.promptManager.prepareSystemPrompt(context, retryCount);
-        // Fix: Removed activityUpdate: null to keep the last status visible until streaming starts
-        const messages = [
+        const rawMessages: ChatMessage[] = [
             { role: 'system' as const, content: systemPrompt },
             ...context.conversationHistory.map(toChatMessage),
         ];
@@ -104,7 +106,19 @@ export class ChatFlowManager {
         const tools = this.getToolsForMode(context);
         const responseFormat = tools && context.selectedModel === 'deepseek/deepseek-chat' ? { type: 'json_object' as const } : undefined;
         const configuredMaxTokens = this.getConfiguredMaxTokens();
-        let maxTokens = this.computeMaxOutputTokens(messages, tools, modelContextLength, modelMaxOutput, configuredMaxTokens);
+        const inputBudget = this.computeInputBudgetTokens(modelContextLength);
+        const compression = this.tokenBudgetManager.compressMessagesForBudget(
+            context.selectedModel,
+            rawMessages,
+            tools,
+            inputBudget
+        );
+        const messages = compression.messages;
+        if (compression.wasCompressed) {
+            log.info(`Context compressed before request: dropped=${compression.droppedMessages}, inputTokens=${compression.inputTokens}, budget=${inputBudget}`);
+        }
+
+        let maxTokens = this.computeMaxOutputTokens(compression.inputTokens, modelContextLength, modelMaxOutput, configuredMaxTokens);
 
         // Always send generatingStart to ensure the UI indicator is active,
         // even for follow-up responses (e.g. after tool execution)
@@ -342,33 +356,26 @@ export class ChatFlowManager {
         return tools;
     }
 
-    private estimateInputTokens(messages: Array<{ content: string; tool_calls?: any[] }>, tools?: any[]): number {
-        const joinedContent = messages.map((m) => m.content || '').join('\n');
-        const toolCallContent = messages
-            .map((m) => (m.tool_calls && m.tool_calls.length > 0 ? JSON.stringify(m.tool_calls) : ''))
-            .join('\n');
-        const toolDefs = tools && tools.length > 0 ? JSON.stringify(tools) : '';
-        const rawChars = joinedContent.length + toolCallContent.length + toolDefs.length;
-        const rawEstimate = Math.ceil(rawChars / 4);
-        return Math.ceil(rawEstimate * 1.15);
-    }
-
     private getConfiguredMaxTokens(): number {
         const configured = vscode.workspace.getConfiguration('gently').get<number>('maxTokens');
         if (typeof configured === 'number' && configured > 0) return configured;
         return Number.MAX_SAFE_INTEGER;
     }
 
+    private computeInputBudgetTokens(modelContextLength: number): number {
+        const baseReserve = 1024;
+        const minimumOutputReserve = 256;
+        return Math.max(1024, modelContextLength - baseReserve - minimumOutputReserve);
+    }
+
     private computeMaxOutputTokens(
-        messages: Array<{ content: string; tool_calls?: any[] }>,
-        tools: any[] | undefined,
+        inputTokens: number,
         modelContextLength: number,
         modelMaxOutput: number,
         userConfiguredMax: number
     ): number {
         const baseReserve = 1024;
-        const estimatedInput = this.estimateInputTokens(messages, tools);
-        const safeMax = modelContextLength - estimatedInput - baseReserve;
+        const safeMax = modelContextLength - inputTokens - baseReserve;
         const bounded = Math.min(userConfiguredMax, modelMaxOutput, safeMax);
         return Math.max(256, bounded);
     }
@@ -406,5 +413,7 @@ export class ChatFlowManager {
 
         const anySession = this.sessionHistoryManager as any;
         if (anySession && typeof anySession.dispose === 'function') anySession.dispose();
+
+        this.tokenBudgetManager.dispose();
     }
 }

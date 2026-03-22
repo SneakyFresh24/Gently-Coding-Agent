@@ -597,7 +597,7 @@ export class HNSWIndex {
     });
 
     return results.neighbors
-      .map((label, i) => {
+      .map((label: number, i: number): HNSWSearchResult | null => {
         const id = this.labelToId.get(label);
         if (id === undefined) return null;
 
@@ -613,7 +613,7 @@ export class HNSWIndex {
         };
         return res;
       })
-      .filter((r): r is HNSWSearchResult => r !== null)
+      .filter((r: HNSWSearchResult | null): r is HNSWSearchResult => r !== null)
       .slice(0, topK);
   }
 

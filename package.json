@@ -341,6 +341,7 @@
     "test:toolcall": "vitest run src/views/chat/toolcall/__tests__/",
     "test:toolcall:watch": "vitest watch src/views/chat/toolcall/__tests__/",
     "test:toolcall:coverage": "vitest run --coverage src/views/chat/toolcall/__tests__/",
+    "rca:leveldb": "node scripts/rca/leveldb-isolation-test.js",
     "package": "npm run build && vsce package",
     "rebuild": "electron-rebuild -v 39.2.3 --arch x64",
     "rollout:phase3": "node scripts/rollout-toolcall-system-phase3.js",
@@ -369,6 +370,7 @@
     "level": "^10.0.0",
     "lru-cache": "^11.2.6",
     "minimatch": "^10.2.4",
+    "tiktoken": "^1.0.22",
     "uuid": "^9.0.1",
     "web-tree-sitter": "^0.20.8"
   },
