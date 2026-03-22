@@ -28,6 +28,14 @@
 #tmp/
 #dist/
 
+# === BENCHMARK / LOCAL ARTIFACTS ===
+runs/**
+.venv/**
+.env.swebench.local
+scripts/swebench/**
+tests_output.txt
+tests_debug.txt
+
 # === TESTS IGNORIEREN ===
 #test/
 #**/*.test.ts

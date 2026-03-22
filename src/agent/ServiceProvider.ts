@@ -202,12 +202,17 @@ export function configureServices(container: Container, context: vscode.Extensio
     container.register('verificationAgent', (c) => {
         const orService = c.resolve<any>('openRouterService');
         if (!orService) return undefined;
+        const verificationModel =
+            process.env.GENTLY_VERIFICATION_MODEL ||
+            process.env.GENTLY_MODEL ||
+            'deepseek/deepseek-chat';
 
         return new VerificationAgent(
             orService,
             c.resolve<any>('terminalManager') || null,
             c.resolve('fileOps'),
-            c.resolve('workspaceRoot')
+            c.resolve('workspaceRoot'),
+            verificationModel
         );
     });
 

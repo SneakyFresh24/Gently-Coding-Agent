@@ -6,5 +6,6 @@
   },
   "include": [
     "scripts/**/*"
-  ]
+  ],
+  "exclude": []
 }

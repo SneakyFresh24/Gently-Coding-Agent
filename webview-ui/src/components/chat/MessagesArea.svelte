@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Message } from '../../lib/types';
   import MessageRow from './MessageRow.svelte';
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { createVirtualizer } from '@tanstack/svelte-virtual';
 
   const VIRTUALIZATION_THRESHOLD = 80;
@@ -56,22 +56,34 @@
   }
 
   $effect(() => {
-    $virtualizerStore.setOptions({
-      count: messages.length,
-      getScrollElement: () => containerRef ?? null,
-      estimateSize: () => ESTIMATE_SIZE,
-      overscan: OVERSCAN,
+    const count = messages.length;
+    const ref = containerRef;
+
+    untrack(() => {
+      $virtualizerStore.setOptions({
+        count,
+        getScrollElement: () => ref ?? null,
+        estimateSize: () => ESTIMATE_SIZE,
+        overscan: OVERSCAN,
+      });
     });
   });
 
   $effect(() => {
-    messages;
+    const currentMessages = messages;
+    const virtualized = isVirtualized;
+    const messageCount = currentMessages.length;
+    const lastContent = currentMessages[messageCount - 1]?.content;
+    void messageCount;
+    void lastContent;
 
-    if (isVirtualized) {
-      $virtualizerStore.measure();
-    }
+    untrack(() => {
+      if (virtualized) {
+        $virtualizerStore.measure();
+      }
 
-    scrollToBottom();
+      scrollToBottom();
+    });
   });
 
   onMount(() => {

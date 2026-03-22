@@ -57,6 +57,16 @@ coverage/
 
 # Gently-specific
 .gently/
+.venv/
+runs/
+
+# SWE-Bench / Benchmark local artifacts
+.env.swebench.local
+scripts/swebench/*.log
+scripts/swebench/*.json
+scripts/swebench/*.jsonl
+scripts/swebench/*.tmp
+scripts/swebench/*.cache
 
 # ESLint cache
 .eslintcache

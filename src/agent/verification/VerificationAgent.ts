@@ -15,7 +15,8 @@ export class VerificationAgent {
         private openRouterService: OpenRouterService,
         private terminalManager: TerminalManager | null,
         private fileOps: FileOperations,
-        private workspaceRoot: string
+        private workspaceRoot: string,
+        private model: string = 'deepseek/deepseek-chat'
     ) { }
 
     async verifyAndHeal(command: string, maxRetries: number = 3): Promise<VerificationResult> {
@@ -104,7 +105,7 @@ If you cannot fix it or no file edit is needed, output an empty array [].`;
                         content: prompt
                     }
                 ],
-                model: 'deepseek/deepseek-chat',
+                model: this.model,
                 stream: false,
                 temperature: 0.1, // Low temperature for code fixes
                 max_tokens: 4000
