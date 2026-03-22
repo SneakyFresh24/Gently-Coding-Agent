@@ -34,8 +34,8 @@ export class ChatHandlerUtils {
     /**
      * Repairs and validates tool calls using existing utilities.
      */
-    static repairAndValidate(toolCalls: any[]): { validToolCalls: any[], invalidToolCalls: any[] } {
-        return ToolCallUtils.validateAndRepairToolCalls(toolCalls);
+    static repairAndValidate(toolCalls: any[], model?: string): { validToolCalls: any[], invalidToolCalls: any[], warnings: string[] } {
+        return ToolCallUtils.validateAndRepairToolCalls(toolCalls, { model });
     }
 
     /**

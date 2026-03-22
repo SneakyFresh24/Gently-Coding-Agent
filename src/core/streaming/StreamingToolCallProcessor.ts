@@ -106,8 +106,8 @@ export class StreamingToolCallProcessor {
      * Checks if all tool calls currently being processed are valid and completed.
      * This is typically called at the end of a stream.
      */
-    getCompletedToolCalls(): ToolCall[] {
-        const completed: ToolCall[] = [];
+    getCompletedToolCalls(): Array<{ toolCall: ToolCall; index: number }> {
+        const completed: Array<{ toolCall: ToolCall; index: number }> = [];
         
         for (const [index, state] of this.toolCallStateByIndex.entries()) {
             if (!state.id || !state.name) continue;
@@ -117,12 +117,15 @@ export class StreamingToolCallProcessor {
 
             if (parseResult.success) {
                 completed.push({
-                    id: state.id,
-                    type: 'function',
-                    function: {
-                        name: state.name,
-                        arguments: sanitizedArgs // Use sanitized version
-                    }
+                    toolCall: {
+                        id: state.id,
+                        type: 'function',
+                        function: {
+                            name: state.name,
+                            arguments: sanitizedArgs // Use sanitized version
+                        }
+                    },
+                    index
                 });
             } else {
                 console.error(`[StreamingToolCallProcessor] Failed to parse tool call ${state.name} at index ${index}:`, parseResult.error);

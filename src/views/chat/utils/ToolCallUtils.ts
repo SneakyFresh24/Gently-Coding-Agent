@@ -4,27 +4,36 @@
 
 import { repairAndParseJSON, createLLMErrorMessage } from '../../../utils/jsonRepair';
 
+export interface ToolCallValidationResult {
+  validToolCalls: any[];
+  invalidToolCalls: any[];
+  warnings: string[];
+}
+
 export class ToolCallUtils {
   /**
    * Validate and repair tool calls
    */
-  static validateAndRepairToolCalls(toolCalls: any[]): { validToolCalls: any[]; invalidToolCalls: any[] } {
+  static validateAndRepairToolCalls(toolCalls: any[], options?: { model?: string }): ToolCallValidationResult {
     const validToolCalls: any[] = [];
     const invalidToolCalls: any[] = [];
+    const warnings: string[] = [];
+    const modelTag = this.formatModelTag(options?.model);
+    const seenIds = new Map<string, number>();
 
     for (let index = 0; index < toolCalls.length; index++) {
       const toolCall = toolCalls[index];
 
       try {
-        if (!toolCall.function || !toolCall.function.name) {
+        if (!toolCall.function || !toolCall.function.name || (typeof toolCall.function.name === 'string' && toolCall.function.name.trim() === '')) {
           // Log the actual structure for debugging
           console.error(`[PARALLEL] Tool call ${index} has unexpected structure:`, JSON.stringify(toolCall, null, 2));
 
           // Normalize flattened tool call structure
-          if (toolCall.name && toolCall.arguments) {
+          if (typeof toolCall.name === 'string' && toolCall.name.trim() !== '' && toolCall.arguments) {
             console.log(`[PARALLEL] Normalizing flattened tool call: ${toolCall.name}`);
             toolCall.function = {
-              name: toolCall.name,
+              name: toolCall.name.trim(),
               arguments: toolCall.arguments
             };
           } else if (typeof toolCall.function === 'string') {
@@ -35,10 +44,37 @@ export class ToolCallUtils {
               arguments: toolCall.arguments || '{}' 
             };
           } else {
-            console.error(`[PARALLEL] Tool call ${index} missing function or name`);
-            invalidToolCalls.push({ toolCall, index, error: 'Missing function or name' });
+            const rawArguments = typeof toolCall.function?.arguments === 'string'
+              ? toolCall.function.arguments
+              : typeof toolCall.arguments === 'string'
+                ? toolCall.arguments
+                : '{}';
+            const parsedArguments = this.tryParseArguments(rawArguments);
+            if (parsedArguments && typeof parsedArguments === 'object' && parsedArguments.task_progress) {
+              const progressText = String(parsedArguments.task_progress);
+              const warning = `[${modelTag}] internal_progress_skipped: task_progress="${progressText.substring(0, 50)}..."`;
+              console.warn(warning);
+              warnings.push(warning);
+              continue;
+            }
+
+            const warning = `[${modelTag}] anonymous_tool_call_skipped`;
+            console.warn(`[PARALLEL] Tool call ${index} missing function or name - skipped`);
+            warnings.push(warning);
             continue;
           }
+        }
+
+        toolCall.function.name = String(toolCall.function.name || '').trim();
+        if (!toolCall.function.name) {
+          const warning = `[${modelTag}] anonymous_tool_call_skipped`;
+          console.warn(warning);
+          warnings.push(warning);
+          continue;
+        }
+
+        if (typeof toolCall.function.arguments !== 'string') {
+          toolCall.function.arguments = JSON.stringify(toolCall.function.arguments || {});
         }
 
         // FIX: Normalize empty arguments for parameterless tools (list_files, analyze_project_structure, recall_memories, etc.)
@@ -67,6 +103,21 @@ export class ToolCallUtils {
           toolCall.function.arguments = JSON.stringify(repairResult.repaired);
         }
 
+        if (typeof toolCall.id === 'string' && toolCall.id.trim() !== '') {
+          const originalId = toolCall.id.trim();
+          const currentCount = seenIds.get(originalId) || 0;
+          if (currentCount > 0) {
+            const newId = `${originalId}_${currentCount + 1}`;
+            const warning = `[${modelTag}] duplicate_tool_call_id_renamed: "${originalId}" -> "${newId}"`;
+            console.warn(warning);
+            warnings.push(warning);
+            toolCall.id = newId;
+          } else {
+            toolCall.id = originalId;
+          }
+          seenIds.set(originalId, currentCount + 1);
+        }
+
         validToolCalls.push(toolCall);
       } catch (error: any) {
         console.error(`[PARALLEL] Tool call ${index} validation error:`, error);
@@ -74,7 +125,19 @@ export class ToolCallUtils {
       }
     }
 
-    return { validToolCalls, invalidToolCalls };
+    return { validToolCalls, invalidToolCalls, warnings };
+  }
+
+  private static formatModelTag(model?: string): string {
+    return `model=${model && model.trim() !== '' ? model : 'unknown'}`;
+  }
+
+  private static tryParseArguments(raw: string): any | null {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
   }
 
   /**

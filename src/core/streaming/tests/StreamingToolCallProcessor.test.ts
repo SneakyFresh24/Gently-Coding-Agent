@@ -83,4 +83,24 @@ describe('StreamingToolCallProcessor', () => {
         // Should NOT yield start again
         expect(chunks2.some(c => c.type === 'tool_call_start')).toBe(false);
     });
+
+    it('should return completed tool calls with their original indices', async () => {
+        const processor = new StreamingToolCallProcessor();
+
+        const deltas = [
+            { index: 0, id: 'call_1', function: { name: 'read_file', arguments: '{"path":"a.ts"}' } },
+            { index: 2, id: 'call_2', function: { name: 'list_files', arguments: '{"path":"src"}' } }
+        ];
+
+        for await (const _chunk of processor.processToolCallDeltas(deltas)) {
+            // Consume generator output to mutate internal state.
+        }
+
+        const completed = processor.getCompletedToolCalls();
+        expect(completed).toHaveLength(2);
+        expect(completed[0].index).toBe(0);
+        expect(completed[1].index).toBe(2);
+        expect(completed[0].toolCall.id).toBe('call_1');
+        expect(completed[1].toolCall.id).toBe('call_2');
+    });
 });

@@ -111,7 +111,8 @@ export class EmbeddingCache {
 
     private classifyLevelDbError(error: any): string {
         const code = String(error?.code || '').toUpperCase();
-        const message = String(error?.message || '').toLowerCase();
+        const message = this.buildErrorText(error).toLowerCase();
+        const inElectron = typeof process.versions.electron === 'string' && process.versions.electron.length > 0;
 
         if (code === 'EBUSY' || message.includes('lock') || message.includes('resource busy')) {
             return 'lock-busy';
@@ -123,8 +124,14 @@ export class EmbeddingCache {
             message.includes('node_module_version') ||
             message.includes('module did not self-register') ||
             message.includes('was compiled against a different node.js version') ||
-            message.includes('could not locate the bindings file')
+            message.includes('could not locate the bindings file') ||
+            message.includes('invalid elf header') ||
+            message.includes('database failed to open')
         ) {
+            return 'native-binding';
+        }
+        if (inElectron && message.includes('failed to open')) {
+            // In Electron runtime this error often wraps ABI/native binding mismatches.
             return 'native-binding';
         }
         if (code === 'ENOENT' || code === 'ENOTDIR') {
@@ -148,13 +155,22 @@ export class EmbeddingCache {
     private warnDegradedMode(error?: unknown): void {
         if (this.warnedDegradedState) return;
         this.warnedDegradedState = true;
+        const runtime = this.getRuntimeSummary();
+        const electronVersion = process.versions.electron || 'unknown';
+        const rebuildHint = electronVersion !== 'unknown'
+            ? `npx electron-rebuild -v ${electronVersion} --arch x64 -w level -w xxhash-addon`
+            : `npm run rebuild`;
         console.error(
             `[EmbeddingCache] MEMORY-ONLY degraded mode active. Reason: ${this.degradedReason}. ` +
-            `Persistent LevelDB cache is unavailable. ` +
-            `Recommended recovery: run "npm rebuild level xxhash-addon" and "npm run rebuild".`
+            `Persistent LevelDB cache is unavailable. Runtime=${runtime}. ` +
+            `Recommended recovery: run "npm rebuild level xxhash-addon" and "${rebuildHint}".`
         );
         if (error) {
             console.error('[EmbeddingCache] LevelDB failure details:', error);
+            const errorText = this.buildErrorText(error);
+            if (errorText.trim()) {
+                console.error('[EmbeddingCache] LevelDB failure summary:', errorText.substring(0, 1200));
+            }
         }
     }
 
@@ -171,6 +187,36 @@ export class EmbeddingCache {
 
     private async sleep(ms: number): Promise<void> {
         await new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    private getRuntimeSummary(): string {
+        const node = process.versions.node || 'unknown';
+        const electron = process.versions.electron || 'none';
+        const modules = process.versions.modules || 'unknown';
+        return `node=${node},electron=${electron},modules=${modules}`;
+    }
+
+    private buildErrorText(error: any): string {
+        const parts: string[] = [];
+        const walk = (value: any): void => {
+            if (!value) return;
+            const message = typeof value.message === 'string' ? value.message : '';
+            const code = typeof value.code === 'string' ? value.code : '';
+            const name = typeof value.name === 'string' ? value.name : '';
+            const stack = typeof value.stack === 'string' ? value.stack : '';
+            if (name) parts.push(name);
+            if (code) parts.push(code);
+            if (message) parts.push(message);
+            if (stack) parts.push(stack);
+            if (value.cause && value.cause !== value) {
+                walk(value.cause);
+            }
+        };
+        walk(error);
+        if (parts.length === 0) {
+            return String(error ?? '');
+        }
+        return parts.join(' | ');
     }
 
     /**

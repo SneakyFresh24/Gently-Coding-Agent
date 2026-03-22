@@ -32,7 +32,16 @@ export class TraditionalToolExecutor {
 
             await this.createCheckpointIfNeeded(toolCalls, messageId, context);
 
-            const { validToolCalls, invalidToolCalls } = ToolCallUtils.validateAndRepairToolCalls(toolCalls);
+            const { validToolCalls, invalidToolCalls, warnings } = ToolCallUtils.validateAndRepairToolCalls(toolCalls, {
+                model: context.selectedModel || undefined
+            });
+
+            if (warnings.length > 0) {
+                warnings.forEach((warning) => {
+                    log.warn(warning);
+                    this.sendMessageToWebview({ type: 'info', message: warning });
+                });
+            }
 
             if (invalidToolCalls.length > 0) {
                 await this.handleInvalidToolCalls(invalidToolCalls, toolCalls, context);

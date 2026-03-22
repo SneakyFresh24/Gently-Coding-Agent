@@ -300,8 +300,8 @@ export class OpenRouterService {
 
             // 6. Emit completed tool calls when the stream is finished
             const completedTools = this.toolCallProcessor.getCompletedToolCalls();
-            for (const toolCall of completedTools) {
-                yield { type: 'tool_call_ready', toolCall, index: 0 };
+            for (const completed of completedTools) {
+                yield { type: 'tool_call_ready', toolCall: completed.toolCall, index: completed.index };
             }
 
         } finally {
