@@ -345,9 +345,7 @@
     "rebuild": "electron-rebuild -v 39.2.3 --arch x64",
     "rollout:phase3": "node scripts/rollout-toolcall-system-phase3.js",
     "cleanup:legacy": "node scripts/cleanup-legacy-files.js",
-    "benchmark:retrieval": "vitest run scripts/benchmark-retrieval.test.ts",
-    "benchmark:gently-runner": "npm run build:scripts && node out/scripts/scripts/swebench/gently_runner.js",
-    "benchmark:gently-core-runner": "npm run build:scripts && node out/scripts/scripts/swebench/gently_core_runner.js"
+    "benchmark:retrieval": "vitest run scripts/benchmark-retrieval.test.ts"
   },
   "devDependencies": {
     "@electron/rebuild": "^3.7.2",

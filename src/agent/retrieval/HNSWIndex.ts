@@ -1,4 +1,3 @@
-import * as hnswlib from 'hnswlib-node';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { VectorDocument, HNSWSearchResult } from './types';
@@ -32,7 +31,7 @@ export interface HNSWStats {
  * - Asynchronous persistence
  */
 export class HNSWIndex {
-  private index: hnswlib.HierarchicalNSW | null = null;
+  private index: any | null = null;
   private options: HNSWIndexOptions;
   private documents: Map<string, VectorDocument> = new Map(); // id -> document
   private labelToId: Map<number, string> = new Map(); // label -> id
@@ -54,6 +53,9 @@ export class HNSWIndex {
   private recallOverride: 'float32' | null = null;
   private adaptiveOversampleFactor: number = RetrievalConfig.hnsw.int8OversampleFactor || 1.8;
   private logger: (level: 'info' | 'warn' | 'error', message: string) => void;
+  private hnswAvailable: boolean = false;
+  private hnswLoadError: string | null = null;
+  private hnswlibModule: any | null = null;
 
   constructor(options: HNSWIndexOptions) {
     this.options = {
@@ -78,14 +80,44 @@ export class HNSWIndex {
 
     await this.ensurePersistenceDir();
 
-    const space = this.options.space === 'cosine' ? 'cosine' : (this.options.space === 'l2' ? 'l2' : 'ip');
-    
-    // Safety check for native module
-    if (!hnswlib || typeof hnswlib.HierarchicalNSW !== 'function') {
-        throw new Error('Native hnswlib module not loaded. Search will be disabled or running in BM25-only fallback.');
+    if (process.env.GENTLY_DISABLE_HNSW === '1') {
+      this.hnswAvailable = false;
+      this.hnswLoadError = 'disabled_by_env';
+      this.isInitialized = true;
+      this.logger('warn', '[HNSWIndex] Disabled via GENTLY_DISABLE_HNSW=1. Falling back to BM25-only retrieval.');
+      return;
     }
 
-    this.index = new hnswlib.HierarchicalNSW(space as any, this.options.dimensions);
+    const space = this.options.space === 'cosine' ? 'cosine' : (this.options.space === 'l2' ? 'l2' : 'ip');
+
+    // Load native module lazily so missing native binaries never crash startup.
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      this.hnswlibModule = require('hnswlib-node');
+    } catch (error) {
+      this.hnswAvailable = false;
+      this.hnswLoadError = error instanceof Error ? error.message : String(error);
+      this.isInitialized = true;
+      this.logger(
+        'warn',
+        `[HNSWIndex] Native hnswlib-node failed to load (${this.hnswLoadError}). Falling back to BM25-only retrieval.`
+      );
+      return;
+    }
+
+    if (!this.hnswlibModule || typeof this.hnswlibModule.HierarchicalNSW !== 'function') {
+      this.hnswAvailable = false;
+      this.hnswLoadError = 'HierarchicalNSW constructor unavailable';
+      this.isInitialized = true;
+      this.logger(
+        'warn',
+        '[HNSWIndex] Native hnswlib-node loaded without HierarchicalNSW constructor. Falling back to BM25-only retrieval.'
+      );
+      return;
+    }
+
+    this.hnswAvailable = true;
+    this.index = new this.hnswlibModule.HierarchicalNSW(space as any, this.options.dimensions);
 
     if (this.indexPath && await this.fileExists(this.indexPath)) {
       try {
@@ -162,7 +194,7 @@ export class HNSWIndex {
    * Dynamically update efSearch
    */
   setEfSearch(ef: number): void {
-    if (this.index) {
+    if (this.hnswAvailable && this.index) {
       this.index.setEf(ef);
       this.options.efSearch = ef;
     }
@@ -365,6 +397,7 @@ export class HNSWIndex {
    */
   async addDocument(doc: VectorDocument): Promise<void> {
     if (!this.isInitialized) await this.initialize();
+    if (!this.hnswAvailable || !this.index) return;
 
     // Calibration & Validation Logic (9.5+)
     if (this.options.quantize === 'int8' && !this.isCalibrated) {
@@ -388,6 +421,7 @@ export class HNSWIndex {
    */
   async addDocuments(docs: VectorDocument[]): Promise<void> {
     if (!this.isInitialized) await this.initialize();
+    if (!this.hnswAvailable || !this.index) return;
 
     const vectors: number[][] = [];
     const labels: number[] = [];
@@ -541,6 +575,7 @@ export class HNSWIndex {
    */
   async search(queryEmbedding: number[], topK: number = 10): Promise<HNSWSearchResult[]> {
     if (!this.isInitialized) await this.initialize();
+    if (!this.hnswAvailable || !this.index) return [];
 
     const vector = this.quantizeVector(queryEmbedding);
 
@@ -601,7 +636,7 @@ export class HNSWIndex {
    * Save index and metadata to disk
    */
   async save(): Promise<void> {
-    if (!this.isInitialized || !this.indexPath) return;
+    if (!this.isInitialized || !this.indexPath || !this.hnswAvailable || !this.index) return;
 
     try {
       if (this.indexPath) {
@@ -668,7 +703,7 @@ export class HNSWIndex {
     this.idToLabel.clear();
     this.activeLabels.clear();
     this.nextLabel = 0;
-    if (this.index) {
+    if (this.hnswAvailable && this.index) {
       this.initNewIndex(); // Size-aware reset
     }
     await this.saveMetadata();
