@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import subprocess
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
@@ -44,6 +46,7 @@ class PredictionLog:
 
 
 LogCallback = Optional[Callable[[dict[str, Any]], None]]
+RUNNER_EVENT_PREFIX = "RUNNER_EVENT "
 
 
 def _utc_now() -> str:
@@ -102,6 +105,20 @@ def _extract_last_json_from_stdout(stdout: str) -> Optional[dict[str, Any]]:
     return None
 
 
+def _extract_runner_event(stderr_line: str) -> Optional[dict[str, Any]]:
+    line = stderr_line.strip()
+    if not line.startswith(RUNNER_EVENT_PREFIX):
+        return None
+    payload = line[len(RUNNER_EVENT_PREFIX):].strip()
+    if not payload:
+        return None
+    try:
+        parsed = json.loads(payload)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 class GentlySWEAdapter:
     def __init__(self, config: BenchmarkConfig):
         self.config = config
@@ -143,6 +160,7 @@ class GentlySWEAdapter:
                 repo_dir = Path(repo_tmp)
                 self._emit(log_callback, task.instance_id, "clone", "info", f"Cloning {task.repo}")
                 clone_and_checkout(task.repo, task.base_commit, repo_dir, timeout_sec=300)
+                self._emit(log_callback, task.instance_id, "clone", "success", "Repository ready at base commit")
 
                 runner_payload = self._build_problem_payload(task)
                 max_attempts = self.config.retry_max + 1
@@ -153,11 +171,13 @@ class GentlySWEAdapter:
                 runner_usage: Optional[dict[str, Any]] = None
                 run_max_tokens = self.config.max_tokens
                 while retries < max_attempts:
+                    self._emit(log_callback, task.instance_id, "runner", "info", "Runner started")
                     result = self._run_gently(
                         repo_dir,
                         runner_payload,
                         task.instance_id,
                         max_tokens=run_max_tokens,
+                        log_callback=log_callback,
                     )
                     status = str(result.get("status", "infra_error"))
                     error = str(result.get("error") or "")
@@ -224,12 +244,25 @@ class GentlySWEAdapter:
                         summary.status = "invalid_patch"
                         summary.error_message = runner_error or "Runner produced invalid patch"
                     elif runner_status == "no_patch":
-                        summary.status = "infra_error"
-                        summary.error_message = "Empty patch generated"
+                        summary.status = "no_patch"
+                        summary.error_message = runner_error or "No effective code diff generated"
                     else:
                         summary.status = "infra_error"
                         summary.error_message = runner_error or "No patch generated"
-                    self._emit(log_callback, task.instance_id, "patch", "error", "No patch generated", summary.error_message)
+                    patch_event_status = "no_patch" if summary.status == "no_patch" else "error"
+                    patch_event_message = (
+                        "No effective code diff generated"
+                        if summary.status == "no_patch"
+                        else "No patch generated"
+                    )
+                    self._emit(
+                        log_callback,
+                        task.instance_id,
+                        "patch",
+                        patch_event_status,
+                        patch_event_message,
+                        summary.error_message,
+                    )
 
                 summary.steps_completed = runner_steps
                 summary.usage = runner_usage
@@ -293,6 +326,7 @@ class GentlySWEAdapter:
         problem_payload: str,
         instance_id: str,
         max_tokens: int,
+        log_callback: LogCallback = None,
     ) -> dict[str, Any]:
         runner = self.config.runner_js_path
         if not runner.exists():
@@ -340,20 +374,107 @@ class GentlySWEAdapter:
 
             env = os.environ.copy()
             env["OPENROUTER_API_KEY"] = self.config.openrouter_api_key
-            proc = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
                 cwd=str(self.config.repo_root),
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                capture_output=True,
-                timeout=self.config.timeout_sec + 60,
-                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 env=env,
             )
 
-            stdout = (proc.stdout or "").strip()
-            stderr = (proc.stderr or "").strip()
+            line_queue: queue.Queue[tuple[str, str]] = queue.Queue()
+            stdout_lines: list[str] = []
+            stderr_lines: list[str] = []
+
+            def _pump(stream_name: str, stream) -> None:  # type: ignore[no-untyped-def]
+                try:
+                    for raw in iter(stream.readline, ""):
+                        line_queue.put((stream_name, raw))
+                finally:
+                    try:
+                        stream.close()
+                    except Exception:
+                        pass
+
+            t_out = threading.Thread(target=_pump, args=("stdout", proc.stdout), daemon=True)
+            t_err = threading.Thread(target=_pump, args=("stderr", proc.stderr), daemon=True)
+            t_out.start()
+            t_err.start()
+
+            started = time.time()
+            heartbeat_interval = 30
+            deadline_sec = self.config.timeout_sec + 60
+            next_heartbeat = started + heartbeat_interval
+            stdout = ""
+            stderr = ""
+
+            def _drain_queue() -> None:
+                while True:
+                    try:
+                        stream_name, raw = line_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    if stream_name == "stdout":
+                        stdout_lines.append(raw)
+                    else:
+                        stderr_lines.append(raw)
+                        evt = _extract_runner_event(raw)
+                        if evt:
+                            step = str(evt.get("step", "runner_event"))
+                            status = str(evt.get("status", "info"))
+                            message = str(evt.get("message", "Runner event"))
+                            error = evt.get("error")
+                            extra = {k: v for k, v in evt.items() if k not in {"step", "status", "message", "error"}}
+                            self._emit(
+                                log_callback,
+                                instance_id,
+                                step,
+                                status,
+                                message,
+                                str(error) if error is not None else None,
+                                **extra,
+                            )
+
+            while True:
+                if proc.poll() is not None:
+                    _drain_queue()
+                    break
+                _drain_queue()
+                elapsed = int(time.time() - started)
+                if time.time() >= next_heartbeat:
+                    self._emit(
+                        log_callback,
+                        instance_id,
+                        "runner_heartbeat",
+                        "info",
+                        f"Runner still active after {elapsed}s",
+                    )
+                    next_heartbeat = time.time() + heartbeat_interval
+                if elapsed >= deadline_sec:
+                    proc.kill()
+                    t_out.join(timeout=2)
+                    t_err.join(timeout=2)
+                    _drain_queue()
+                    stdout = "".join(stdout_lines).strip()
+                    stderr = "".join(stderr_lines).strip()
+                    return {
+                        "status": "timeout",
+                        "patch": "",
+                        "error": f"runner_timeout_after_{deadline_sec}s: {stderr or stdout}",
+                        "usage": None,
+                        "steps_completed": 0,
+                    }
+                time.sleep(1)
+
+            t_out.join(timeout=2)
+            t_err.join(timeout=2)
+            _drain_queue()
+            stdout = "".join(stdout_lines).strip()
+            stderr = "".join(stderr_lines).strip()
+
 
             if proc.returncode != 0:
                 return {

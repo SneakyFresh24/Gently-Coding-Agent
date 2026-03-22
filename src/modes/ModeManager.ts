@@ -11,6 +11,7 @@ import {
   ModeManager as IModeManager,
   ModeRegistry
 } from './types/ModeTypes';
+import { ModeRegistry as ModeRegistryImpl } from './ModeRegistry';
 
 /**
  * Manages loading, activating and deactivating modes
@@ -25,7 +26,7 @@ export class ModeManager implements IModeManager {
   private isActive: boolean = false;
 
   constructor(modeRegistry?: ModeRegistry) {
-    this.modeRegistry = modeRegistry || new (require('./ModeRegistry').ModeRegistry)();
+    this.modeRegistry = modeRegistry || new ModeRegistryImpl();
   }
 
   /**

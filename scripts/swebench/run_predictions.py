@@ -233,6 +233,7 @@ def main() -> None:
         "statuses": {
             "timeout": sum(1 for x in summaries if x["status"] == "timeout"),
             "invalid_patch": sum(1 for x in summaries if x["status"] == "invalid_patch"),
+            "no_patch": sum(1 for x in summaries if x["status"] == "no_patch"),
             "infra_error": sum(1 for x in summaries if x["status"] == "infra_error"),
             "success": success_count,
         },
