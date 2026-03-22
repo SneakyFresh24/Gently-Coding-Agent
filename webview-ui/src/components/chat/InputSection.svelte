@@ -1,6 +1,8 @@
 <script lang="ts">
   import Button from '../ui/Button.svelte';
   import FileReferenceChip from '../context/FileReference.svelte';
+  import ActivityIndicator from './ActivityIndicator.svelte';
+  import type { ToolCallInfo } from '../../lib/types';
 
   let {
     isBusy = false,
@@ -8,6 +10,9 @@
     hasModel = true,
     inputValue = '',
     selectedFiles = [] as string[],
+    activityLabel = null as string | null,
+    activityPhase = 'idle' as 'idle' | 'sending' | 'thinking' | 'tooling',
+    activeToolCalls = [] as ToolCallInfo[],
     onInputChange,
     onSend,
     onCancel,
@@ -19,6 +24,9 @@
     hasModel?: boolean;
     inputValue?: string;
     selectedFiles?: string[];
+    activityLabel?: string | null;
+    activityPhase?: 'idle' | 'sending' | 'thinking' | 'tooling';
+    activeToolCalls?: ToolCallInfo[];
     onInputChange?: (value: string) => void;
     onSend?: () => void;
     onCancel?: () => void;
@@ -58,6 +66,16 @@
 </script>
 
 <div class="input-section">
+  {#if activityLabel || activeToolCalls.length > 0}
+    <div class="activity-wrap">
+      <ActivityIndicator
+        label={activityLabel}
+        phase={activityPhase}
+        tools={activeToolCalls}
+      />
+    </div>
+  {/if}
+
   {#if selectedFiles.length > 0}
     <div class="file-chips">
       {#each selectedFiles as file}
@@ -72,7 +90,7 @@
     <div class="model-warning">Select an OpenRouter model before sending a message.</div>
   {/if}
 
-  <div class="input-row">
+  <div class="input-row" class:active={isBusy || isStreamingProp}>
     <textarea
       bind:this={textareaRef}
       class="input-textarea"
@@ -117,6 +135,10 @@
     padding: var(--space-md) var(--space-lg);
   }
 
+  .activity-wrap {
+    margin-bottom: var(--space-sm);
+  }
+
   .file-chips {
     display: flex;
     flex-wrap: wrap;
@@ -142,6 +164,11 @@
 
   .input-row:focus-within {
     border-color: var(--vscode-focusBorder);
+  }
+
+  .input-row.active {
+    border-color: color-mix(in srgb, var(--vscode-progressBar-background) 55%, var(--vscode-panel-border));
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--vscode-progressBar-background) 20%, transparent) inset;
   }
 
   .input-textarea {

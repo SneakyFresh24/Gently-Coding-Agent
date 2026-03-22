@@ -5,6 +5,7 @@
 import { writable, derived, get } from 'svelte/store';
 import { messaging } from '../lib/messaging';
 import type { Message } from '../lib/types';
+import { extensionStore } from './extensionStore';
 
 // ── Store State ──────────────────────────────────────
 
@@ -147,6 +148,10 @@ function createChatStore() {
     sendMessage() {
       const state = get({ subscribe });
       if (!state.inputValue.trim() && state.selectedFiles.length === 0) return;
+
+      extensionStore.setProcessing(true);
+      extensionStore.setActivityLabel('Sending message...');
+      extensionStore.setActivityPhase('sending');
 
       messaging.send('sendMessage', {
         message: state.inputValue,

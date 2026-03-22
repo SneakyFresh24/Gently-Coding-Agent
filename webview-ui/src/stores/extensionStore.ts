@@ -12,6 +12,7 @@ import type {
   TaskHistoryItem,
   DEFAULT_AUTO_APPROVAL_SETTINGS,
   PendingApproval,
+  ToolCallInfo,
 } from '../lib/types';
 
 
@@ -27,8 +28,12 @@ interface StoreState {
   isStreaming: boolean;
   isProcessing: boolean;
   pendingApproval: PendingApproval | null;
+  activityLabel: string | null;
+  activityPhase: 'idle' | 'sending' | 'thinking' | 'tooling';
+  activeToolCalls: ToolCallInfo[];
 }
 
+const TOOL_TIMEOUT_MS = 30_000;
 
 const initialState: StoreState = {
   apiConfiguration: null,
@@ -54,6 +59,9 @@ const initialState: StoreState = {
   isStreaming: false,
   isProcessing: false,
   pendingApproval: null,
+  activityLabel: null,
+  activityPhase: 'idle',
+  activeToolCalls: [],
 };
 
 
@@ -98,6 +106,44 @@ function createExtensionStore() {
 
     setProcessing(isProcessing: boolean) {
       update(s => ({ ...s, isProcessing }));
+    },
+
+    setActivityLabel(activityLabel: string | null) {
+      update(s => ({ ...s, activityLabel }));
+    },
+
+    setActivityPhase(activityPhase: 'idle' | 'sending' | 'thinking' | 'tooling') {
+      update(s => ({ ...s, activityPhase }));
+    },
+
+    upsertActiveToolCall(tool: ToolCallInfo) {
+      update(s => {
+        const now = Date.now();
+        const pruned = s.activeToolCalls.filter((t) => now - t.startedAt <= TOOL_TIMEOUT_MS);
+        const existingIndex = pruned.findIndex((t) => t.toolId === tool.toolId);
+        if (existingIndex >= 0) {
+          const next = [...pruned];
+          next[existingIndex] = { ...next[existingIndex], ...tool };
+          return { ...s, activeToolCalls: next };
+        }
+        return { ...s, activeToolCalls: [...pruned, tool] };
+      });
+    },
+
+    removeActiveToolCall(toolId: string) {
+      update(s => ({
+        ...s,
+        activeToolCalls: s.activeToolCalls.filter((t) => t.toolId !== toolId),
+      }));
+    },
+
+    clearActivityState() {
+      update(s => ({
+        ...s,
+        activityLabel: null,
+        activityPhase: 'idle',
+        activeToolCalls: [],
+      }));
     },
 
     setCurrentTask(task: Task | null) {
@@ -145,4 +191,9 @@ export const hasTask = derived(
 export const currentMode = derived(
   extensionStore,
   $s => $s.mode
+);
+
+export const hasActiveToolCalls = derived(
+  extensionStore,
+  $s => $s.activeToolCalls.length > 0
 );

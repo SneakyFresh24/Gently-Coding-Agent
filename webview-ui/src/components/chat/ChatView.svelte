@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import ChatLayout from './ChatLayout.svelte';
   import TaskHeader from './TaskHeader.svelte';
   import WelcomeSection from './WelcomeSection.svelte';
@@ -18,6 +19,15 @@
 
 
   let { isHidden = false } = $props();
+
+  function inferPhase(label: string | null | undefined): 'idle' | 'sending' | 'thinking' | 'tooling' {
+    const normalized = (label || '').toLowerCase();
+    if (!normalized) return 'idle';
+    if (normalized.includes('sending')) return 'sending';
+    if (normalized.includes('reading') || normalized.includes('tool') || normalized.includes('preparing')) return 'tooling';
+    if (normalized.includes('thinking') || normalized.includes('denkt') || normalized.includes('analy')) return 'thinking';
+    return 'thinking';
+  }
 
   onMount(() => {
     initMessaging({
@@ -60,7 +70,11 @@
           mode: data.modeId,
         });
       },
-      onError: (data) => chatStore.setError(data.message),
+      onError: (data) => {
+        chatStore.setError(data.message);
+        extensionStore.clearActivityState();
+        extensionStore.setProcessing(false);
+      },
 
       // Messages
       onAssistantMessage: (data) => {
@@ -100,20 +114,34 @@
       onClearMessages: () => chatStore.clear(),
 
       // Generation state
-      onGeneratingStart: () => extensionStore.setStreaming(true),
+      onGeneratingStart: () => {
+        extensionStore.setStreaming(true);
+        if (!get(extensionStore).activityLabel) {
+          extensionStore.setActivityLabel('Thinking...');
+          extensionStore.setActivityPhase('thinking');
+        }
+      },
       onGeneratingEnd: () => {
         extensionStore.setStreaming(false);
         extensionStore.setPendingApproval(null);
+        extensionStore.clearActivityState();
       },
-      onProcessingStart: () => extensionStore.setProcessing(true),
+      onProcessingStart: () => {
+        extensionStore.setProcessing(true);
+      },
       onProcessingEnd: () => {
         extensionStore.setProcessing(false);
         extensionStore.setPendingApproval(null);
+        if (!get(extensionStore).isStreaming) {
+          extensionStore.clearActivityState();
+        }
       },
 
       // Context
-      onContextUpdate: (_data) => {
-        // Could update a context store if needed
+      onContextUpdate: (_data) => {},
+      onActivityUpdate: (data) => {
+        extensionStore.setActivityLabel(data.label ?? null);
+        extensionStore.setActivityPhase(inferPhase(data.label));
       },
 
       // Auto-approve
@@ -131,6 +159,31 @@
       // Tool Approvals
       onToolApprovalRequest: (data) => {
         extensionStore.setPendingApproval(data);
+      },
+      onToolExecutionStart: (data) => {
+        const toolName = data.toolName || 'tool';
+        const toolId = data.toolId || `${toolName}-${Date.now()}`;
+        extensionStore.upsertActiveToolCall({
+          toolId,
+          toolName,
+          file: data.file || data.path,
+          status: 'running',
+          startedAt: Number(data.timestamp || Date.now()),
+        });
+        extensionStore.setActivityPhase('tooling');
+      },
+      onToolComplete: (data) => {
+        const toolName = data.tool || data.toolName || 'tool';
+        const state = get(extensionStore);
+        const exact = data.toolId && state.activeToolCalls.find((t) => t.toolId === data.toolId);
+        if (exact) {
+          extensionStore.removeActiveToolCall(exact.toolId);
+          return;
+        }
+        const candidate = [...state.activeToolCalls].reverse().find((t) => t.toolName === toolName);
+        if (candidate) {
+          extensionStore.removeActiveToolCall(candidate.toolId);
+        }
       },
 
       // Tasks
@@ -168,8 +221,13 @@
 
 <ChatLayout {isHidden}>
   <div class="chat-container">
-    {#if $chatStore.messages.length > 0 || $hasTask}
-      <TaskHeader task={$extensionStore.currentTask} />
+    {#if $chatStore.messages.length > 0 || $hasTask || $extensionStore.activityLabel || $extensionStore.activeToolCalls.length > 0}
+      <TaskHeader
+        task={$extensionStore.currentTask}
+        activityLabel={$extensionStore.activityLabel}
+        activityPhase={$extensionStore.activityPhase}
+        activeToolCalls={$extensionStore.activeToolCalls}
+      />
       <MessagesArea messages={$chatStore.messages} />
     {:else}
       <WelcomeSection />
@@ -190,6 +248,9 @@
       hasModel={!!$settingsStore.selectedModel}
       inputValue={$chatStore.inputValue}
       selectedFiles={$chatStore.selectedFiles}
+      activityLabel={$extensionStore.activityLabel}
+      activityPhase={$extensionStore.activityPhase}
+      activeToolCalls={$extensionStore.activeToolCalls}
       onInputChange={(v) => chatStore.setInputValue(v)}
       onSend={() => chatStore.sendMessage()}
       onCancel={() => chatStore.cancelTask()}

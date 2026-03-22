@@ -46,6 +46,14 @@ export interface PendingApproval {
   timestamp: number;
 }
 
+export interface ToolCallInfo {
+  toolId: string;
+  toolName: string;
+  file?: string;
+  status: 'running' | 'complete' | 'error';
+  startedAt: number;
+}
+
 
 export interface ToolCall {
   id: string;
@@ -139,6 +147,9 @@ export interface ExtensionState {
   mode: 'architect' | 'code' | 'ask' | 'agent' | 'debug';
   isStreaming: boolean;
   isProcessing: boolean;
+  activityLabel?: string | null;
+  activityPhase?: 'idle' | 'sending' | 'thinking' | 'tooling';
+  activeToolCalls?: ToolCallInfo[];
 }
 
 // ── Model Info ───────────────────────────────────────
