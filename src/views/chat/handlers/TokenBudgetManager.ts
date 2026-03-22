@@ -9,6 +9,7 @@ export interface CompressionResult {
     inputTokens: number;
     droppedMessages: number;
     wasCompressed: boolean;
+    summaryInserted: boolean;
 }
 
 export class TokenBudgetManager {
@@ -33,14 +34,16 @@ export class TokenBudgetManager {
         modelId: string,
         messages: ChatMessage[],
         tools: any[] | undefined,
-        inputBudgetTokens: number
+        inputBudgetTokens: number,
+        options?: { summaryThreshold?: number }
     ): CompressionResult {
         if (messages.length === 0) {
-            return { messages, inputTokens: 0, droppedMessages: 0, wasCompressed: false };
+            return { messages, inputTokens: 0, droppedMessages: 0, wasCompressed: false, summaryInserted: false };
         }
 
         const encoder = this.getEncoderForModel(modelId);
         const [systemMessage, ...history] = messages;
+        const summaryThreshold = Math.max(1, options?.summaryThreshold ?? 5);
         const toolTokens = tools && tools.length > 0
             ? this.countTextTokens(encoder, JSON.stringify(tools))
             : 0;
@@ -52,37 +55,79 @@ export class TokenBudgetManager {
                 messages: [systemMessage],
                 inputTokens: baseTokens,
                 droppedMessages: history.length,
-                wasCompressed: true
+                wasCompressed: true,
+                summaryInserted: false
             };
         }
 
         let remaining = inputBudgetTokens - baseTokens;
         const selected: ChatMessage[] = [];
+        const selectedIndexes = new Set<number>();
+        let summaryInserted = false;
 
         for (let i = history.length - 1; i >= 0; i--) {
             const message = history[i];
             const tokens = this.countMessageTokens(encoder, message);
-            if (tokens <= remaining) {
+            if (this.isPinnedMessage(message)) {
                 selected.unshift(message);
+                selectedIndexes.add(i);
                 remaining -= tokens;
+                continue;
+            }
+            if (tokens <= remaining) {
+                selectedIndexes.add(i);
+                remaining -= tokens;
+                selected.unshift(message);
             }
         }
 
-        if (selected.length === 0 && history.length > 0) {
-            const newest = history[history.length - 1];
+        if (!selected.some((message) => !this.isPinnedMessage(message)) && history.length > 0) {
+            const newest = this.findNewestNonPinnedMessage(history);
+            if (!newest) {
+                const finalMessages = [systemMessage, ...selected];
+                const finalTokens = this.estimateInputTokensWithEncoder(encoder, finalMessages, tools);
+                return {
+                    messages: finalMessages,
+                    inputTokens: finalTokens,
+                    droppedMessages: Math.max(0, history.length - selected.length),
+                    wasCompressed: history.length !== selected.length,
+                    summaryInserted: false
+                };
+            }
             const safeBudget = Math.max(MIN_CONTENT_TOKENS, remaining - 8);
-            const truncated = this.truncateMessageToBudget(encoder, newest, safeBudget);
+            const truncated = this.truncateMessageToBudget(encoder, newest.message, safeBudget);
             selected.push(truncated);
+            if (newest.index >= 0) {
+                selectedIndexes.add(newest.index);
+            }
+        }
+
+        const droppedMessages = history.filter((_, index) => !selectedIndexes.has(index));
+        if (droppedMessages.length > summaryThreshold) {
+            const summaryContent = this.buildCompressionSummary(droppedMessages.length, droppedMessages);
+            const summaryMessage: ChatMessage = {
+                role: 'system',
+                content: summaryContent,
+                _compressed: true
+            };
+            const summaryTokens = this.countMessageTokens(encoder, summaryMessage);
+            if (summaryTokens <= remaining) {
+                selected.unshift(summaryMessage);
+                remaining -= summaryTokens;
+                summaryInserted = true;
+            }
         }
 
         const finalMessages = [systemMessage, ...selected];
         const finalTokens = this.estimateInputTokensWithEncoder(encoder, finalMessages, tools);
+        const droppedCount = Math.max(0, droppedMessages.length);
 
         return {
             messages: finalMessages,
             inputTokens: finalTokens,
-            droppedMessages: Math.max(0, history.length - selected.length),
-            wasCompressed: history.length !== selected.length
+            droppedMessages: droppedCount,
+            wasCompressed: droppedCount > 0 || summaryInserted,
+            summaryInserted
         };
     }
 
@@ -139,6 +184,19 @@ export class TokenBudgetManager {
         return 'gpt-4o-mini';
     }
 
+    private findNewestNonPinnedMessage(history: ChatMessage[]): { message: ChatMessage; index: number } | null {
+        for (let i = history.length - 1; i >= 0; i--) {
+            if (!this.isPinnedMessage(history[i])) {
+                return { message: history[i], index: i };
+            }
+        }
+        return null;
+    }
+
+    private isPinnedMessage(message: ChatMessage): boolean {
+        return Boolean(message && message.pinned === true);
+    }
+
     private countMessageTokens(encoder: Tiktoken, message: ChatMessage): number {
         const toolCallText = message.tool_calls && message.tool_calls.length > 0
             ? JSON.stringify(message.tool_calls)
@@ -157,5 +215,21 @@ export class TokenBudgetManager {
     private countTextTokens(encoder: Tiktoken, text: string): number {
         if (!text) return 0;
         return encoder.encode(text).length;
+    }
+
+    private buildCompressionSummary(droppedCount: number, droppedMessages: ChatMessage[]): string {
+        const snippets = droppedMessages
+            .slice(-3)
+            .map((message) => this.summarizeContent(message.content || ''))
+            .filter((snippet) => snippet.length > 0);
+        const suffix = snippets.length > 0 ? ` Key points: ${snippets.join(' | ')}` : '';
+        return `[${droppedCount} older messages compressed.${suffix}]`;
+    }
+
+    private summarizeContent(content: string): string {
+        const compact = content.replace(/\s+/g, ' ').trim();
+        if (!compact) return '';
+        const firstSentence = compact.split(/[.!?]/)[0] || compact;
+        return firstSentence.slice(0, 120);
     }
 }

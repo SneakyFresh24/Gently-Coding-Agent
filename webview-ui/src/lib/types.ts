@@ -228,6 +228,7 @@ export type OutboundMessageType =
   | 'modelChanged'
   | 'retryingWithReducedTokens'
   | 'retryingRateLimit'
+  | 'retryStatus'
   | 'error'
   | 'info'
   | 'modeChanged'

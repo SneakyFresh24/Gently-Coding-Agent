@@ -689,6 +689,10 @@ export class SessionHandler {
       totalTokens: 0,
       cacheReadInputTokens: 0,
       cacheWriteInputTokens: 0,
+      currentContextTokens: 0,
+      modelContextLength: 0,
+      compressionLevel: 'none' as 'none' | 'proactive' | 'aggressive',
+      warnings: [] as string[],
       estimatedCostUsd: null,
       lastUpdated: Date.now()
     };
@@ -702,6 +706,16 @@ export class SessionHandler {
       totalTokens: Number(usage?.totalTokens || 0),
       cacheReadInputTokens: Number(usage?.cacheReadInputTokens || 0),
       cacheWriteInputTokens: Number(usage?.cacheWriteInputTokens || 0),
+      currentContextTokens: Number(usage?.currentContextTokens || 0),
+      modelContextLength: Number(usage?.modelContextLength || 0),
+      compressionLevel: usage?.compressionLevel === 'aggressive'
+        ? 'aggressive'
+        : usage?.compressionLevel === 'proactive'
+          ? 'proactive'
+          : 'none' as 'none' | 'proactive' | 'aggressive',
+      warnings: Array.isArray(usage?.warnings)
+        ? usage.warnings.filter((item: unknown) => typeof item === 'string')
+        : [] as string[],
       estimatedCostUsd: usage?.estimatedCostUsd == null ? null : Number(usage.estimatedCostUsd),
       lastUpdated: Number(usage?.lastUpdated || 0)
     };
@@ -721,6 +735,13 @@ export class SessionHandler {
     this.sendMessageToWebview({
       type: 'tokenTrackerUpdate',
       usage,
+      currentContextTokens: usage.currentContextTokens,
+      modelContextLength: maxTokens,
+      sessionPromptTokens: usage.promptTokens,
+      sessionCompletionTokens: usage.completionTokens,
+      sessionTotalTokens: usage.totalTokens,
+      compressionLevel: usage.compressionLevel,
+      warnings: usage.warnings,
       maxTokens,
       pricing,
       cost
@@ -731,6 +752,13 @@ export class SessionHandler {
     this.sendMessageToWebview({
       type: 'tokenTrackerUpdate',
       usage: this.getDefaultTokenUsage(),
+      currentContextTokens: 0,
+      modelContextLength: 200000,
+      sessionPromptTokens: 0,
+      sessionCompletionTokens: 0,
+      sessionTotalTokens: 0,
+      compressionLevel: 'none',
+      warnings: [],
       maxTokens: 200000,
       pricing: null,
       cost: null

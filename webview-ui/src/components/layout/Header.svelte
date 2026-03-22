@@ -15,9 +15,12 @@
       estimatedCostUsd: number | null;
       lastUpdated: number;
     };
+    currentContextTokens: number;
     maxTokens: number;
     pricing: { prompt?: number; completion?: number; cache_read?: number; cache_write?: number } | null;
     cost: number | null;
+    compressionLevel: 'none' | 'proactive' | 'aggressive';
+    warnings: string[];
   };
   
   function setView(view: string) {
@@ -77,14 +80,17 @@
 
   <div class="right">
     <TokenDisplay
-      tokens={tokenState.usage.totalTokens}
+      currentContextTokens={tokenState.currentContextTokens}
       maxTokens={tokenState.maxTokens}
       promptTokens={tokenState.usage.promptTokens}
       completionTokens={tokenState.usage.completionTokens}
+      sessionTotalTokens={tokenState.usage.totalTokens}
       cacheReads={tokenState.usage.cacheReadInputTokens}
       cacheWrites={tokenState.usage.cacheWriteInputTokens}
       pricing={tokenState.pricing}
       cost={tokenState.cost}
+      compressionLevel={tokenState.compressionLevel}
+      warnings={tokenState.warnings}
     />
     <button 
       class="settings-btn" 

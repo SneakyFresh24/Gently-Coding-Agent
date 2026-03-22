@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { AgentManager } from '../../../agent/agentManager/AgentManager';
 import { FileReferenceManager } from '../../../agent/fileReferenceManager';
 // Base styles and types
-import { ChatViewContext, Message, fromChatMessage } from '../types/ChatTypes';
+import { ChatViewContext, Message, fromChatMessage, toChatMessage } from '../types/ChatTypes';
 import { OpenRouterService } from '../../../services/OpenRouterService';
 import { ToolCallManager } from '../toolcall';
 
@@ -54,8 +54,18 @@ export class MessageHandler {
     const followUp = new FollowUpHandler(
         this.toolCallManager as any, // Cast temporarily if types mismatch during migration
         sendMessageToWebview,
-        () => ({ valid: true, issues: [] }), // Simplified validation for now
-        () => true, // Simplified repair for now
+        (messages: Message[]) => {
+          const validation = this.toolCallManager.validateMessageSequence(messages.map(toChatMessage));
+          return { valid: validation.valid, issues: validation.errors };
+        },
+        (messages: Message[]) => {
+          const repair = this.toolCallManager.repairConversationHistory(messages.map(toChatMessage));
+          return {
+            repaired: repair.repaired,
+            messages: repair.messages.map((msg: any) => fromChatMessage(msg)),
+            fixes: repair.fixes
+          };
+        },
         (msg: string, retry: number, isFollow: boolean) => this.flowManager.generateAndStreamResponse(this.context, msg, retry, isFollow)
     );
 
@@ -85,7 +95,18 @@ export class MessageHandler {
       }
     );
 
-    this.context = { agentMode: false, selectedModel: null, selectedMode: 'ask', conversationHistory: [], shouldStopStream: false, shouldAbortTools: false, messageCheckpoints: new Map(), toolExecutionStartSent: new Set() };
+    this.context = {
+      agentMode: false,
+      selectedModel: null,
+      selectedMode: 'ask',
+      conversationHistory: [],
+      shouldStopStream: false,
+      shouldAbortTools: false,
+      messageCheckpoints: new Map(),
+      toolExecutionStartSent: new Set(),
+      sequenceRepairHistory: [],
+      sequenceRetryCount: 0
+    };
 
     this.loadStoredState();
     this.sessionHistoryManager.initializeSession(this.context);

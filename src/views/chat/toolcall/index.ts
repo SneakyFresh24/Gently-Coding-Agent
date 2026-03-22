@@ -5,5 +5,6 @@
 export { 
     ToolCallManager, 
     ToolCallMessageContext, 
-    ToolCallValidationResult 
+    ToolCallValidationResult,
+    ConversationRepairResult
 } from './ToolCallManager';

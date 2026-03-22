@@ -198,8 +198,8 @@ export class FollowUpHandler {
     constructor(
         private toolCallManager: ToolCallManager,
         private sendMessageToWebview: (message: OutboundWebviewMessage) => void,
-        private validateMessageSequence: () => { valid: boolean; issues: string[] },
-        private repairMessageSequence: () => boolean,
+        private validateMessageSequence: (messages: Message[]) => { valid: boolean; issues: string[] },
+        private repairMessageSequence: (messages: Message[]) => { repaired: boolean; messages: Message[]; fixes: string[] },
         private generateAndStreamResponse: (message: string, retryCount: number, isFollowUp: boolean) => Promise<void>
     ) { }
 
@@ -250,11 +250,16 @@ export class FollowUpHandler {
                 context.conversationHistory.push(followUpMessage);
             }
 
-            const validation = this.validateMessageSequence();
+            const validation = this.validateMessageSequence(context.conversationHistory);
             if (!validation.valid) {
-                if (!this.repairMessageSequence()) {
+                const repair = this.repairMessageSequence(context.conversationHistory);
+                if (!repair.repaired) {
                     this.sendMessageToWebview({ type: 'error', message: 'Message sequence error. Please start a new conversation.' });
                     return;
+                }
+                context.conversationHistory = repair.messages;
+                if (repair.fixes.length > 0) {
+                    log.info(`Follow-up sequence repaired: ${repair.fixes.join(', ')}`);
                 }
             }
 

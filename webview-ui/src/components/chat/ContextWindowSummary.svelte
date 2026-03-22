@@ -1,20 +1,31 @@
 <script lang="ts">
-  export let tokens = 0;
+  export let currentContextTokens = 0;
   export let maxTokens = 200000;
+  export let sessionTotalTokens = 0;
   export let promptTokens = 0;
   export let completionTokens = 0;
   export let cost: number | null = null;
   export let cacheReads = 0;
   export let cacheWrites = 0;
   export let pricing: { prompt?: number; completion?: number; cache_read?: number; cache_write?: number } | null = null;
+  export let compressionLevel: 'none' | 'proactive' | 'aggressive' = 'none';
+  export let warnings: string[] = [];
 
-  $: percentage = Math.min(100, Math.round((tokens / maxTokens) * 100));
-  $: formattedTokens = formatLargeNumber(tokens);
+  $: percentage = Math.min(100, Math.round((currentContextTokens / maxTokens) * 100));
+  $: formattedTokens = formatLargeNumber(currentContextTokens);
+  $: formattedSessionTotal = formatLargeNumber(sessionTotalTokens);
   $: formattedMax = formatLargeNumber(maxTokens);
   $: resolvedCost = cost ?? calculateEstimatedCost();
   $: hasPricing = !!pricing && [pricing.prompt, pricing.completion, pricing.cache_read, pricing.cache_write].some((v) => (v || 0) > 0);
   $: formattedCost = resolvedCost == null ? 'N/A' : `$${resolvedCost.toFixed(4)}`;
-  $: thresholdClass = percentage >= 95 ? 'critical' : percentage >= 90 ? 'danger' : percentage >= 75 ? 'warning' : 'safe';
+  $: thresholdClass = percentage >= 95 ? 'critical' : percentage >= 80 ? 'warning' : 'safe';
+  $: warningText = warnings.length > 0
+    ? warnings[0]
+    : compressionLevel === 'aggressive'
+      ? `Context fast voll (${percentage}%). Aggressive Komprimierung aktiv.`
+      : compressionLevel === 'proactive'
+        ? `Context zu ${percentage}% gefuellt. Aeltere Nachrichten werden komprimiert.`
+        : '';
 
   function formatLargeNumber(value: number): string {
     if (!Number.isFinite(value)) return '0';
@@ -57,7 +68,7 @@
 
   <div class="stats-grid">
     <div class="stat-item">
-      <span class="label">Tokens Used</span>
+      <span class="label">Current Context</span>
       <span class="value">{formattedTokens}</span>
     </div>
     <div class="stat-item">
@@ -73,14 +84,23 @@
   <div class="divider"></div>
   <div class="cache-info">
     <div class="stat-item">
-      <span class="label">Input Tokens</span>
+      <span class="label">Session Input</span>
       <span class="value">{formatLargeNumber(promptTokens)}</span>
     </div>
     <div class="stat-item">
-      <span class="label">Output Tokens</span>
+      <span class="label">Session Output</span>
       <span class="value">{formatLargeNumber(completionTokens)}</span>
     </div>
+    <div class="stat-item">
+      <span class="label">Session Total</span>
+      <span class="value">{formattedSessionTotal}</span>
+    </div>
   </div>
+
+  {#if warningText}
+    <div class="divider"></div>
+    <div class="warning {thresholdClass}">{warningText}</div>
+  {/if}
 
   {#if cacheReads > 0 || cacheWrites > 0}
     <div class="divider"></div>
@@ -132,10 +152,6 @@
     color: #d9a441;
   }
 
-  .percentage.danger {
-    color: #d97341;
-  }
-
   .percentage.critical {
     color: #d94a41;
   }
@@ -158,10 +174,6 @@
 
   .fill.warning {
     background: #d9a441;
-  }
-
-  .fill.danger {
-    background: #d97341;
   }
 
   .fill.critical {
@@ -204,5 +216,15 @@
   .pricing-note {
     color: var(--vscode-descriptionForeground);
     font-size: 10px;
+  }
+
+  .warning {
+    font-size: 10px;
+    color: #d9a441;
+    line-height: 1.3;
+  }
+
+  .warning.critical {
+    color: #d94a41;
   }
 </style>

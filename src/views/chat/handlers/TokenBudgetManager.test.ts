@@ -35,4 +35,39 @@ describe('TokenBudgetManager', () => {
         expect(result.wasCompressed).toBe(false);
         manager.dispose();
     });
+
+    it('never drops pinned messages during compression', () => {
+        const manager = new TokenBudgetManager();
+        const messages: ChatMessage[] = [
+            { role: 'system', content: 'System prompt.' },
+            { role: 'user', content: 'older content '.repeat(120) },
+            { role: 'assistant', content: 'must keep me', pinned: true },
+            { role: 'user', content: 'latest content '.repeat(40) }
+        ];
+
+        const result = manager.compressMessagesForBudget('openai/gpt-4o-mini', messages, undefined, 220);
+
+        expect(result.messages.some((message) => message.pinned && message.content.includes('must keep me'))).toBe(true);
+        manager.dispose();
+    });
+
+    it('injects compression summary when many messages are dropped', () => {
+        const manager = new TokenBudgetManager();
+        const messages: ChatMessage[] = [
+            { role: 'system', content: 'System prompt with summary.' },
+            ...Array.from({ length: 10 }, (_, idx) => ({
+                role: idx % 2 === 0 ? 'user' as const : 'assistant' as const,
+                content: `message-${idx} `.repeat(80)
+            }))
+        ];
+
+        const result = manager.compressMessagesForBudget('openai/gpt-4o-mini', messages, undefined, 650, { summaryThreshold: 3 });
+        const summaryMessage = result.messages.find((message) => message._compressed === true);
+
+        expect(result.droppedMessages).toBeGreaterThan(3);
+        expect(result.summaryInserted).toBe(true);
+        expect(summaryMessage).toBeTruthy();
+        expect(summaryMessage?.role).toBe('system');
+        manager.dispose();
+    });
 });

@@ -4,7 +4,6 @@ import { AgentManager } from '../../../agent/agentManager/AgentManager';
 import { SessionHistoryManager } from './SessionHistoryManager';
 import { ReferenceParser, PromptManager, ConversationPruner } from './ContextGenerators';
 import { StreamingService } from './StreamingService';
-import { ChatHandlerUtils } from './ChatHandlerUtils';
 import { ToolCallManager } from '../toolcall';
 import { ToolCallDispatcher } from './ExecutionDispatchers';
 import { LogService } from '../../../services/LogService';
@@ -14,11 +13,25 @@ import { OutboundWebviewMessage } from '../types/WebviewMessageTypes';
 import { UsageInfo } from '../../../core/streaming/types';
 import { SessionType } from '../../../services/HistoryManager';
 import { TokenBudgetManager } from './TokenBudgetManager';
+import { ConversationRepairResult } from '../toolcall';
 
 const log = new LogService('ChatFlowManager');
 
 export class ChatFlowManager {
     private readonly tokenBudgetManager = new TokenBudgetManager();
+    private readonly proactiveCompressionThreshold = 0.8;
+    private readonly aggressiveCompressionThreshold = 0.95;
+    private readonly compressionLogThrottleMs = 30_000;
+    private readonly lastCompressionLogAt = new Map<string, number>();
+    private readonly sequenceRetryMaxAttempts = 3;
+    private readonly sequenceBackoffBaseMs = 2000;
+    private readonly sequenceRepairHistoryLimit = 10;
+    private readonly modelWarningByFlow = new Set<string>();
+    private readonly knownSequenceIssueModels = new Set<string>([
+        'minimax/minimax-m2.7',
+        'minimax/minimax-m1',
+        'minimax/minimax-01'
+    ]);
 
     constructor(
         private readonly agentManager: AgentManager,
@@ -98,7 +111,24 @@ export class ChatFlowManager {
 
         this.sendMessageToWebview({ type: 'activityUpdate', label: 'Preparing prompt...' });
         const systemPrompt = await this.promptManager.prepareSystemPrompt(context, retryCount);
-        const rawMessages: ChatMessage[] = [
+        const strictSequenceMode = this.isKnownSequenceIssueModel(context.selectedModel);
+        if (strictSequenceMode) {
+            const flowKey = context.currentFlowId || `${context.selectedModel}:${Date.now()}`;
+            if (!this.modelWarningByFlow.has(flowKey)) {
+                this.modelWarningByFlow.add(flowKey);
+                this.sendMessageToWebview({
+                    type: 'info',
+                    message: `Model ${context.selectedModel} is running with stricter tool-sequence validation due to known provider quirks.`
+                });
+            }
+        }
+        const initialPreflight = this.repairConversationSequence(context, context.selectedModel, 'preflight_initial', strictSequenceMode);
+        const repairWarnings: string[] = [];
+        if (initialPreflight.repaired && initialPreflight.fixes.length > 0) {
+            repairWarnings.push(...initialPreflight.fixes);
+        }
+
+        let rawMessages: ChatMessage[] = [
             { role: 'system' as const, content: systemPrompt },
             ...context.conversationHistory.map(toChatMessage),
         ];
@@ -106,17 +136,90 @@ export class ChatFlowManager {
         const tools = this.getToolsForMode(context);
         const responseFormat = tools && context.selectedModel === 'deepseek/deepseek-chat' ? { type: 'json_object' as const } : undefined;
         const configuredMaxTokens = this.getConfiguredMaxTokens();
-        const inputBudget = this.computeInputBudgetTokens(modelContextLength);
-        const compression = this.tokenBudgetManager.compressMessagesForBudget(
+        const estimatedInputTokens = this.tokenBudgetManager.estimateInputTokens(rawMessages, tools);
+        const utilization = modelContextLength > 0 ? estimatedInputTokens / modelContextLength : 0;
+        let compressionLevel: 'none' | 'proactive' | 'aggressive' = 'none';
+        if (utilization >= this.aggressiveCompressionThreshold) {
+            compressionLevel = 'aggressive';
+        } else if (utilization >= this.proactiveCompressionThreshold) {
+            compressionLevel = 'proactive';
+        }
+
+        const compressionWarnings: string[] = [];
+        if (compressionLevel === 'aggressive') {
+            const warning = `Context fast voll (${(utilization * 100).toFixed(1)}%). Aggressive Komprimierung aktiv.`;
+            compressionWarnings.push(warning);
+            this.sendMessageToWebview({ type: 'info', message: warning });
+            this.logCompressionEvent(
+                'aggressive_compression_triggered',
+                `model=${context.selectedModel} inputTokens=${estimatedInputTokens} contextLimit=${modelContextLength} utilization=${(utilization * 100).toFixed(1)}%`,
+                false,
+                context.currentFlowId || context.selectedModel
+            );
+        } else if (compressionLevel === 'proactive') {
+            const warning = `Context zu ${(utilization * 100).toFixed(1)}% gefuellt. Aeltere Nachrichten werden komprimiert.`;
+            compressionWarnings.push(warning);
+            this.sendMessageToWebview({ type: 'info', message: warning });
+            this.logCompressionEvent(
+                'proactive_compression_triggered',
+                `model=${context.selectedModel} inputTokens=${estimatedInputTokens} contextLimit=${modelContextLength} utilization=${(utilization * 100).toFixed(1)}%`,
+                true,
+                context.currentFlowId || context.selectedModel
+            );
+        }
+
+        let inputBudget = this.computeInputBudgetTokens(modelContextLength, compressionLevel);
+        let compression = this.tokenBudgetManager.compressMessagesForBudget(
             context.selectedModel,
             rawMessages,
             tools,
             inputBudget
         );
-        const messages = compression.messages;
         if (compression.wasCompressed) {
-            log.info(`Context compressed before request: dropped=${compression.droppedMessages}, inputTokens=${compression.inputTokens}, budget=${inputBudget}`);
+            this.logCompressionEvent(
+                'context_compressed_before_request',
+                `model=${context.selectedModel} dropped=${compression.droppedMessages} inputTokens=${compression.inputTokens} budget=${inputBudget} level=${compressionLevel} summaryInserted=${compression.summaryInserted}`,
+                true,
+                context.currentFlowId || context.selectedModel
+            );
         }
+
+        if (compression.inputTokens > modelContextLength && compressionLevel !== 'aggressive') {
+            compressionLevel = 'aggressive';
+            inputBudget = this.computeInputBudgetTokens(modelContextLength, compressionLevel);
+            compression = this.tokenBudgetManager.compressMessagesForBudget(
+                context.selectedModel,
+                rawMessages,
+                tools,
+                inputBudget
+            );
+            this.logCompressionEvent(
+                'aggressive_compression_retry',
+                `model=${context.selectedModel} dropped=${compression.droppedMessages} inputTokens=${compression.inputTokens} budget=${inputBudget}`,
+                false,
+                context.currentFlowId || context.selectedModel
+            );
+        }
+
+        if (compression.inputTokens > modelContextLength) {
+            const warning = `Context weiterhin ueber Limit (${compression.inputTokens}/${modelContextLength}) nach Komprimierung.`;
+            compressionWarnings.push(warning);
+            this.logCompressionEvent(
+                'context_over_limit_after_compression',
+                `model=${context.selectedModel} inputTokens=${compression.inputTokens} contextLimit=${modelContextLength} level=${compressionLevel}`,
+                false,
+                context.currentFlowId || context.selectedModel
+            );
+            this.sendMessageToWebview({
+                type: 'error',
+                message: 'Kontext ist zu gross und konnte trotz Komprimierung nicht sicher reduziert werden. Bitte starte einen neuen Chat oder kuerze den Verlauf.'
+            });
+            this.sendMessageToWebview({ type: 'activityUpdate', label: null });
+            this.sendMessageToWebview({ type: 'processingEnd' });
+            this.sendMessageToWebview({ type: 'generatingEnd' });
+            return;
+        }
+        let messages = compression.messages;
 
         let maxTokens = this.computeMaxOutputTokens(compression.inputTokens, modelContextLength, modelMaxOutput, configuredMaxTokens);
 
@@ -127,6 +230,7 @@ export class ChatFlowManager {
         context.shouldStopStream = false;
         let rateLimitRetryCount = 0;
         let contextLengthRetried = false;
+        let sequenceRetryCount = 0;
         let assistantMessage = '';
         let toolCalls: any[] = [];
         let usage: UsageInfo | undefined;
@@ -187,6 +291,66 @@ export class ChatFlowManager {
                 }
 
                 if (
+                    this.openRouterService.isToolCallSequenceError(error) &&
+                    !context.shouldStopStream &&
+                    sequenceRetryCount < this.sequenceRetryMaxAttempts
+                ) {
+                    const retryAttempt = sequenceRetryCount + 1;
+                    const retryDelayMs = this.sequenceBackoffBaseMs * Math.pow(2, retryAttempt - 1);
+                    const repairResult = this.repairConversationSequence(context, context.selectedModel, `retry_attempt_${retryAttempt}`, true);
+
+                    if (repairResult.fixes.length > 0) {
+                        repairWarnings.push(...repairResult.fixes);
+                    }
+
+                    this.sendMessageToWebview({
+                        type: 'retryStatus',
+                        attempt: retryAttempt,
+                        maxAttempts: this.sequenceRetryMaxAttempts,
+                        delayMs: retryDelayMs,
+                        reason: 'tool_call_sequence',
+                        model: context.selectedModel,
+                        fixes: repairResult.fixes
+                    } as any);
+                    this.sendMessageToWebview({
+                        type: 'activityUpdate',
+                        label: `Repairing conversation... (${retryAttempt}/${this.sequenceRetryMaxAttempts})`
+                    });
+
+                    const repeatedPattern = this.trackSequenceRepairPattern(context, repairResult.repairHash);
+                    if (repeatedPattern) {
+                        this.sendMessageToWebview({
+                            type: 'info',
+                            message: `Repeated sequence issues detected for ${context.selectedModel}. Consider switching model if this continues.`
+                        });
+                        log.warn(`repeated_sequence_pattern_detected: model=${context.selectedModel} hash=${repairResult.repairHash || 'none'} attempt=${retryAttempt}`);
+                    }
+
+                    await this.sleepWithStop(retryDelayMs, context);
+                    if (context.shouldStopStream) {
+                        throw new Error('Request stopped by user.');
+                    }
+
+                    rawMessages = [
+                        { role: 'system' as const, content: systemPrompt },
+                        ...context.conversationHistory.map(toChatMessage),
+                    ];
+                    compression = this.tokenBudgetManager.compressMessagesForBudget(
+                        context.selectedModel,
+                        rawMessages,
+                        tools,
+                        inputBudget
+                    );
+                    messages = compression.messages;
+                    maxTokens = this.computeMaxOutputTokens(compression.inputTokens, modelContextLength, modelMaxOutput, configuredMaxTokens);
+                    sequenceRetryCount += 1;
+                    continue;
+                }
+                if (this.openRouterService.isToolCallSequenceError(error)) {
+                    throw new Error('Tool-call sequence could not be repaired automatically. Please retry or start a new conversation.');
+                }
+
+                if (
                     !contextLengthRetried &&
                     !context.shouldStopStream &&
                     this.openRouterService.isContextLengthError(error)
@@ -214,7 +378,17 @@ export class ChatFlowManager {
         }
 
         if (assistantMessage.length > 0 || toolCalls.length > 0) {
-            await this.completeStreaming(context, assistantMessage, toolCalls, usage, modelContextLength, isFollowUp);
+            await this.completeStreaming(
+                context,
+                assistantMessage,
+                toolCalls,
+                usage,
+                modelContextLength,
+                compression.inputTokens,
+                compressionLevel,
+                [...compressionWarnings, ...repairWarnings],
+                isFollowUp
+            );
             this.sendMessageToWebview({ type: 'generatingEnd' });
         }
         
@@ -228,6 +402,9 @@ export class ChatFlowManager {
         toolCalls: any[],
         usage: UsageInfo | undefined,
         modelContextLength: number,
+        currentContextTokens: number,
+        compressionLevel: 'none' | 'proactive' | 'aggressive',
+        warnings: string[],
         isFollowUp: boolean
     ): Promise<void> {
         const messageId = `msg-${Date.now()}`;
@@ -238,7 +415,7 @@ export class ChatFlowManager {
         this.sendMessageToWebview({ type: 'generatingEnd' });
         
         await this.sessionHistoryManager.saveMessageToHistory(assistantMsg);
-        await this.updateActiveSessionTokenUsage(context, usage, modelContextLength);
+        await this.updateActiveSessionTokenUsage(context, usage, modelContextLength, currentContextTokens, compressionLevel, warnings);
 
         // Clear activity label after saving to history
         this.sendMessageToWebview({ type: 'activityUpdate', label: null });
@@ -251,7 +428,10 @@ export class ChatFlowManager {
     private async updateActiveSessionTokenUsage(
         context: ChatViewContext,
         usage: UsageInfo | undefined,
-        modelContextLength: number
+        modelContextLength: number,
+        currentContextTokens: number,
+        compressionLevel: 'none' | 'proactive' | 'aggressive',
+        warnings: string[]
     ): Promise<void> {
         const activeSession = await this.sessionHistoryManager.getActiveSession(SessionType.CHAT);
         if (!activeSession) return;
@@ -264,6 +444,10 @@ export class ChatFlowManager {
             totalTokens: existing.totalTokens + incoming.totalTokens,
             cacheReadInputTokens: existing.cacheReadInputTokens + incoming.cacheReadInputTokens,
             cacheWriteInputTokens: existing.cacheWriteInputTokens + incoming.cacheWriteInputTokens,
+            currentContextTokens: Number(currentContextTokens || 0),
+            modelContextLength: Number(modelContextLength || 0),
+            compressionLevel,
+            warnings,
             estimatedCostUsd: null as number | null,
             lastUpdated: Date.now()
         };
@@ -284,6 +468,13 @@ export class ChatFlowManager {
         this.sendMessageToWebview({
             type: 'tokenTrackerUpdate',
             usage: merged,
+            currentContextTokens: merged.currentContextTokens,
+            modelContextLength: merged.modelContextLength,
+            sessionPromptTokens: merged.promptTokens,
+            sessionCompletionTokens: merged.completionTokens,
+            sessionTotalTokens: merged.totalTokens,
+            compressionLevel: merged.compressionLevel,
+            warnings: merged.warnings,
             maxTokens: modelContextLength,
             pricing,
             cost: merged.estimatedCostUsd
@@ -307,6 +498,16 @@ export class ChatFlowManager {
             totalTokens: Number(value?.totalTokens || 0),
             cacheReadInputTokens: Number(value?.cacheReadInputTokens || 0),
             cacheWriteInputTokens: Number(value?.cacheWriteInputTokens || 0),
+            currentContextTokens: Number(value?.currentContextTokens || 0),
+            modelContextLength: Number(value?.modelContextLength || 0),
+            compressionLevel: value?.compressionLevel === 'aggressive'
+                ? 'aggressive'
+                : value?.compressionLevel === 'proactive'
+                    ? 'proactive'
+                    : 'none' as 'none' | 'proactive' | 'aggressive',
+            warnings: Array.isArray(value?.warnings)
+                ? value.warnings.filter((item: unknown) => typeof item === 'string')
+                : [] as string[],
             estimatedCostUsd: value?.estimatedCostUsd == null ? null : Number(value.estimatedCostUsd),
             lastUpdated: Number(value?.lastUpdated || 0)
         };
@@ -342,9 +543,49 @@ export class ChatFlowManager {
         const chatMessages = context.conversationHistory.map(toChatMessage);
         const validation = this.toolCallManager.validateConversationHistory(chatMessages);
         if (!validation.valid) {
-            const fixed = ChatHandlerUtils.repairConversationHistory(context.conversationHistory);
-            if (fixed) context.conversationHistory = fixed.map((m: any) => fromChatMessage(m));
+            const repair = this.toolCallManager.repairConversationHistory(chatMessages);
+            if (repair.repaired) {
+                context.conversationHistory = repair.messages.map((message, index) =>
+                    fromChatMessage(message, context.conversationHistory[index]?.id)
+                );
+            }
         }
+    }
+
+    private repairConversationSequence(
+        context: ChatViewContext,
+        modelId: string,
+        stage: string,
+        verbose: boolean
+    ): ConversationRepairResult {
+        const chatMessages = context.conversationHistory.map(toChatMessage);
+        const repair = this.toolCallManager.repairConversationHistory(chatMessages);
+        if (repair.repaired) {
+            context.conversationHistory = repair.messages.map((message, index) =>
+                fromChatMessage(message, context.conversationHistory[index]?.id)
+            );
+        }
+        const shouldLogVerbose = verbose || this.isKnownSequenceIssueModel(modelId);
+        if (shouldLogVerbose) {
+            log.info(`[model=${modelId}] sequence_preflight_${stage}: repaired=${repair.repaired} issuesBefore=${repair.issuesBefore.join(',')} issuesAfter=${repair.issuesAfter.join(',')} fixes=${repair.fixes.join(';')}`);
+        }
+        return repair;
+    }
+
+    private trackSequenceRepairPattern(context: ChatViewContext, repairHash?: string): boolean {
+        if (!repairHash) return false;
+        const history = Array.isArray(context.sequenceRepairHistory) ? context.sequenceRepairHistory : [];
+        history.push(repairHash);
+        while (history.length > this.sequenceRepairHistoryLimit) history.shift();
+        context.sequenceRepairHistory = history;
+        if (history.length < 3) return false;
+        const lastThree = history.slice(-3);
+        return lastThree.every((hash) => hash === repairHash);
+    }
+
+    private isKnownSequenceIssueModel(modelId: string | null): boolean {
+        if (!modelId) return false;
+        return this.knownSequenceIssueModels.has(modelId.toLowerCase());
     }
 
     private getToolsForMode(context: ChatViewContext): any[] | undefined {
@@ -362,9 +603,12 @@ export class ChatFlowManager {
         return Number.MAX_SAFE_INTEGER;
     }
 
-    private computeInputBudgetTokens(modelContextLength: number): number {
-        const baseReserve = 1024;
-        const minimumOutputReserve = 256;
+    private computeInputBudgetTokens(
+        modelContextLength: number,
+        compressionLevel: 'none' | 'proactive' | 'aggressive'
+    ): number {
+        const baseReserve = compressionLevel === 'aggressive' ? 2048 : 1024;
+        const minimumOutputReserve = compressionLevel === 'aggressive' ? 1024 : 256;
         return Math.max(1024, modelContextLength - baseReserve - minimumOutputReserve);
     }
 
@@ -396,6 +640,19 @@ export class ChatFlowManager {
             await new Promise((resolve) => setTimeout(resolve, Math.min(step, delayMs - elapsed)));
             elapsed += step;
         }
+    }
+
+    private logCompressionEvent(event: string, details: string, throttled: boolean, scope?: string): void {
+        const key = scope ? `${event}:${scope}` : event;
+        const now = Date.now();
+        if (throttled) {
+            const previous = this.lastCompressionLogAt.get(key) || 0;
+            if (now - previous < this.compressionLogThrottleMs) {
+                return;
+            }
+            this.lastCompressionLogAt.set(key, now);
+        }
+        log.info(`${event}: ${details}`);
     }
 
     dispose(): void {

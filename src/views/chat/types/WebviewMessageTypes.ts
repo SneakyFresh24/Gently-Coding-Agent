@@ -717,6 +717,19 @@ export interface RetryingRateLimitMessage {
 }
 
 /**
+ * Retry with backoff after tool-call sequence repair
+ */
+export interface RetryStatusMessage {
+  type: 'retryStatus';
+  attempt: number;
+  maxAttempts: number;
+  delayMs: number;
+  reason: 'tool_call_sequence';
+  model: string;
+  fixes?: string[];
+}
+
+/**
  * Sessions list updated
  */
 export interface SessionsUpdateMessage {
@@ -1202,6 +1215,36 @@ export interface AssistantThinkingMessage {
 }
 
 /**
+ * Token usage update (current context + session totals)
+ */
+export interface TokenTrackerUpdateMessage {
+  type: 'tokenTrackerUpdate';
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    cacheReadInputTokens: number;
+    cacheWriteInputTokens: number;
+    currentContextTokens?: number;
+    modelContextLength?: number;
+    compressionLevel?: 'none' | 'proactive' | 'aggressive';
+    warnings?: string[];
+    estimatedCostUsd: number | null;
+    lastUpdated: number;
+  };
+  maxTokens: number;
+  modelContextLength?: number;
+  currentContextTokens?: number;
+  sessionPromptTokens?: number;
+  sessionCompletionTokens?: number;
+  sessionTotalTokens?: number;
+  compressionLevel?: 'none' | 'proactive' | 'aggressive';
+  warnings?: string[];
+  pricing: { prompt?: number; completion?: number; cache_read?: number; cache_write?: number } | null;
+  cost: number | null;
+}
+
+/**
  * Plan status update (plan executing/completed/failed)
  */
 export interface PlanStatusUpdateMessage {
@@ -1326,6 +1369,7 @@ export type OutboundWebviewMessage =
   | ActiveModelChangedMessage
   | RetryingWithReducedTokensMessage
   | RetryingRateLimitMessage
+  | RetryStatusMessage
   | ModelsListMessage
   | SessionsUpdateMessage
   | LoadMessagesMessage
@@ -1387,7 +1431,8 @@ export type OutboundWebviewMessage =
   | ToolApprovalRequestMessage
   | PlanStatusUpdateMessage
   | StepStatusUpdateMessage
-  | PlanUpdatedMessage;
+  | PlanUpdatedMessage
+  | TokenTrackerUpdateMessage;
 
 /**
  * Combined webview message type (bidirectional)

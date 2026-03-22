@@ -34,6 +34,8 @@ export interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system' | 'tool' | 'command-approval' | 'tool-execution';
   content: string;
+  pinned?: boolean;
+  _compressed?: boolean;
   fileReferences?: FileReference[];
   toolCalls?: ToolCall[];
   tool_calls?: ToolCall[];
@@ -76,6 +78,8 @@ export interface ChatViewContext {
   messageCheckpoints: Map<string, string>;
   toolExecutionStartSent: Set<string>;
   conversationSummary?: string;
+  sequenceRepairHistory?: string[];
+  sequenceRetryCount?: number;
 }
 
 /**
@@ -87,6 +91,8 @@ export function toChatMessage(message: Message): ChatMessage {
       ? 'system'
       : message.role,
     content: message.content,
+    pinned: message.pinned,
+    _compressed: message._compressed,
     tool_calls: message.toolCalls || message.tool_calls,
     tool_call_id: message.tool_call_id
   };
@@ -100,6 +106,8 @@ export function fromChatMessage(chatMessage: ChatMessage, id?: string): Message 
     id: id || `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
     role: chatMessage.role,
     content: chatMessage.content,
+    pinned: chatMessage.pinned,
+    _compressed: chatMessage._compressed,
     toolCalls: chatMessage.tool_calls,
     tool_calls: chatMessage.tool_calls,
     tool_call_id: chatMessage.tool_call_id,

@@ -1,21 +1,25 @@
 <script lang="ts">
   import ContextWindowSummary from '../chat/ContextWindowSummary.svelte';
   
-  export let tokens = 0;
+  export let currentContextTokens = 0;
   export let maxTokens = 200000;
+  export let sessionTotalTokens = 0;
   export let promptTokens = 0;
   export let completionTokens = 0;
   export let cacheReads = 0;
   export let cacheWrites = 0;
   export let pricing: { prompt?: number; completion?: number; cache_read?: number; cache_write?: number } | null = null;
   export let cost: number | null = null;
+  export let compressionLevel: 'none' | 'proactive' | 'aggressive' = 'none';
+  export let warnings: string[] = [];
   
   let isHovered = false;
   
-  $: percentage = Math.min(100, Math.round((tokens / maxTokens) * 100));
-  $: formattedTokens = formatLargeNumber(tokens);
+  $: percentage = Math.min(100, Math.round((currentContextTokens / maxTokens) * 100));
+  $: formattedTokens = formatLargeNumber(currentContextTokens);
+  $: formattedSessionTotal = formatLargeNumber(sessionTotalTokens);
   $: formattedMax = formatLargeNumber(maxTokens);
-  $: thresholdClass = percentage >= 95 ? 'critical' : percentage >= 90 ? 'danger' : percentage >= 75 ? 'warning' : 'safe';
+  $: thresholdClass = percentage >= 95 ? 'critical' : percentage >= 80 ? 'warning' : 'safe';
 
   function formatLargeNumber(value: number): string {
     if (!Number.isFinite(value)) return '0';
@@ -39,6 +43,7 @@
     <span class="divider-text">/</span>
     <span class="max">{formattedMax}</span>
   </div>
+  <div class="session-total">Session: {formattedSessionTotal}</div>
   <div class="progress-bar">
     <div class="fill {thresholdClass}" style="transform: translateX(-{100 - percentage}%);"></div>
   </div>
@@ -46,14 +51,17 @@
   {#if isHovered}
     <div class="hover-card">
       <ContextWindowSummary
-        {tokens}
+        currentContextTokens={currentContextTokens}
         {maxTokens}
+        {sessionTotalTokens}
         {promptTokens}
         {completionTokens}
         {cacheReads}
         {cacheWrites}
         {pricing}
         {cost}
+        {compressionLevel}
+        {warnings}
       />
     </div>
   {/if}
@@ -102,6 +110,11 @@
     overflow: hidden;
   }
 
+  .session-total {
+    font-size: 10px;
+    color: var(--vscode-descriptionForeground);
+  }
+
   .fill {
     height: 100%;
     width: 100%;
@@ -112,10 +125,6 @@
 
   .fill.warning {
     background: #d9a441;
-  }
-
-  .fill.danger {
-    background: #d97341;
   }
 
   .fill.critical {

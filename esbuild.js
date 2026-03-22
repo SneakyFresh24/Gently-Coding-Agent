@@ -24,7 +24,8 @@ async function main() {
       'web-tree-sitter',
       'onnxruntime-node',
       'sharp',
-      'espree'
+      'espree',
+      'sql.js'
     ],
     logLevel: 'info',
     define: {

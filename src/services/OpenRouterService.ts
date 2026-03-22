@@ -16,6 +16,8 @@ export interface ChatMessage {
     tool_call_id?: string;
     tool_calls?: any[];
     name?: string;
+    pinned?: boolean;
+    _compressed?: boolean;
 }
 
 export interface ChatRequest {
@@ -482,6 +484,16 @@ export class OpenRouterService {
 
     isRateLimitError(error: unknown): error is OpenRouterHttpError {
         return error instanceof OpenRouterHttpError && error.status === 429;
+    }
+
+    isToolCallSequenceError(error: unknown): boolean {
+        const message = (error instanceof Error ? error.message : String(error || '')).toLowerCase();
+        return (
+            message.includes('tool call result does not follow tool call') ||
+            message.includes('tool_result does not follow tool_call') ||
+            message.includes('tool call') && message.includes('does not follow') ||
+            message.includes('invalid params') && message.includes('tool')
+        );
     }
 
     private parseRetryAfterMs(retryAfter: string | null): number | undefined {

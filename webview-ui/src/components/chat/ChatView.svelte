@@ -43,6 +43,18 @@
           isSystemMessage: true,
         });
       },
+      onRetryStatus: (data) => {
+        const fixes = Array.isArray(data.fixes) && data.fixes.length > 0
+          ? ` Fixes: ${data.fixes.slice(0, 2).join('; ')}`
+          : '';
+        chatStore.addMessage({
+          id: `sys_sequence_retry_${Date.now()}`,
+          role: 'system',
+          content: `Repairing conversation (${data.attempt}/${data.maxAttempts}) in ${Math.ceil(data.delayMs / 1000)}s...${fixes}`,
+          timestamp: Date.now(),
+          isSystemMessage: true,
+        });
+      },
       onModeChanged: (data) => {
         extensionStore.hydrate({
           mode: data.modeId,

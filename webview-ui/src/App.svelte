@@ -19,9 +19,12 @@
     estimatedCostUsd: null as number | null,
     lastUpdated: 0
   };
+  let currentContextTokens = 0;
   let tokenMax = 200000;
   let tokenPricing: { prompt?: number; completion?: number; cache_read?: number; cache_write?: number } | null = null;
   let tokenCost: number | null = null;
+  let compressionLevel: 'none' | 'proactive' | 'aggressive' = 'none';
+  let tokenWarnings: string[] = [];
 
   function handleMessage(event: MessageEvent) {
     const message = event.data;
@@ -37,8 +40,15 @@
           lastUpdated: Number(message.usage?.lastUpdated || 0)
         };
         tokenMax = Number(message.maxTokens || 200000);
+        currentContextTokens = Number(message.currentContextTokens ?? message.usage?.currentContextTokens ?? 0);
         tokenPricing = message.pricing || null;
         tokenCost = message.cost ?? null;
+        compressionLevel = message.compressionLevel || message.usage?.compressionLevel || 'none';
+        tokenWarnings = Array.isArray(message.warnings)
+          ? message.warnings
+          : Array.isArray(message.usage?.warnings)
+            ? message.usage.warnings
+            : [];
         break;
       case 'modelsList':
         if (message.models && message.models.length > 0) {
@@ -69,9 +79,12 @@
     bind:currentView 
     tokenState={{
       usage: tokenUsage,
+      currentContextTokens,
       maxTokens: tokenMax,
       pricing: tokenPricing,
-      cost: tokenCost
+      cost: tokenCost,
+      compressionLevel,
+      warnings: tokenWarnings
     }}
   />
   
