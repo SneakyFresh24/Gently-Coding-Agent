@@ -11,6 +11,21 @@ export interface ToolCall {
     };
 }
 
+export interface IncompleteToolCall {
+    id: string;
+    name: string;
+    rawArguments: string;
+    rawArgumentsPreview: string;
+    truncationReason: 'unterminated_string' | 'unbalanced_braces' | 'stream_ended_mid_json';
+    recoveredFields: Record<string, unknown>;
+    charCount: number;
+}
+
+export interface StreamingToolCallResult {
+    completedToolCalls: Array<{ toolCall: ToolCall; index: number }>;
+    incompleteToolCalls: IncompleteToolCall[];
+}
+
 export interface UsageInfo {
     prompt_tokens: number;
     completion_tokens: number;
@@ -25,6 +40,7 @@ export type StreamChunk =
     | { type: 'tool_call_partial'; partialName: string; index: number }
     | { type: 'tool_call_delta'; toolCallId: string; delta: string; index: number }
     | { type: 'tool_call_ready'; toolCall: ToolCall; index: number }
+    | { type: 'tool_call_incomplete'; incomplete: IncompleteToolCall; index: number }
     | { type: 'reasoning'; reasoning: string }
     | { type: 'usage'; usage: UsageInfo }
     | { type: 'error'; error: Error }

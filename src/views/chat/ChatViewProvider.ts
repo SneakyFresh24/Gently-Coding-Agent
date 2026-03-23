@@ -91,6 +91,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         // 3. UI Update
         this.sendContextUpdate();
+      },
+      async (modeId: string) => {
+        await this.setSelectedMode(modeId);
       }
     );
 
@@ -163,16 +166,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
       this.sendMessageToWebview(event);
 
-      // Handle automatic handover from Architect to Coder
-      if (event.type === 'handover_to_coder') {
-        console.log('[ChatViewProvider] Handover detected - Switching to Code mode');
-        this.setSelectedMode('code').then(() => {
-          const planMessage = event.message || 'Architect has finished planning. Review history above.';
-          this.messageHandler.sendMessage(planMessage, true);
-        }).catch(err => {
-          console.error('[ChatViewProvider] Failed to handle handover:', err);
-        });
-      }
     });
 
     this.agentManager.onIndexUpdate(() => {

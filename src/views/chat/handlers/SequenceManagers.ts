@@ -111,8 +111,9 @@ export class ArchitectHandoverHandler {
         return '\n\n⚠️ ARCHITECT MODE TOOLS REMINDER:\n' +
             'You are the Architect. Use your tools to analyze, plan, and persist decisions.\n' +
             '- create_plan: Create the implementation roadmap.\n' +
+            '- ask_question: Offer handover/refinement options with optional mode switch.\n' +
             '- update_memory_bank: Persist architectural decisions.\n' +
-            '- handover_to_coder: Switch to execution when planning is done.\n' +
+            '- handover_to_coder: Legacy fallback handover tool.\n' +
             'Do NOT implement code changes yourself.';
     }
 }

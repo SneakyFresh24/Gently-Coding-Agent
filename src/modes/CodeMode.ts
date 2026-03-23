@@ -38,6 +38,7 @@ You are the Implementation Expert. You bridge the gap between architectural desi
     'write_file',
     'read_file',
     'find_files',
+    'regex_search',
     'list_files',
     'get_memories',
     'update_memory_bank',

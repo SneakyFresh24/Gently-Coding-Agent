@@ -11,6 +11,12 @@ export interface RepairResult {
   originalError?: string;
   repairActions?: string[];
   finalError?: string;
+  errorCode?: string;
+  isTruncated?: boolean;
+  truncationReason?: 'unterminated_string' | 'unbalanced_braces' | 'stream_ended_mid_json' | '';
+  partialFields?: Record<string, unknown>;
+  rawPreview?: string;
+  charCount?: number;
 }
 
 /**
@@ -91,6 +97,8 @@ export function repairAndParseJSON(jsonString: string, maxRepairAttempts: number
 
     } catch (err: any) {
       if (attempt === maxRepairAttempts || currentJson === jsonBeforeAttempt) {
+        const truncation = detectTruncation(currentJson);
+        const partialFields = truncation.isTruncated ? extractPartialJsonFields(currentJson) : {};
         console.error('[JSONRepair] Repair failed after all attempts:', {
           originalError: originalErrorMsg,
           finalError: err.message,
@@ -102,18 +110,114 @@ export function repairAndParseJSON(jsonString: string, maxRepairAttempts: number
           success: false,
           originalError: originalErrorMsg,
           repairActions,
-          finalError: err.message
+          finalError: err.message,
+          errorCode: truncation.isTruncated ? 'TOOL_ARGS_TRUNCATED' : 'JSON_PARSE_ERROR',
+          isTruncated: truncation.isTruncated,
+          truncationReason: truncation.reason,
+          partialFields,
+          rawPreview: currentJson.slice(0, 500),
+          charCount: currentJson.length
         };
       }
     }
   }
 
+  const truncation = detectTruncation(currentJson);
+  const partialFields = truncation.isTruncated ? extractPartialJsonFields(currentJson) : {};
+
   return {
     success: false,
     originalError: originalErrorMsg,
     repairActions,
-    finalError: 'Max repair attempts reached'
+    finalError: 'Max repair attempts reached',
+    errorCode: truncation.isTruncated ? 'TOOL_ARGS_TRUNCATED' : 'JSON_PARSE_ERROR',
+    isTruncated: truncation.isTruncated,
+    truncationReason: truncation.reason,
+    partialFields,
+    rawPreview: currentJson.slice(0, 500),
+    charCount: currentJson.length
   };
+}
+
+export function detectTruncation(json: string): { isTruncated: boolean; reason: 'unterminated_string' | 'unbalanced_braces' | 'stream_ended_mid_json' | '' } {
+  if (!json || json.trim() === '') {
+    return { isTruncated: false, reason: '' };
+  }
+
+  let inString = false;
+  let escape = false;
+  for (let i = 0; i < json.length; i++) {
+    const ch = json[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escape = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+    }
+  }
+  if (inString) {
+    return { isTruncated: true, reason: 'unterminated_string' };
+  }
+
+  let braceBalance = 0;
+  let bracketBalance = 0;
+  inString = false;
+  escape = false;
+  for (let i = 0; i < json.length; i++) {
+    const ch = json[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escape = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === '{') braceBalance += 1;
+    if (ch === '}') braceBalance -= 1;
+    if (ch === '[') bracketBalance += 1;
+    if (ch === ']') bracketBalance -= 1;
+  }
+
+  if (braceBalance > 0 || bracketBalance > 0) {
+    return { isTruncated: true, reason: 'unbalanced_braces' };
+  }
+
+  const trimmed = json.trim();
+  const looksLikeJsonStart = trimmed.startsWith('{') || trimmed.startsWith('[');
+  const noJsonEnd = !trimmed.endsWith('}') && !trimmed.endsWith(']');
+  if (looksLikeJsonStart && noJsonEnd) {
+    return { isTruncated: true, reason: 'stream_ended_mid_json' };
+  }
+
+  return { isTruncated: false, reason: '' };
+}
+
+export function extractPartialJsonFields(partialJson: string): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  const pattern = /"(\w+)":\s*"((?:[^"\\]|\\.)*)(?:")?/g;
+
+  for (const match of partialJson.matchAll(pattern)) {
+    const key = match[1];
+    const raw = match[2] || '';
+    result[key] = raw
+      .replace(/\\n/g, '\n')
+      .replace(/\\t/g, '\t')
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, '\\');
+  }
+
+  return result;
 }
 
 /**
@@ -280,6 +384,14 @@ export function createLLMErrorMessage(result: RepairResult, toolName: string): s
     message += `\nFinal Error: ${result.finalError}\n`;
   }
 
+  if (result.errorCode === 'TOOL_ARGS_TRUNCATED') {
+    message += `\nDetected truncation: ${result.truncationReason || 'unknown'}.\n`;
+    if (result.charCount) {
+      message += `Observed length before truncation: ${result.charCount} chars.\n`;
+    }
+    message += `Split payload into smaller tool calls and retry.\n`;
+  }
+
   message += `\n⚠️ Common JSON errors to avoid:\n`;
   message += `  1. Unescaped newlines in strings - use \\n instead of actual newlines\n`;
   message += `  2. Unescaped quotes in strings - use \\" for quotes inside strings\n`;
@@ -289,4 +401,3 @@ export function createLLMErrorMessage(result: RepairResult, toolName: string): s
 
   return message;
 }
-

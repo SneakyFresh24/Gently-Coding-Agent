@@ -4,14 +4,16 @@
 
 import { repairAndParseJSON, createLLMErrorMessage } from '../../../utils/jsonRepair';
 import { createHash } from 'crypto';
+import { ToolResultErrorCodes, ToolResultErrorCode } from '../toolcall/ToolResultErrorCodes';
 
 export interface ToolCallValidationResult {
   validToolCalls: any[];
-  invalidToolCalls: any[];
+  invalidToolCalls: Array<{ toolCall: any; index: number; error: string; code?: ToolResultErrorCode; details?: Record<string, unknown> }>;
   warnings: string[];
 }
 
 export class ToolCallUtils {
+  private static readonly MAX_TOOL_ARG_CHARS = 50_000;
   /**
    * Validate and repair tool calls
    */
@@ -93,7 +95,20 @@ export class ToolCallUtils {
           console.error(`[PARALLEL] Arguments (first 500 chars):`, toolCall.function.arguments.substring(0, 500));
 
           const errorMsg = createLLMErrorMessage(repairResult, toolCall.function.name);
-          invalidToolCalls.push({ toolCall, index, error: errorMsg });
+          invalidToolCalls.push({
+            toolCall,
+            index,
+            error: errorMsg,
+            code: repairResult.errorCode === 'TOOL_ARGS_TRUNCATED'
+              ? ToolResultErrorCodes.TOOL_ARGS_TRUNCATED
+              : ToolResultErrorCodes.JSON_PARSE_ERROR,
+            details: {
+              truncationReason: repairResult.truncationReason,
+              partialFields: repairResult.partialFields || {},
+              rawPreview: repairResult.rawPreview,
+              charCount: repairResult.charCount
+            }
+          });
           continue;
         }
 
@@ -150,14 +165,74 @@ export class ToolCallUtils {
           seenIds.set(originalId, currentCount + 1);
         }
 
+        const oversize = this.getOversizeViolation(
+          toolCall.function.name,
+          (fixedArgs && typeof fixedArgs === 'object' && !Array.isArray(fixedArgs))
+            ? fixedArgs as Record<string, unknown>
+            : {}
+        );
+        if (oversize) {
+          invalidToolCalls.push({
+            toolCall,
+            index,
+            error: oversize.message,
+            code: ToolResultErrorCodes.TOOL_ARGS_TOO_LARGE,
+            details: oversize.details
+          });
+          continue;
+        }
+
         validToolCalls.push(toolCall);
       } catch (error: any) {
         console.error(`[PARALLEL] Tool call ${index} validation error:`, error);
-        invalidToolCalls.push({ toolCall, index, error: error.message });
+        invalidToolCalls.push({
+          toolCall,
+          index,
+          error: error.message,
+          code: ToolResultErrorCodes.JSON_PARSE_ERROR
+        });
       }
     }
 
     return { validToolCalls, invalidToolCalls, warnings };
+  }
+
+  private static getOversizeViolation(
+    toolName: string,
+    args: Record<string, unknown>
+  ): { message: string; details: Record<string, unknown> } | null {
+    const normalized = (toolName || '').toLowerCase();
+    if (normalized === 'write_file' && typeof args.content === 'string') {
+      const size = args.content.length;
+      if (size > this.MAX_TOOL_ARG_CHARS) {
+        return {
+          message: `write_file.content exceeds ${this.MAX_TOOL_ARG_CHARS} characters (actual: ${size}).`,
+          details: {
+            field: 'content',
+            actualSize: size,
+            maxSize: this.MAX_TOOL_ARG_CHARS,
+            path: typeof args.path === 'string' ? args.path : (typeof args.file_path === 'string' ? args.file_path : undefined)
+          }
+        };
+      }
+    }
+
+    if (normalized === 'safe_edit_file' && typeof args.new_content === 'string') {
+      const size = args.new_content.length;
+      if (size > this.MAX_TOOL_ARG_CHARS) {
+        return {
+          message: `safe_edit_file.new_content exceeds ${this.MAX_TOOL_ARG_CHARS} characters (actual: ${size}).`,
+          details: {
+            field: 'new_content',
+            actualSize: size,
+            maxSize: this.MAX_TOOL_ARG_CHARS,
+            path: typeof args.file_path === 'string' ? args.file_path : (typeof args.path === 'string' ? args.path : undefined)
+          }
+        };
+      }
+    }
+
+    return null;
   }
 
   private static formatModelTag(model?: string): string {
@@ -323,6 +398,8 @@ export class ToolCallUtils {
         return `Listing files...`;
       case 'find_files':
         return `Suche nach "${toolArgs.query}"...`;
+      case 'regex_search':
+        return `Regex-Suche nach "${toolArgs.pattern}"...`;
       case 'get_context':
         return `Hole Workspace-Kontext...`;
       case 'search_codebase':
@@ -456,6 +533,15 @@ export class ToolCallUtils {
           });
         }
         break;
+      case 'regex_search':
+        comment.text = 'Regex search completed';
+        if (result && Array.isArray(result.matches)) {
+          comment.details.push({
+            type: 'info',
+            text: `Found ${result.matches.length} match(es)`
+          });
+        }
+        break;
 
       case 'list_files':
         comment.text = 'Listed files';
@@ -481,6 +567,7 @@ export class ToolCallUtils {
       'read_file',
       'list_files',
       'find_files',
+      'regex_search',
       'get_context',
       'search_codebase',
       'analyze_project_structure',
@@ -524,7 +611,7 @@ export class ToolCallUtils {
     if (['read_file', 'write_file', 'edit_file', 'safe_edit_file', 'apply_block_edit', 'apply_changes', 'list_files'].includes(toolName)) {
       return 'file';
     }
-    if (['find_files', 'search_codebase', 'get_context', 'analyze_project_structure'].includes(toolName)) {
+    if (['find_files', 'regex_search', 'search_codebase', 'get_context', 'analyze_project_structure'].includes(toolName)) {
       return 'search';
     }
     if (['remember', 'recall_memories', 'update_memory', 'deprecate_memory', 'record_correction'].includes(toolName)) {

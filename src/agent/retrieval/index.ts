@@ -5,3 +5,6 @@ export * from './HybridRetriever';
 export * from './CrossEncoderReranker';
 export * from './TransformersEmbeddingProvider';
 export * from './EmbeddingCache';
+export * from './RegexPatternAnalyzer';
+export * from './RegexTrigramIndex';
+export * from './RegexSearchService';

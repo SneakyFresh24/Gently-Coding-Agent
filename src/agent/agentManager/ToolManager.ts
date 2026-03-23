@@ -16,6 +16,7 @@ import {
   ApplyBlockEditTool,
   CommandTools,
   WebSearchTools,
+  QuestionTools,
   ToolName
 } from '../tools';
 import { IAgentService } from './index';
@@ -38,6 +39,7 @@ export class ToolManager implements IAgentService {
   private applyBlockEditTool: ApplyBlockEditTool;
   private commandTools: CommandTools;
   private webSearchTools: WebSearchTools;
+  private questionTools: QuestionTools;
 
   // Dependencies
   private terminalManager: TerminalManager | null = null;
@@ -65,6 +67,7 @@ export class ToolManager implements IAgentService {
     applyBlockEditTool: ApplyBlockEditTool,
     commandTools: CommandTools,
     webSearchTools: WebSearchTools,
+    questionTools: QuestionTools,
     autoApproveManager: AutoApproveManager,
     hookManager: HookManager
   ) {
@@ -81,6 +84,7 @@ export class ToolManager implements IAgentService {
     this.applyBlockEditTool = applyBlockEditTool;
     this.commandTools = commandTools;
     this.webSearchTools = webSearchTools;
+    this.questionTools = questionTools;
     this.autoApproveManager = autoApproveManager;
     this.hookManager = hookManager;
   }
@@ -129,6 +133,7 @@ export class ToolManager implements IAgentService {
       this.applyBlockEditTool.registerTools(this.toolRegistry);
       this.commandTools.registerTools(this.toolRegistry);
       this.webSearchTools.registerTools(this.toolRegistry);
+      this.questionTools.registerTools(this.toolRegistry);
 
       if (this.debug) {
         console.log(`[ToolManager] Registered ${this.toolRegistry.getNames().length} tools`);
@@ -495,9 +500,11 @@ export class ToolManager implements IAgentService {
     const allowedToolNames = [
       'create_plan',
       'handover_to_coder',
+      'ask_question',
       'read_file',
       'list_files',
       'find_files',
+      'regex_search',
       'recall_memories',
       'analyze_project_structure',
       'update_memory_bank',

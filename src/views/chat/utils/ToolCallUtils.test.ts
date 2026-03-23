@@ -69,4 +69,41 @@ describe('ToolCallUtils.validateAndRepairToolCalls', () => {
     expect(second).toMatch(/^[a-zA-Z0-9]{9}$/);
     expect(first).not.toBe(second);
   });
+
+  it('rejects oversized write_file content with standardized code', () => {
+    const calls = [
+      {
+        id: 'call_oversize',
+        function: {
+          name: 'write_file',
+          arguments: JSON.stringify({
+            path: 'src/huge.ts',
+            content: 'a'.repeat(50_001)
+          })
+        }
+      }
+    ];
+
+    const result = ToolCallUtils.validateAndRepairToolCalls(calls, { model: 'openai/gpt-4.1' });
+    expect(result.validToolCalls).toHaveLength(0);
+    expect(result.invalidToolCalls).toHaveLength(1);
+    expect(result.invalidToolCalls[0].code).toBe('TOOL_ARGS_TOO_LARGE');
+  });
+
+  it('marks truncated tool args with TOOL_ARGS_TRUNCATED code', () => {
+    const calls = [
+      {
+        id: 'call_truncated',
+        function: {
+          name: 'write_file',
+          arguments: '{"path":"src/a.ts","content":"line1\\nline2'
+        }
+      }
+    ];
+
+    const result = ToolCallUtils.validateAndRepairToolCalls(calls, { model: 'openai/gpt-4.1' });
+    expect(result.validToolCalls).toHaveLength(0);
+    expect(result.invalidToolCalls).toHaveLength(1);
+    expect(result.invalidToolCalls[0].code).toBe('TOOL_ARGS_TRUNCATED');
+  });
 });

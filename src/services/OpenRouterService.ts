@@ -316,10 +316,13 @@ export class OpenRouterService {
                 }
             }
 
-            // 6. Emit completed tool calls when the stream is finished
-            const completedTools = this.toolCallProcessor.getCompletedToolCalls();
-            for (const completed of completedTools) {
+            // 6. Emit completed and incomplete tool calls when the stream is finished
+            const toolCallResult = this.toolCallProcessor.getStreamingToolCallResult();
+            for (const completed of toolCallResult.completedToolCalls) {
                 yield { type: 'tool_call_ready', toolCall: completed.toolCall, index: completed.index };
+            }
+            for (const incomplete of toolCallResult.incompleteToolCalls) {
+                yield { type: 'tool_call_incomplete', incomplete, index: -1 };
             }
 
         } finally {

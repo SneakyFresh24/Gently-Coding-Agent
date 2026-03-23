@@ -204,6 +204,7 @@ export const TOOL_NAMES = {
   APPLY_BLOCK_EDIT: 'apply_block_edit',
   LIST_FILES: 'list_files',
   FIND_FILES: 'find_files',
+  REGEX_SEARCH: 'regex_search',
   GET_CONTEXT: 'get_context',
   REMEMBER: 'remember',
   RECALL_MEMORIES: 'recall_memories',

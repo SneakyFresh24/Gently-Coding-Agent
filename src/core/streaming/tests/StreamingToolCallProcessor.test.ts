@@ -103,4 +103,21 @@ describe('StreamingToolCallProcessor', () => {
         expect(completed[0].toolCall.id).toBe('call_1');
         expect(completed[1].toolCall.id).toBe('call_2');
     });
+
+    it('should report incomplete tool calls when args are truncated', async () => {
+        const processor = new StreamingToolCallProcessor();
+        const deltas = [
+            { index: 0, id: 'call_1', function: { name: 'write_file', arguments: '{"path":"a.ts","content":"hello' } }
+        ];
+
+        for await (const _chunk of processor.processToolCallDeltas(deltas)) {
+            // consume
+        }
+
+        const result = processor.getStreamingToolCallResult();
+        expect(result.completedToolCalls).toHaveLength(0);
+        expect(result.incompleteToolCalls).toHaveLength(1);
+        expect(result.incompleteToolCalls[0].name).toBe('write_file');
+        expect(result.incompleteToolCalls[0].truncationReason).toBe('unterminated_string');
+    });
 });

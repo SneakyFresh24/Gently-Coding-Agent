@@ -26,6 +26,29 @@ export class PlanningTools {
   private async handoverToCoder(params: { message: string }): Promise<any> {
     log.info(`Handover to coder initiated with message: ${params.message}`);
     this.planningManager.handoverToCoder('text-plan', params.message || 'Architect has finished planning.');
-    return { success: true, message: 'Handover to Code mode initiated. Plan preserved in chat.' };
+    return {
+      success: true,
+      message: `✅ MODE SWITCH SUCCESSFUL
+
+You are now in CODE MODE. The plan from the Architect is preserved in the conversation history above.
+
+CRITICAL: You must now IMPLEMENT the plan step by step.
+
+IMMEDIATE ACTIONS:
+1. Review the plan in the conversation history
+2. Start with Step 1 of the plan
+3. Use safe_edit_file or write_file to implement
+4. Call verify_and_auto_fix after each file change
+
+DO NOT:
+- Ask for clarification
+- Create a new plan
+- Wait for user input
+
+BEGIN IMPLEMENTATION NOW.`,
+      shouldAutoContinue: true,
+      requestedMode: 'code',
+      continuationPrompt: 'Now implement the plan step by step. Start with step 1.'
+    };
   }
 }

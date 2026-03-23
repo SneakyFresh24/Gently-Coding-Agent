@@ -9,6 +9,8 @@ import { FollowUpHandler } from './SequenceManagers';
 import { OutboundWebviewMessage } from '../types/WebviewMessageTypes';
 import { ToolCall } from '../../../services/OpenRouterService';
 import { PlanStep } from '../../../agent/planning/types';
+import { ToolResultErrorCodes, ToolResultErrorCode } from '../toolcall/ToolResultErrorCodes';
+import { buildOversizeRetryPrompt, buildTruncatedRetryPrompt } from '../toolcall/ToolRetryPrompts';
 
 import { PlanningManager } from '../../../agent/agentManager/PlanningManager';
 
@@ -16,18 +18,32 @@ const log = new LogService('ExecutionDispatchers');
 const MAX_TOOL_RESULT_SIZE = 100_000;
 const DOOM_LOOP_THRESHOLD = 3;
 const DOOM_LOOP_HISTORY_LIMIT = 30;
+const MODE_SWITCH_LOOP_THRESHOLD = 3;
+const MODE_SWITCH_HISTORY_LIMIT = 20;
+
+interface PostToolActionResult {
+    requestedMode?: string;
+    shouldAutoContinue?: boolean;
+    continuationPrompt?: string;
+}
 
 /**
  * Handles traditional, parallel tool execution logic.
  */
 export class TraditionalToolExecutor {
     private fileLocks: Map<string, Promise<void>> = new Map();
+    private toolArgsTruncatedCount = 0;
+    private toolArgsOversizeRejectedCount = 0;
+    private partialRecoverySuccessCount = 0;
+    private largestToolArgSeen = 0;
 
     constructor(
         private readonly agentManager: AgentManager,
         private readonly sendMessageToWebview: (message: OutboundWebviewMessage) => void,
         private readonly updateConversationHistory: (message: Message) => void,
-        private readonly triggerFollowUpMessage: (message?: string) => Promise<void>
+        private readonly triggerFollowUpMessage: (message?: string) => Promise<void>,
+        private readonly performModeSwitch: (modeId: string) => Promise<void>,
+        private readonly sendContinuationMessage: (message: string) => Promise<void>
     ) { }
 
     public async execute(toolCalls: ToolCall[], messageId: string, context: ChatViewContext): Promise<void> {
@@ -56,9 +72,11 @@ export class TraditionalToolExecutor {
             const results = await this.executeToolCallsParallel(validToolCalls, context);
             const resultById = new Map(results.map((entry) => [entry.toolCall.id, entry]));
 
-            validToolCalls.forEach((toolCall) => {
+            let postAction: PostToolActionResult | null = null;
+
+            for (const toolCall of validToolCalls) {
                 const match = resultById.get(toolCall.id);
-                if (!match) return;
+                if (!match) continue;
                 const serializedResult = this.serializeAndTruncateToolResult(match.result);
                 this.updateConversationHistory({
                     id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -73,7 +91,16 @@ export class TraditionalToolExecutor {
                 } else {
                     context.consecutiveMistakeCount = (context.consecutiveMistakeCount || 0) + 1;
                 }
-            });
+
+                if (!postAction) {
+                    postAction = this.extractPostToolAction(match.result);
+                }
+            }
+
+            if (postAction && (postAction.shouldAutoContinue || postAction.requestedMode)) {
+                await this.handlePostToolAction(context, postAction);
+                return;
+            }
 
             await this.triggerFollowUpMessage("\n[SYSTEM NOTE: The tools have finished executing. Review the results. If you made ANY architectural decisions, established new project rules, or learned important workflow facts that should persist across sessions, IMMEDIATELY call the `update_memory_bank` tool to document them. If not, simply summarize the results and continue.]");
 
@@ -102,16 +129,83 @@ export class TraditionalToolExecutor {
         }
     }
 
-    private async handleInvalidToolCalls(invalidToolCalls: { toolCall: ToolCall, index: number, error: string }[], allToolCalls: ToolCall[], context: ChatViewContext): Promise<void> {
+    private async handleInvalidToolCalls(
+        invalidToolCalls: Array<{ toolCall: ToolCall; index: number; error: string; code?: ToolResultErrorCode; details?: Record<string, unknown> }>,
+        allToolCalls: ToolCall[],
+        context: ChatViewContext
+    ): Promise<void> {
+        this.trackInvalidToolCallMetrics(invalidToolCalls);
         if (invalidToolCalls.length === allToolCalls.length) {
             let errorMessage = '❌ All tool calls have invalid JSON arguments:\n\n';
             invalidToolCalls.forEach(({ toolCall, index, error }) => {
                 errorMessage += `Tool ${index + 1} (${toolCall.function?.name || 'unknown'}):\n${error}\n\n`;
             });
+            const enrichedPrompt = this.buildInvalidToolRetryPrompt(invalidToolCalls) || errorMessage;
             this.sendMessageToWebview({ type: 'error', message: 'KI hat ungültige JSON-Argumente generiert.' });
-            this.updateConversationHistory({ id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`, timestamp: Date.now(), role: 'user', content: errorMessage });
-            await this.triggerFollowUpMessage(errorMessage);
+            this.updateConversationHistory({ id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`, timestamp: Date.now(), role: 'user', content: enrichedPrompt });
+            await this.triggerFollowUpMessage(enrichedPrompt);
         }
+    }
+
+    private buildInvalidToolRetryPrompt(
+        invalidToolCalls: Array<{ toolCall: ToolCall; index: number; error: string; code?: ToolResultErrorCode; details?: Record<string, unknown> }>
+    ): string | null {
+        const truncated = invalidToolCalls.find((entry) => entry.code === ToolResultErrorCodes.TOOL_ARGS_TRUNCATED);
+        if (truncated) {
+            const details = truncated.details || {};
+            const partialFields = (details.partialFields as Record<string, unknown>) || {};
+            const recoveredPath = typeof partialFields.path === 'string'
+                ? partialFields.path
+                : (typeof partialFields.file_path === 'string' ? partialFields.file_path : undefined);
+            const contentPreview = typeof partialFields.content === 'string'
+                ? partialFields.content
+                : (typeof partialFields.new_content === 'string' ? partialFields.new_content : String(details.rawPreview || ''));
+            const totalChars = Number(details.charCount || 0);
+            return buildTruncatedRetryPrompt({
+                toolName: truncated.toolCall.function?.name || 'unknown_tool',
+                recoveredPath,
+                contentPreview,
+                totalChars
+            });
+        }
+
+        const oversize = invalidToolCalls.find((entry) => entry.code === ToolResultErrorCodes.TOOL_ARGS_TOO_LARGE);
+        if (oversize) {
+            const details = oversize.details || {};
+            return buildOversizeRetryPrompt({
+                toolName: oversize.toolCall.function?.name || 'unknown_tool',
+                actualSize: Number(details.actualSize || 0),
+                path: typeof details.path === 'string' ? details.path : undefined
+            });
+        }
+
+        return null;
+    }
+
+    private trackInvalidToolCallMetrics(
+        invalidToolCalls: Array<{ code?: ToolResultErrorCode; details?: Record<string, unknown> }>
+    ): void {
+        for (const invalid of invalidToolCalls) {
+            if (invalid.code === ToolResultErrorCodes.TOOL_ARGS_TRUNCATED) {
+                this.toolArgsTruncatedCount += 1;
+                const partialFields = (invalid.details?.partialFields as Record<string, unknown>) || {};
+                if (Object.keys(partialFields).length > 0) {
+                    this.partialRecoverySuccessCount += 1;
+                }
+            }
+            if (invalid.code === ToolResultErrorCodes.TOOL_ARGS_TOO_LARGE) {
+                this.toolArgsOversizeRejectedCount += 1;
+            }
+            const seenSize = Number(invalid.details?.charCount || invalid.details?.actualSize || 0);
+            if (seenSize > this.largestToolArgSeen) {
+                this.largestToolArgSeen = seenSize;
+            }
+        }
+
+        log.info(
+            `tool_arg_metrics: truncated=${this.toolArgsTruncatedCount} oversize=${this.toolArgsOversizeRejectedCount} ` +
+            `partialRecovery=${this.partialRecoverySuccessCount} largestArg=${this.largestToolArgSeen}`
+        );
     }
 
     private async executeToolCallsParallel(toolCalls: ToolCall[], context: ChatViewContext): Promise<{ toolCall: ToolCall, result: any, success: boolean }[]> {
@@ -237,6 +331,54 @@ export class TraditionalToolExecutor {
         if (choice === 'Immer fuer dieses Tool (Session)') return 'always';
         return 'stop';
     }
+
+    private extractPostToolAction(result: unknown): PostToolActionResult | null {
+        if (!result || typeof result !== 'object') return null;
+        const candidate = result as Record<string, unknown>;
+        const requestedMode = typeof candidate.requestedMode === 'string' && candidate.requestedMode.trim() !== ''
+            ? candidate.requestedMode.trim()
+            : undefined;
+        const shouldAutoContinue = Boolean(candidate.shouldAutoContinue);
+        const continuationPrompt = typeof candidate.continuationPrompt === 'string' && candidate.continuationPrompt.trim() !== ''
+            ? candidate.continuationPrompt.trim()
+            : undefined;
+
+        if (!requestedMode && !shouldAutoContinue && !continuationPrompt) return null;
+        return { requestedMode, shouldAutoContinue, continuationPrompt };
+    }
+
+    private async handlePostToolAction(context: ChatViewContext, result: PostToolActionResult): Promise<void> {
+        let continuationPrompt = result.continuationPrompt || 'Continue with the next step now.';
+        if (result.requestedMode) {
+            if (this.shouldSkipModeSwitch(context, result.requestedMode)) {
+                log.warn(`Duplicate mode switch detected, skipping mode="${result.requestedMode}"`);
+            } else {
+                try {
+                    await this.performModeSwitch(result.requestedMode);
+                    this.recordModeSwitch(context, result.requestedMode);
+                } catch (error) {
+                    log.warn(`Mode switch failed, continuing in current mode: ${error instanceof Error ? error.message : String(error)}`);
+                    continuationPrompt = `Mode switch failed. Continue in current mode. ${continuationPrompt}`;
+                }
+            }
+        }
+
+        await this.sendContinuationMessage(continuationPrompt);
+    }
+
+    private shouldSkipModeSwitch(context: ChatViewContext, modeId: string): boolean {
+        const history = Array.isArray(context.recentModeSwitches) ? context.recentModeSwitches : [];
+        if (history.length < MODE_SWITCH_LOOP_THRESHOLD - 1) return false;
+        const recent = history.slice(-(MODE_SWITCH_LOOP_THRESHOLD - 1));
+        return recent.every((entry) => entry === modeId);
+    }
+
+    private recordModeSwitch(context: ChatViewContext, modeId: string): void {
+        const history = Array.isArray(context.recentModeSwitches) ? context.recentModeSwitches : [];
+        history.push(modeId);
+        while (history.length > MODE_SWITCH_HISTORY_LIMIT) history.shift();
+        context.recentModeSwitches = history;
+    }
 }
 
 /**
@@ -288,9 +430,18 @@ export class ToolExecutionHandler {
         private agentManager: AgentManager,
         sendMessageToWebview: (message: any) => void,
         updateConversationHistory: (message: Message) => void,
-        triggerFollowUpMessage: (message?: string) => Promise<void>
+        triggerFollowUpMessage: (message?: string) => Promise<void>,
+        performModeSwitch: (modeId: string) => Promise<void>,
+        sendContinuationMessage: (message: string) => Promise<void>
     ) {
-        this.traditional = new TraditionalToolExecutor(agentManager, sendMessageToWebview, updateConversationHistory, triggerFollowUpMessage);
+        this.traditional = new TraditionalToolExecutor(
+            agentManager,
+            sendMessageToWebview,
+            updateConversationHistory,
+            triggerFollowUpMessage,
+            performModeSwitch,
+            sendContinuationMessage
+        );
         this.iterative = new IterativePlanExecutor(agentManager, sendMessageToWebview, (tc, mid, ctx) => this.traditional.execute(tc, mid, ctx));
     }
 
@@ -323,13 +474,17 @@ export class ToolCallDispatcher {
         private sendMessageToWebview: (message: OutboundWebviewMessage) => void,
         agentManager: AgentManager,
         updateConversationHistory: (message: Message) => void,
-        triggerFollowUpMessage: (message?: string) => Promise<void>
+        triggerFollowUpMessage: (message?: string) => Promise<void>,
+        performModeSwitch: (modeId: string) => Promise<void>,
+        sendContinuationMessage: (message: string) => Promise<void>
     ) { 
         this.executionHandler = new ToolExecutionHandler(
             agentManager, 
             sendMessageToWebview, 
             updateConversationHistory, 
-            triggerFollowUpMessage
+            triggerFollowUpMessage,
+            performModeSwitch,
+            sendContinuationMessage
         );
     }
 

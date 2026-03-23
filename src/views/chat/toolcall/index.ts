@@ -8,3 +8,5 @@ export {
     ToolCallValidationResult,
     ConversationRepairResult
 } from './ToolCallManager';
+export { ToolResultErrorCodes } from './ToolResultErrorCodes';
+export type { ToolResultErrorCode } from './ToolResultErrorCodes';

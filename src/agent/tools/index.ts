@@ -11,3 +11,4 @@ export * from './SafeEditTool';
 export * from './ApplyBlockEditTool';
 export * from './CommandTools';
 export * from './WebSearchTools';
+export * from './QuestionTools';

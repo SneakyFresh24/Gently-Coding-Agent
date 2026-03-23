@@ -5,13 +5,15 @@
 import { FileOperations } from '../fileOperations';
 import { CodebaseIndexer } from '../CodebaseIndexer';
 import { ContextManager } from '../contextManager';
+import { RegexSearchService } from '../retrieval/RegexSearchService';
 import { ToolRegistry } from './ToolRegistry';
 
 export class FileTools {
   constructor(
     private fileOps: FileOperations,
     private indexer: CodebaseIndexer,
-    private contextManager: ContextManager
+    private contextManager: ContextManager,
+    private regexSearchService: RegexSearchService
   ) { }
 
   /**
@@ -22,6 +24,7 @@ export class FileTools {
     registry.register('write_file', this.writeFile.bind(this));
     registry.register('list_files', this.listFiles.bind(this));
     registry.register('find_files', this.findFiles.bind(this));
+    registry.register('regex_search', this.regexSearch.bind(this));
     // text_editor_20250728 and replace_file_content were removed in favor of safe_edit_file
   }
 
@@ -94,6 +97,37 @@ export class FileTools {
       };
     } catch (error) {
       return { success: false, message: String(error) };
+    }
+  }
+
+  private async regexSearch(params: any): Promise<any> {
+    try {
+      const result = await this.regexSearchService.search({
+        pattern: params.pattern,
+        path_glob: params.path_glob,
+        flags: params.flags,
+        case_sensitive: params.case_sensitive,
+        multiline: params.multiline,
+        max_results: params.max_results,
+        context_lines: params.context_lines
+      });
+
+      return result;
+    } catch (error) {
+      return {
+        success: false,
+        matches: [],
+        metadata: {
+          source: 'fallback',
+          engineUsed: 'rg',
+          fallbackReason: 'tool_error',
+          candidateCount: 0,
+          verifiedFiles: 0,
+          timings: {},
+          indexState: 'empty'
+        },
+        message: String(error)
+      };
     }
   }
 }

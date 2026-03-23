@@ -11,9 +11,11 @@ import { ModeService } from '../../../modes/ModeService';
 import { ChatMessage, ModelPricing, OpenRouterService } from '../../../services/OpenRouterService';
 import { OutboundWebviewMessage } from '../types/WebviewMessageTypes';
 import { UsageInfo } from '../../../core/streaming/types';
+import { IncompleteToolCall } from '../../../core/streaming/types';
 import { SessionType } from '../../../services/HistoryManager';
 import { TokenBudgetManager } from './TokenBudgetManager';
 import { ConversationRepairResult } from '../toolcall';
+import { buildTruncatedRetryPrompt } from '../toolcall/ToolRetryPrompts';
 
 const log = new LogService('ChatFlowManager');
 
@@ -269,6 +271,7 @@ export class ChatFlowManager {
         let sequenceRetryCount = 0;
         let assistantMessage = '';
         let toolCalls: any[] = [];
+        let incompleteToolCalls: IncompleteToolCall[] = [];
         let usage: UsageInfo | undefined;
         while (true) {
             try {
@@ -284,6 +287,7 @@ export class ChatFlowManager {
                 });
                 assistantMessage = result.assistantMessage;
                 toolCalls = result.toolCalls;
+                incompleteToolCalls = result.incompleteToolCalls || [];
                 usage = result.usage;
                 break;
             } catch (error) {
@@ -419,6 +423,7 @@ export class ChatFlowManager {
                 context,
                 assistantMessage,
                 toolCalls,
+                incompleteToolCalls,
                 usage,
                 modelContextLength,
                 compression.inputTokens,
@@ -437,6 +442,7 @@ export class ChatFlowManager {
         context: ChatViewContext,
         assistantMessage: string,
         toolCalls: any[],
+        incompleteToolCalls: IncompleteToolCall[],
         usage: UsageInfo | undefined,
         modelContextLength: number,
         currentContextTokens: number,
@@ -459,7 +465,43 @@ export class ChatFlowManager {
 
         if (toolCalls.length > 0) {
             await this.toolCallDispatcher.handleToolCalls(toolCalls, messageId, context);
+            return;
         }
+
+        if (incompleteToolCalls.length > 0) {
+            const retryPrompt = this.buildTruncationFollowUpPrompt(incompleteToolCalls[0]);
+            const retryMsg: Message = {
+                id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                timestamp: Date.now(),
+                role: 'user',
+                content: retryPrompt
+            };
+            context.conversationHistory.push(retryMsg);
+            this.sendMessageToWebview({
+                type: 'info',
+                message: `Detected ${incompleteToolCalls.length} truncated tool call(s). Asking model to retry with smaller chunks.`
+            });
+            await this.generateAndStreamResponse(context, retryPrompt, 0, true);
+        }
+    }
+
+    private buildTruncationFollowUpPrompt(incomplete: IncompleteToolCall): string {
+        const recoveredPath = typeof incomplete.recoveredFields?.path === 'string'
+            ? String(incomplete.recoveredFields.path)
+            : typeof incomplete.recoveredFields?.file_path === 'string'
+                ? String(incomplete.recoveredFields.file_path)
+                : undefined;
+        const recoveredContent = typeof incomplete.recoveredFields?.content === 'string'
+            ? String(incomplete.recoveredFields.content)
+            : typeof incomplete.recoveredFields?.new_content === 'string'
+                ? String(incomplete.recoveredFields.new_content)
+                : '';
+        return buildTruncatedRetryPrompt({
+            toolName: incomplete.name || 'unknown_tool',
+            recoveredPath,
+            contentPreview: recoveredContent || incomplete.rawArgumentsPreview,
+            totalChars: incomplete.charCount
+        });
     }
 
     private async updateActiveSessionTokenUsage(

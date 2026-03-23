@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { repairAndParseJSON } from './jsonRepair';
+import { detectTruncation, extractPartialJsonFields, repairAndParseJSON } from './jsonRepair';
 
 describe('jsonRepair', () => {
     describe('repairAndParseJSON', () => {
@@ -66,6 +66,30 @@ describe('jsonRepair', () => {
             const result = repairAndParseJSON(json);
             expect(result.success).toBe(true);
             expect(result.repaired.cmd).toBe('echo "Double "Quotes" Test"');
+        });
+
+        it('should detect truncation for unterminated string payloads', () => {
+            const json = '{"path":"src/a.ts","content":"hello world';
+            const result = repairAndParseJSON(json);
+            expect(result.success).toBe(false);
+            expect(result.isTruncated).toBe(true);
+            expect(result.truncationReason).toBe('unterminated_string');
+            expect(result.errorCode).toBe('TOOL_ARGS_TRUNCATED');
+        });
+
+        it('should extract partial fields from truncated json', () => {
+            const partial = '{"path":"src/a.ts","content":"line1\\nline2","mode":"w';
+            const fields = extractPartialJsonFields(partial);
+            expect(fields.path).toBe('src/a.ts');
+            expect(fields.content).toBe('line1\nline2');
+            expect(fields.mode).toBe('w');
+        });
+
+        it('detectTruncation should report unbalanced braces', () => {
+            const partial = '{"path":"src/a.ts","content":"abc"';
+            const state = detectTruncation(partial);
+            expect(state.isTruncated).toBe(true);
+            expect(state.reason).toBe('unbalanced_braces');
         });
     });
 });

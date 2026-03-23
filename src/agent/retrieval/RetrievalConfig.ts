@@ -68,5 +68,16 @@ export const RetrievalConfig = {
     benchmarks: {
         coldStartMs: 5000,
         warmP95Ms: 250
+    },
+
+    regexSearch: {
+        enabled: true,
+        queryTimeoutMs: 1200,
+        maxCandidates: 300,
+        maxVerifiedFiles: 120,
+        maxMatches: 200,
+        indexDir: '.gently/regex-index',
+        metadataFile: 'metadata.json',
+        hashFile: 'file-hashes.json'
     }
 };

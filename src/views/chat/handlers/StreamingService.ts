@@ -4,6 +4,7 @@ import { LogService } from '../../../services/LogService';
 import { StreamResponseHandler } from '../../../core/streaming/StreamResponseHandler';
 import { MessageStateHandler } from '../../../core/task/MessageStateHandler';
 import { UsageInfo } from '../../../core/streaming/types';
+import { IncompleteToolCall } from '../../../core/streaming/types';
 
 const log = new LogService('StreamingService');
 
@@ -26,7 +27,7 @@ export class StreamingService {
             isFollowUp?: boolean;
             shouldStopRef: { current: boolean };
         }
-    ): Promise<{ assistantMessage: string; toolCalls: any[]; usage?: UsageInfo }> {
+    ): Promise<{ assistantMessage: string; toolCalls: any[]; incompleteToolCalls: IncompleteToolCall[]; usage?: UsageInfo }> {
         const streamHandler = new StreamResponseHandler();
         const msgIndex = 0; // Default index for the assistant message in this stream
 
@@ -48,6 +49,7 @@ export class StreamingService {
                 const choice = data.choices?.[0];
                 let assistantMessage = '';
                 let toolCalls: any[] = [];
+                let incompleteToolCalls: IncompleteToolCall[] = [];
                 const usage: UsageInfo | undefined = data.usage ? {
                     prompt_tokens: data.usage.prompt_tokens || 0,
                     completion_tokens: data.usage.completion_tokens || 0,
@@ -69,7 +71,7 @@ export class StreamingService {
                         messageId: `msg_${Date.now()}`
                     });
                 }
-                return { assistantMessage, toolCalls, usage };
+                return { assistantMessage, toolCalls, incompleteToolCalls, usage };
             } catch (error) {
                 log.error('Non-streaming follow-up failed:', error);
                 this.sendMessageToWebview({ type: 'processingEnd' });
@@ -90,6 +92,7 @@ export class StreamingService {
 
             try {
                 let usage: UsageInfo | undefined;
+                const incompleteToolCalls: IncompleteToolCall[] = [];
                 resetTimeout();
                 for await (const chunk of this.openRouterService.streamChatMessage({
                     messages,
@@ -148,6 +151,13 @@ export class StreamingService {
                                 label: `Ready: ${chunk.toolCall.function.name}` 
                             });
                             break;
+                        case 'tool_call_incomplete':
+                            incompleteToolCalls.push(chunk.incomplete);
+                            this.sendMessageToWebview({
+                                type: 'activityUpdate',
+                                label: `Truncated: ${chunk.incomplete.name}`
+                            });
+                            break;
                         case 'usage':
                             usage = chunk.usage;
                             break;
@@ -161,6 +171,7 @@ export class StreamingService {
                 return { 
                     assistantMessage: finalState.content, 
                     toolCalls: finalState.toolCalls,
+                    incompleteToolCalls,
                     usage
                 };
             } catch (error) {

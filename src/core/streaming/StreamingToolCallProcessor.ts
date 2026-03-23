@@ -1,5 +1,6 @@
-import { ToolCall, StreamChunk, ToolCallDelta } from './types';
-import { sanitizeJsonArguments, tryParseJson } from './JsonSanitizer';
+import { ToolCall, StreamChunk, ToolCallDelta, StreamingToolCallResult } from './types';
+import { sanitizeJsonArguments } from './JsonSanitizer';
+import { repairAndParseJSON } from '../../utils/jsonRepair';
 
 interface ToolCallState {
     id: string;
@@ -106,17 +107,18 @@ export class StreamingToolCallProcessor {
      * Checks if all tool calls currently being processed are valid and completed.
      * This is typically called at the end of a stream.
      */
-    getCompletedToolCalls(): Array<{ toolCall: ToolCall; index: number }> {
-        const completed: Array<{ toolCall: ToolCall; index: number }> = [];
+    getStreamingToolCallResult(): StreamingToolCallResult {
+        const completedToolCalls: Array<{ toolCall: ToolCall; index: number }> = [];
+        const incompleteToolCalls: StreamingToolCallResult['incompleteToolCalls'] = [];
         
         for (const [index, state] of this.toolCallStateByIndex.entries()) {
             if (!state.id || !state.name) continue;
 
             const sanitizedArgs = sanitizeJsonArguments(state.arguments);
-            const parseResult = tryParseJson(sanitizedArgs);
+            const parseResult = repairAndParseJSON(sanitizedArgs);
 
             if (parseResult.success) {
-                completed.push({
+                completedToolCalls.push({
                     toolCall: {
                         id: state.id,
                         type: 'function',
@@ -128,13 +130,28 @@ export class StreamingToolCallProcessor {
                     index
                 });
             } else {
-                console.error(`[StreamingToolCallProcessor] Failed to parse tool call ${state.name} at index ${index}:`, parseResult.error);
-                // We still include it but maybe with a fallback or as is?
-                // For now, follow Cline's lead: if it's broken, it's broken.
+                const reason = parseResult.truncationReason || 'stream_ended_mid_json';
+                if (parseResult.isTruncated) {
+                    incompleteToolCalls.push({
+                        id: state.id,
+                        name: state.name,
+                        rawArguments: sanitizedArgs,
+                        rawArgumentsPreview: (parseResult.rawPreview || sanitizedArgs).slice(0, 500),
+                        truncationReason: reason,
+                        recoveredFields: parseResult.partialFields || {},
+                        charCount: parseResult.charCount || sanitizedArgs.length
+                    });
+                } else {
+                    console.error(`[StreamingToolCallProcessor] Failed to parse tool call ${state.name} at index ${index}:`, parseResult.finalError || parseResult.originalError);
+                }
             }
         }
-        
-        return completed;
+
+        return { completedToolCalls, incompleteToolCalls };
+    }
+
+    getCompletedToolCalls(): Array<{ toolCall: ToolCall; index: number }> {
+        return this.getStreamingToolCallResult().completedToolCalls;
     }
 
     /**

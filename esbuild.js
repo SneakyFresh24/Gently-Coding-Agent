@@ -25,7 +25,8 @@ async function main() {
       'onnxruntime-node',
       'sharp',
       'espree',
-      'sql.js'
+      'sql.js',
+      're2'
     ],
     logLevel: 'info',
     define: {

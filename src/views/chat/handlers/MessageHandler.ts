@@ -32,7 +32,8 @@ export class MessageHandler {
     private readonly agentManager: AgentManager,
     private readonly modeService: ModeService,
     private readonly sendMessageToWebview: (message: OutboundWebviewMessage) => void,
-    private readonly updateConversationHistory: (message: Message) => void
+    private readonly updateConversationHistory: (message: Message) => void,
+    private readonly onModeSwitch?: (modeId: string) => Promise<void>
   ) {
     const fileRef = new FileReferenceManager(agentManager.getFileOperations(), agentManager.getIndexer());
     this.architectHandoverHandler = new ArchitectHandoverHandler(sendMessageToWebview);
@@ -75,7 +76,17 @@ export class MessageHandler {
       sendMessageToWebview,
       this.agentManager,
       updateConversationHistory,
-      (m: string | undefined) => followUp.sendFollowUpMessage(this.context, m || '')
+      (m: string | undefined) => followUp.sendFollowUpMessage(this.context, m || ''),
+      async (modeId: string) => {
+        if (this.onModeSwitch) {
+          await this.onModeSwitch(modeId);
+          return;
+        }
+        this.setSelectedMode(modeId);
+      },
+      async (message: string) => {
+        await this.sendMessage(message, false);
+      }
     );
 
     this.flowManager = new ChatFlowManager(
@@ -108,7 +119,8 @@ export class MessageHandler {
       sequenceRetryCount: 0,
       consecutiveMistakeCount: 0,
       recentToolCallFingerprints: [],
-      doomLoopAllowedTools: new Set<string>()
+      doomLoopAllowedTools: new Set<string>(),
+      recentModeSwitches: []
     };
 
     this.loadStoredState();

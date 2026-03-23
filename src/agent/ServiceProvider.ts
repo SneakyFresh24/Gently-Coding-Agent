@@ -15,6 +15,7 @@ import { HNSWIndex } from './retrieval/HNSWIndex';
 import { BM25Index } from './retrieval/BM25Index';
 import { CrossEncoderReranker } from './retrieval/CrossEncoderReranker';
 import { HybridRetriever } from './retrieval/HybridRetriever';
+import { RegexSearchService } from './retrieval/RegexSearchService';
 import { ProjectStructureAnalyzer } from './ProjectStructureAnalyzer';
 import { GitDiffService } from './GitDiffService';
 import { CheckpointManager } from './checkpoints/CheckpointManager';
@@ -34,7 +35,8 @@ import {
     SafeEditTool,
     ApplyBlockEditTool,
     CommandTools,
-    WebSearchTools
+    WebSearchTools,
+    QuestionTools
 } from './tools';
 import {
     FileOperationManager,
@@ -158,12 +160,14 @@ export function configureServices(container: Container, context: vscode.Extensio
     container.register('projectAnalyzer', (c) => new ProjectStructureAnalyzer(c.resolve('workspaceRoot')));
     container.register('toolRegistry', () => new ToolRegistry());
     container.register('codebaseMapGenerator', (c) => new CodebaseMapGenerator(c.resolve('fileOps')));
+    container.register('regexSearchService', (c) => new RegexSearchService(c.resolve('fileOps')));
 
     // 3. Tool Instances
     container.register('fileTools', (c) => new FileTools(
         c.resolve('fileOps'),
         c.resolve('indexer'),
-        c.resolve('contextManager')
+        c.resolve('contextManager'),
+        c.resolve('regexSearchService')
     ));
     container.register('memoryTools', (c) => new MemoryTools(c.resolve('baseMemoryManager')));
     container.register('memoryBankTools', (c) => new MemoryBankTools(c.resolve('memoryBankManager')));
@@ -192,6 +196,7 @@ export function configureServices(container: Container, context: vscode.Extensio
         () => { } // Event callback will be set later via ToolManager
     ));
     container.register('webSearchTools', () => new WebSearchTools());
+    container.register('questionTools', () => new QuestionTools());
 
     // 4. Managers
     container.register('fileOperationManager', (c) => new FileOperationManager(
@@ -221,6 +226,7 @@ export function configureServices(container: Container, context: vscode.Extensio
             c.resolve('applyBlockEditTool'),
             c.resolve('commandTools'),
             c.resolve('webSearchTools'),
+            c.resolve('questionTools'),
             c.resolve('autoApproveManager'),
             c.resolve('hookManager')
         );

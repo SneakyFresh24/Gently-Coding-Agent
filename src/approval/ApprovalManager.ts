@@ -127,12 +127,14 @@ export class AutoApproveManager {
     'check_memory_conflicts',
     'check_pattern_suggestions',
     'handover_to_coder',
+    'ask_question',
     'create_checkpoint'
   ]);
   private static readonly READ_TOOLS = new Set<string>([
     'read_file',
     'list_files',
     'find_files',
+    'regex_search',
     'search_files'
   ]);
   private static readonly EDIT_TOOLS = new Set<string>([

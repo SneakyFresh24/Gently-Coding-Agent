@@ -48,7 +48,7 @@ export const TOOL_DEFINITIONS = {
             type: 'object',
             properties: {
                 path: { type: 'string', description: 'Path to the file (relative to workspace root)' },
-                content: { type: 'string', description: 'File content' }
+                content: { type: 'string', description: 'File content (max 50KB, split larger payloads into multiple calls)', maxLength: 50000 }
             },
             required: ['path', 'content']
         }
@@ -63,7 +63,7 @@ export const TOOL_DEFINITIONS = {
             properties: {
                 file_path: { type: 'string', description: 'Path to the file' },
                 anchor_line: { type: 'string', description: 'Text of the line to replace' },
-                new_content: { type: 'string', description: 'New code content' },
+                new_content: { type: 'string', description: 'New code content (max 50KB, split larger payloads into multiple calls)', maxLength: 50000 },
                 end_anchor: { type: 'string', description: 'Optional end marker for block replacement' },
                 line_number_hint: { type: 'number', description: 'Optional 1-based line number' },
                 start_line: { type: 'number', description: 'Optional explicit start line' },
@@ -125,6 +125,24 @@ export const TOOL_DEFINITIONS = {
                 max_results: { type: 'number', description: 'Maximum results (default: 5)' }
             },
             required: ['query']
+        }
+    },
+    regex_search: {
+        name: 'regex_search',
+        category: 'search',
+        description: 'Run fast regex search using a trigram index with RE2 verification and ripgrep fallback.',
+        parameters: {
+            type: 'object',
+            properties: {
+                pattern: { type: 'string', description: 'Regex pattern to search for.' },
+                path_glob: { type: 'string', description: 'Optional glob filter (for example: "src/**/*.ts").' },
+                flags: { type: 'string', description: 'Regex flags (supported: i, m, s, u).' },
+                case_sensitive: { type: 'boolean', description: 'Override case sensitivity.' },
+                multiline: { type: 'boolean', description: 'Enable multiline behavior where supported.' },
+                max_results: { type: 'number', description: 'Maximum number of matches to return.' },
+                context_lines: { type: 'number', description: 'Number of context lines around each match.' }
+            },
+            required: ['pattern']
         }
     },
     check_dev_server: {
@@ -395,6 +413,41 @@ export const TOOL_DEFINITIONS = {
                 message: { type: 'string', description: 'Brief summary of the plan for the Coder.' }
             },
             required: ['message']
+        }
+    },
+    ask_question: {
+        name: 'ask_question',
+        category: 'workflow',
+        description: 'Ask the user a question with multiple choice options. Optionally request a mode switch based on the selected option.',
+        parameters: {
+            type: 'object',
+            properties: {
+                question: {
+                    type: 'string',
+                    description: 'The question to ask the user'
+                },
+                header: {
+                    type: 'string',
+                    description: 'Optional short header (max 30 chars)'
+                },
+                options: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            label: { type: 'string', description: 'Display text' },
+                            description: { type: 'string', description: 'Optional explanation' },
+                            mode: { type: 'string', description: 'Optional target mode (e.g. "code", "architect")' }
+                        },
+                        required: ['label']
+                    }
+                },
+                multiple: {
+                    type: 'boolean',
+                    description: 'Allow selecting multiple options'
+                }
+            },
+            required: ['question', 'options']
         }
     },
 
