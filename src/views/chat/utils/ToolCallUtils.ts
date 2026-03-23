@@ -5,6 +5,7 @@
 import { repairAndParseJSON, createLLMErrorMessage } from '../../../utils/jsonRepair';
 import { createHash } from 'crypto';
 import { ToolResultErrorCodes, ToolResultErrorCode } from '../toolcall/ToolResultErrorCodes';
+import * as path from 'path';
 
 export interface ToolCallValidationResult {
   validToolCalls: any[];
@@ -12,17 +13,60 @@ export interface ToolCallValidationResult {
   warnings: string[];
 }
 
+type MonolithPolicy = 'warn' | 'block';
+
+interface GuardrailPolicy {
+  monolithPolicy: MonolithPolicy;
+  maxInlineLines: number;
+  growthLineThreshold: number;
+}
+
+interface StructuralFeedback {
+  warning?: string;
+  violation?: { message: string; details: Record<string, unknown> };
+}
+
 export class ToolCallUtils {
   private static readonly MAX_TOOL_ARG_CHARS = 50_000;
+  private static readonly DEFAULT_GUARDRAIL_POLICY: GuardrailPolicy = {
+    monolithPolicy: 'warn',
+    maxInlineLines: 20,
+    growthLineThreshold: 500
+  };
+  private static readonly SPLIT_STRATEGIES: Record<string, string[]> = {
+    html: [
+      'Extract long <style> blocks into styles/main.css',
+      'Extract long <script> blocks into scripts/main.js'
+    ],
+    typescript: [
+      'Split by feature/module (e.g. services/, components/, utils/)',
+      'Move reusable logic into dedicated files'
+    ],
+    javascript: [
+      'Split by feature/module (e.g. services/, components/, utils/)',
+      'Move reusable logic into dedicated files'
+    ],
+    python: [
+      'Split classes into models.py',
+      'Move utility functions into utils.py'
+    ]
+  };
   /**
    * Validate and repair tool calls
    */
-  static validateAndRepairToolCalls(toolCalls: any[], options?: { model?: string }): ToolCallValidationResult {
+  static validateAndRepairToolCalls(
+    toolCalls: any[],
+    options?: {
+      model?: string;
+      guardrailPolicy?: Partial<GuardrailPolicy>;
+    }
+  ): ToolCallValidationResult {
     const validToolCalls: any[] = [];
     const invalidToolCalls: any[] = [];
     const warnings: string[] = [];
     const modelTag = this.formatModelTag(options?.model);
     const seenIds = new Map<string, number>();
+    const guardrailPolicy = this.resolveGuardrailPolicy(options?.guardrailPolicy);
 
     for (let index = 0; index < toolCalls.length; index++) {
       const toolCall = toolCalls[index];
@@ -182,6 +226,27 @@ export class ToolCallUtils {
           continue;
         }
 
+        const structural = this.getStructuralFeedback(
+          toolCall.function.name,
+          (fixedArgs && typeof fixedArgs === 'object' && !Array.isArray(fixedArgs))
+            ? fixedArgs as Record<string, unknown>
+            : {},
+          guardrailPolicy
+        );
+        if (structural?.warning) {
+          warnings.push(`[${modelTag}] ${structural.warning}`);
+        }
+        if (structural?.violation) {
+          invalidToolCalls.push({
+            toolCall,
+            index,
+            error: structural.violation.message,
+            code: ToolResultErrorCodes.TOOL_MONOLITH_POLICY_VIOLATION,
+            details: structural.violation.details
+          });
+          continue;
+        }
+
         validToolCalls.push(toolCall);
       } catch (error: any) {
         console.error(`[PARALLEL] Tool call ${index} validation error:`, error);
@@ -195,6 +260,114 @@ export class ToolCallUtils {
     }
 
     return { validToolCalls, invalidToolCalls, warnings };
+  }
+
+  private static resolveGuardrailPolicy(raw?: Partial<GuardrailPolicy>): GuardrailPolicy {
+    const maxInlineLines = Number(raw?.maxInlineLines);
+    const growthLineThreshold = Number(raw?.growthLineThreshold);
+    return {
+      monolithPolicy: raw?.monolithPolicy === 'block' ? 'block' : 'warn',
+      maxInlineLines: Number.isFinite(maxInlineLines) && maxInlineLines > 0
+        ? Math.floor(maxInlineLines)
+        : this.DEFAULT_GUARDRAIL_POLICY.maxInlineLines,
+      growthLineThreshold: Number.isFinite(growthLineThreshold) && growthLineThreshold > 0
+        ? Math.floor(growthLineThreshold)
+        : this.DEFAULT_GUARDRAIL_POLICY.growthLineThreshold
+    };
+  }
+
+  private static getStructuralFeedback(
+    toolName: string,
+    args: Record<string, unknown>,
+    policy: GuardrailPolicy
+  ): StructuralFeedback | null {
+    const normalizedTool = (toolName || '').toLowerCase();
+    if (normalizedTool !== 'write_file' && normalizedTool !== 'safe_edit_file') return null;
+
+    const targetPath = typeof args.path === 'string'
+      ? args.path
+      : (typeof args.file_path === 'string' ? args.file_path : undefined);
+    const content = normalizedTool === 'write_file'
+      ? args.content
+      : args.new_content;
+    if (typeof content !== 'string') return null;
+
+    const warnings: string[] = [];
+    const languageKey = this.resolveLanguageKey(targetPath);
+    const lineCount = this.countLines(content);
+    const splitSuggestions = this.getSplitSuggestions(languageKey, targetPath);
+
+    if (lineCount > policy.growthLineThreshold) {
+      warnings.push(
+        `${normalizedTool} target ${targetPath || '<unknown>'} has ${lineCount} lines. Consider modularizing.`
+      );
+    }
+
+    const htmlInline = this.getHtmlInlineViolations(content, policy.maxInlineLines);
+    if (htmlInline.length > 0) {
+      const baseMessage =
+        `Detected large inline blocks in ${targetPath || 'html file'} (${htmlInline.join(', ')} > ${policy.maxInlineLines} lines).`;
+      if (policy.monolithPolicy === 'block') {
+        return {
+          violation: {
+            message: `${baseMessage} Split into dedicated files before retrying.`,
+            details: {
+              path: targetPath,
+              policy: policy.monolithPolicy,
+              maxInlineLines: policy.maxInlineLines,
+              inlineViolations: htmlInline,
+              suggestions: splitSuggestions
+            }
+          }
+        };
+      }
+      warnings.push(`${baseMessage} Suggested split: ${splitSuggestions.join('; ')}`);
+    }
+
+    if (warnings.length === 0) return null;
+    return { warning: warnings.join(' ') };
+  }
+
+  private static countLines(content: string): number {
+    if (!content) return 0;
+    return content.split(/\r?\n/).length;
+  }
+
+  private static resolveLanguageKey(targetPath?: string): string {
+    if (!targetPath) return 'other';
+    const ext = path.extname(targetPath).toLowerCase();
+    if (ext === '.html' || ext === '.htm') return 'html';
+    if (ext === '.ts' || ext === '.tsx') return 'typescript';
+    if (ext === '.js' || ext === '.jsx') return 'javascript';
+    if (ext === '.py') return 'python';
+    return 'other';
+  }
+
+  private static getSplitSuggestions(languageKey: string, targetPath?: string): string[] {
+    const suggestions = this.SPLIT_STRATEGIES[languageKey] || ['Split into smaller modules by responsibility'];
+    if (!targetPath) return suggestions;
+    return suggestions.map((item) => `${item} (target: ${targetPath})`);
+  }
+
+  private static getHtmlInlineViolations(content: string, maxInlineLines: number): string[] {
+    const violations: string[] = [];
+    let styleMaxLines = 0;
+    let scriptMaxLines = 0;
+
+    const styleRegex = /<style\b[^>]*>([\s\S]*?)<\/style>/gi;
+    const scriptRegex = /<script\b[^>]*>([\s\S]*?)<\/script>/gi;
+
+    let match: RegExpExecArray | null;
+    while ((match = styleRegex.exec(content)) !== null) {
+      styleMaxLines = Math.max(styleMaxLines, this.countLines(match[1] || ''));
+    }
+    while ((match = scriptRegex.exec(content)) !== null) {
+      scriptMaxLines = Math.max(scriptMaxLines, this.countLines(match[1] || ''));
+    }
+
+    if (styleMaxLines > maxInlineLines) violations.push(`style:${styleMaxLines}`);
+    if (scriptMaxLines > maxInlineLines) violations.push(`script:${scriptMaxLines}`);
+    return violations;
   }
 
   private static getOversizeViolation(

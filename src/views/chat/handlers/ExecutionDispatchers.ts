@@ -10,7 +10,7 @@ import { OutboundWebviewMessage } from '../types/WebviewMessageTypes';
 import { ToolCall } from '../../../services/OpenRouterService';
 import { PlanStep } from '../../../agent/planning/types';
 import { ToolResultErrorCodes, ToolResultErrorCode } from '../toolcall/ToolResultErrorCodes';
-import { buildOversizeRetryPrompt, buildTruncatedRetryPrompt } from '../toolcall/ToolRetryPrompts';
+import { buildMonolithRetryPrompt, buildOversizeRetryPrompt, buildTruncatedRetryPrompt } from '../toolcall/ToolRetryPrompts';
 
 import { PlanningManager } from '../../../agent/agentManager/PlanningManager';
 
@@ -25,6 +25,12 @@ interface PostToolActionResult {
     requestedMode?: string;
     shouldAutoContinue?: boolean;
     continuationPrompt?: string;
+}
+
+interface GuardrailConfig {
+    monolithPolicy: 'warn' | 'block';
+    maxInlineLines: number;
+    growthLineThreshold: number;
 }
 
 /**
@@ -54,7 +60,8 @@ export class TraditionalToolExecutor {
             await this.createCheckpointIfNeeded(toolCalls, messageId, context);
 
             const { validToolCalls, invalidToolCalls, warnings } = ToolCallUtils.validateAndRepairToolCalls(toolCalls, {
-                model: context.selectedModel || undefined
+                model: context.selectedModel || undefined,
+                guardrailPolicy: this.getGuardrailConfig()
             });
 
             if (warnings.length > 0) {
@@ -180,6 +187,17 @@ export class TraditionalToolExecutor {
             });
         }
 
+        const monolith = invalidToolCalls.find((entry) => entry.code === ToolResultErrorCodes.TOOL_MONOLITH_POLICY_VIOLATION);
+        if (monolith) {
+            const details = monolith.details || {};
+            return buildMonolithRetryPrompt({
+                toolName: monolith.toolCall.function?.name || 'unknown_tool',
+                path: typeof details.path === 'string' ? details.path : undefined,
+                inlineViolations: Array.isArray(details.inlineViolations) ? details.inlineViolations as string[] : [],
+                suggestions: Array.isArray(details.suggestions) ? details.suggestions as string[] : []
+            });
+        }
+
         return null;
     }
 
@@ -207,6 +225,18 @@ export class TraditionalToolExecutor {
             `tool_arg_metrics: truncated=${this.toolArgsTruncatedCount} oversize=${this.toolArgsOversizeRejectedCount} ` +
             `partialRecovery=${this.partialRecoverySuccessCount} largestArg=${this.largestToolArgSeen}`
         );
+    }
+
+    private getGuardrailConfig(): GuardrailConfig {
+        const config = vscode.workspace.getConfiguration('gently');
+        const monolithPolicy = config.get<'warn' | 'block'>('monolithPolicy', 'warn');
+        const maxInlineLines = config.get<number>('maxInlineLines', 20);
+        const growthLineThreshold = config.get<number>('growthLineThreshold', 500);
+        return {
+            monolithPolicy: monolithPolicy === 'block' ? 'block' : 'warn',
+            maxInlineLines: Number.isFinite(maxInlineLines) && maxInlineLines > 0 ? Math.floor(maxInlineLines) : 20,
+            growthLineThreshold: Number.isFinite(growthLineThreshold) && growthLineThreshold > 0 ? Math.floor(growthLineThreshold) : 500
+        };
     }
 
     private async executeToolCallsParallel(toolCalls: ToolCall[], context: ChatViewContext): Promise<{ toolCall: ToolCall, result: any, success: boolean }[]> {

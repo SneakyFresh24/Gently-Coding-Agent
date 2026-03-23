@@ -127,6 +127,16 @@ describe('ToolRegistry', () => {
     it('should format tools for API', () => {
       toolRegistry.registerMany([mockTool]);
       const tools = toolRegistry.getFormattedTools();
+      const expectedParameters = {
+        ...mockTool.parameters,
+        properties: {
+          ...(mockTool.parameters as any).properties,
+          task_progress: {
+            type: 'string',
+            description: 'Optional progress update summarizing what has been done and what is left (e.g. "Analyzed code, now implementing changes").'
+          }
+        }
+      };
 
       expect(tools).toHaveLength(1);
       expect(tools[0]).toEqual({
@@ -134,7 +144,7 @@ describe('ToolRegistry', () => {
         function: {
           name: 'test-tool',
           description: 'A test tool',
-          parameters: mockTool.parameters
+          parameters: expectedParameters
         }
       });
     });

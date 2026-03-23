@@ -181,6 +181,10 @@ export class PlanningManager implements IAgentService {
       this.messageHandler.handoverToCoder(planId, message);
   }
 
+  public async announcePlanCreated(plan: ExecutionPlan): Promise<void> {
+      await this.messageHandler.announcePlanCreated(plan);
+  }
+
   // ==================== LEGACY STUBS ====================
 
   public async loadPlanFromMarkdown(planId: string): Promise<ExecutionPlan | undefined> {

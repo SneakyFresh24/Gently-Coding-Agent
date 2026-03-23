@@ -201,7 +201,8 @@ export class FollowUpHandler {
         private sendMessageToWebview: (message: OutboundWebviewMessage) => void,
         private validateMessageSequence: (messages: Message[]) => { valid: boolean; issues: string[] },
         private repairMessageSequence: (messages: Message[]) => { repaired: boolean; messages: Message[]; fixes: string[] },
-        private generateAndStreamResponse: (message: string, retryCount: number, isFollowUp: boolean) => Promise<void>
+        private generateAndStreamResponse: (message: string, retryCount: number, isFollowUp: boolean) => Promise<void>,
+        private recoverSelectedModel?: () => Promise<string | null>
     ) { }
 
     async sendFollowUpMessage(context: ChatViewContext, message: string): Promise<void> {
@@ -262,6 +263,23 @@ export class FollowUpHandler {
                 if (repair.fixes.length > 0) {
                     log.info(`Follow-up sequence repaired: ${repair.fixes.join(', ')}`);
                 }
+            }
+
+            if (!context.selectedModel && this.recoverSelectedModel) {
+                const recovered = await this.recoverSelectedModel();
+                if (recovered) {
+                    context.selectedModel = recovered;
+                    log.info(`[FollowUpHandler] Recovered selected model for follow-up: ${recovered}`);
+                }
+            }
+
+            if (!context.selectedModel) {
+                log.error('[FollowUpHandler] Model lost during tool execution; follow-up aborted.');
+                this.sendMessageToWebview({
+                    type: 'error',
+                    message: 'Model selection was lost. Please re-select a model.'
+                });
+                return;
             }
 
             await this.generateAndStreamResponse('', 0, true);

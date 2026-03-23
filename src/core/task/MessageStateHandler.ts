@@ -4,6 +4,7 @@ import { PlanEvent, TaskStatus } from '../../agent/planning/types';
 import { OutboundWebviewMessage } from '../../views/chat/types/WebviewMessageTypes';
 import { Mutex } from '../state/Mutex';
 import { PartialMessageUpdate } from '../streaming/types';
+import { ExecutionPlan } from '../../agent/planning';
 
 /**
  * Centrally handles outgoing messages and state synchronization between 
@@ -133,6 +134,21 @@ export class MessageStateHandler extends EventEmitter {
             this.sendMessageToWebview({
                 ...event,
                 type: 'handover_to_coder'
+            } as any);
+        });
+    }
+
+    public async announcePlanCreated(plan: ExecutionPlan) {
+        await this.mutex.runExclusive(async () => {
+            const event = {
+                type: 'planCreated' as const,
+                plan
+            };
+
+            this.emitPlanEvent(event as any);
+            this.sendMessageToWebview({
+                type: 'planCreated',
+                plan
             } as any);
         });
     }

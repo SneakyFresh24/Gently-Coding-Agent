@@ -196,6 +196,29 @@
           "maximum": 64000,
           "description": "Maximum tokens for AI responses"
         },
+        "gently.monolithPolicy": {
+          "type": "string",
+          "default": "warn",
+          "enum": [
+            "warn",
+            "block"
+          ],
+          "description": "How to handle monolithic file writes with large inline blocks (warn = suggest split, block = reject and require modular split)."
+        },
+        "gently.maxInlineLines": {
+          "type": "number",
+          "default": 20,
+          "minimum": 5,
+          "maximum": 200,
+          "description": "Maximum inline style/script lines tolerated before monolith warnings/blocking."
+        },
+        "gently.growthLineThreshold": {
+          "type": "number",
+          "default": 500,
+          "minimum": 100,
+          "maximum": 5000,
+          "description": "Line threshold that triggers modularization hints for file growth."
+        },
         "gently.agentMode": {
           "type": "boolean",
           "default": false,

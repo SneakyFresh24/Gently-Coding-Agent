@@ -414,6 +414,57 @@ IMPORTANT:
     },
 
     // --- Planning Tools ---
+    create_plan: {
+        name: 'create_plan',
+        category: 'planning',
+        description: 'Create a structured implementation plan before coding. Include optional file-level architecture hints.',
+        parameters: {
+            type: 'object',
+            properties: {
+                goal: {
+                    type: 'string',
+                    description: 'High-level implementation goal'
+                },
+                steps: {
+                    type: 'array',
+                    description: 'Ordered implementation steps',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            description: { type: 'string', description: 'Step description' },
+                            tool: { type: 'string', description: 'Preferred tool for this step' },
+                            parameters: { type: 'object', description: 'Tool parameters for this step' },
+                            dependencies: {
+                                type: 'array',
+                                description: 'Step IDs this step depends on',
+                                items: { type: 'string' }
+                            }
+                        },
+                        required: ['description', 'tool', 'parameters']
+                    }
+                },
+                files: {
+                    type: 'array',
+                    description: 'Optional architecture hints for planned files. Used for file-organization guidance, not strict validation.',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            path: { type: 'string', description: 'Target file path' },
+                            purpose: { type: 'string', description: 'Why this file exists' },
+                            type: {
+                                type: 'string',
+                                enum: ['html', 'css', 'js', 'ts', 'py', 'rust', 'java', 'json', 'markdown', 'other'],
+                                description: 'Generalized file type classification'
+                            },
+                            estimated_lines: { type: 'number', description: 'Optional rough line estimate' }
+                        },
+                        required: ['path', 'purpose', 'type']
+                    }
+                }
+            },
+            required: ['goal', 'steps']
+        }
+    },
     handover_to_coder: {
         name: 'handover_to_coder',
         category: 'planning',

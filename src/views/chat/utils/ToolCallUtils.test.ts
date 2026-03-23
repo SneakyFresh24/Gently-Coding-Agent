@@ -106,4 +106,75 @@ describe('ToolCallUtils.validateAndRepairToolCalls', () => {
     expect(result.invalidToolCalls).toHaveLength(1);
     expect(result.invalidToolCalls[0].code).toBe('TOOL_ARGS_TRUNCATED');
   });
+
+  it('warns on large inline html blocks when monolithPolicy=warn', () => {
+    const calls = [
+      {
+        id: 'call_warn_inline',
+        function: {
+          name: 'write_file',
+          arguments: JSON.stringify({
+            path: 'src/index.html',
+            content: `<html><head><style>${Array.from({ length: 30 }, (_, i) => `.c${i}{color:red;}`).join('\n')}</style></head><body></body></html>`
+          })
+        }
+      }
+    ];
+
+    const result = ToolCallUtils.validateAndRepairToolCalls(calls, {
+      model: 'openai/gpt-4.1',
+      guardrailPolicy: { monolithPolicy: 'warn', maxInlineLines: 20 }
+    });
+
+    expect(result.validToolCalls).toHaveLength(1);
+    expect(result.invalidToolCalls).toHaveLength(0);
+    expect(result.warnings.some((w) => w.includes('Detected large inline blocks'))).toBe(true);
+  });
+
+  it('blocks large inline html blocks when monolithPolicy=block', () => {
+    const calls = [
+      {
+        id: 'call_block_inline',
+        function: {
+          name: 'write_file',
+          arguments: JSON.stringify({
+            path: 'src/index.html',
+            content: `<html><head><script>${Array.from({ length: 40 }, (_, i) => `console.log(${i});`).join('\n')}</script></head><body></body></html>`
+          })
+        }
+      }
+    ];
+
+    const result = ToolCallUtils.validateAndRepairToolCalls(calls, {
+      model: 'openai/gpt-4.1',
+      guardrailPolicy: { monolithPolicy: 'block', maxInlineLines: 20 }
+    });
+
+    expect(result.validToolCalls).toHaveLength(0);
+    expect(result.invalidToolCalls).toHaveLength(1);
+    expect(result.invalidToolCalls[0].code).toBe('TOOL_MONOLITH_POLICY_VIOLATION');
+  });
+
+  it('emits growth warning for large python files', () => {
+    const calls = [
+      {
+        id: 'call_growth_warn',
+        function: {
+          name: 'write_file',
+          arguments: JSON.stringify({
+            path: 'src/main.py',
+            content: Array.from({ length: 520 }, (_, i) => `line_${i} = ${i}`).join('\n')
+          })
+        }
+      }
+    ];
+
+    const result = ToolCallUtils.validateAndRepairToolCalls(calls, {
+      model: 'openai/gpt-4.1',
+      guardrailPolicy: { growthLineThreshold: 500 }
+    });
+
+    expect(result.validToolCalls).toHaveLength(1);
+    expect(result.warnings.some((w) => w.includes('Consider modularizing'))).toBe(true);
+  });
 });

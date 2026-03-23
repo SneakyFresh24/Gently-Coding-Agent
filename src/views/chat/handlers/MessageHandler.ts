@@ -67,7 +67,15 @@ export class MessageHandler {
             fixes: repair.fixes
           };
         },
-        (msg: string, retry: number, isFollow: boolean) => this.flowManager.generateAndStreamResponse(this.context, msg, retry, isFollow)
+        (msg: string, retry: number, isFollow: boolean) => this.flowManager.generateAndStreamResponse(this.context, msg, retry, isFollow),
+        async () => {
+          const storedModel = this.extensionContext.globalState.get<string | null>('gently.selectedModel', null);
+          const recoveredModel = this.normalizeModelIdForRecovery(storedModel);
+          if (recoveredModel) {
+            this.context.selectedModel = recoveredModel;
+          }
+          return recoveredModel;
+        }
     );
 
     const dispatcher = new ToolCallDispatcher(
@@ -169,11 +177,16 @@ export class MessageHandler {
   setAvailableModels(models: Array<{ id: string }> | string[]): void {
     const ids = models.map((m) => typeof m === 'string' ? m : m.id).filter((id) => typeof id === 'string' && id.trim().length > 0);
     this.availableModelIds = new Set(ids);
-    if (this.context.selectedModel && !this.isValidOpenRouterModelId(this.context.selectedModel)) {
+    if (this.context.selectedModel && !this.isStructurallyValidOpenRouterModelId(this.context.selectedModel)) {
       this.context.selectedModel = null;
       void this.extensionContext.globalState.update('gently.selectedModel', null);
       void this.persistSelectedModelToActiveSession(null);
       this.sendMessageToWebview({ type: 'modelChanged', model: '' } as any);
+      return;
+    }
+
+    if (this.context.selectedModel && !this.isValidOpenRouterModelId(this.context.selectedModel)) {
+      console.warn(`[MessageHandler] Model "${this.context.selectedModel}" is not in the current model list. Keeping selection to avoid race-condition model loss during refresh.`);
     }
   }
 
@@ -204,14 +217,16 @@ export class MessageHandler {
     return trimmed;
   }
 
-  private isValidOpenRouterModelId(model: string | null | undefined): model is string {
-    if (typeof model !== 'string') return false;
+  private normalizeModelIdForRecovery(model: string | null | undefined): string | null {
+    if (typeof model !== 'string') return null;
     const trimmed = model.trim();
-    if (!trimmed) return false;
+    if (!this.isStructurallyValidOpenRouterModelId(trimmed)) return null;
+    return trimmed;
+  }
 
-    // Explicitly block legacy/internal pseudo IDs.
-    const disallowed = new Set(['unknown', 'glm-4.6', 'deepseek-chat']);
-    if (disallowed.has(trimmed)) return false;
+  private isValidOpenRouterModelId(model: string | null | undefined): model is string {
+    if (!this.isStructurallyValidOpenRouterModelId(model)) return false;
+    const trimmed = (model as string).trim();
 
     // If we have a fresh model list, enforce strict whitelist.
     if (this.availableModelIds.size > 0) {
@@ -219,6 +234,17 @@ export class MessageHandler {
     }
 
     // Fallback validation when list is not available yet.
+    return true;
+  }
+
+  private isStructurallyValidOpenRouterModelId(model: string | null | undefined): model is string {
+    if (typeof model !== 'string') return false;
+    const trimmed = model.trim();
+    if (!trimmed) return false;
+
+    // Explicitly block legacy/internal pseudo IDs.
+    const disallowed = new Set(['unknown', 'glm-4.6', 'deepseek-chat']);
+    if (disallowed.has(trimmed)) return false;
     return /^[^/\s]+\/[^/\s]+$/.test(trimmed);
   }
 

@@ -11,6 +11,13 @@ interface OversizeRetryPromptParams {
   path?: string;
 }
 
+interface MonolithRetryPromptParams {
+  toolName: string;
+  path?: string;
+  inlineViolations?: string[];
+  suggestions?: string[];
+}
+
 export function buildTruncatedRetryPrompt(params: TruncatedRetryPromptParams): string {
   const hasPath = Boolean(params.recoveredPath);
   const pathLine = hasPath ? params.recoveredPath! : 'unknown';
@@ -43,5 +50,24 @@ Solution: Split into multiple calls:
 1. write_file(${pathHint}, "<first 30KB>")
 2. safe_edit_file(${pathHint}, "<append next 30KB>")
 3. Continue until complete
+`.trim();
+}
+
+export function buildMonolithRetryPrompt(params: MonolithRetryPromptParams): string {
+  const target = params.path ? `"${params.path}"` : '<target_path>';
+  const violations = (params.inlineViolations || []).join(', ') || 'inline blocks exceeded policy';
+  const suggestions = params.suggestions && params.suggestions.length > 0
+    ? params.suggestions.map((s) => `- ${s}`).join('\n')
+    : '- Move inline CSS into styles/main.css\n- Move inline JavaScript into scripts/main.js';
+
+  return `
+❌ Tool call "${params.toolName}" blocked by monolith policy.
+
+Target: ${target}
+Violation: ${violations}
+
+Please split the content into modular files before retrying.
+Suggested split:
+${suggestions}
 `.trim();
 }
