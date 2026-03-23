@@ -103,7 +103,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       async (messages: any[], model: string | null) => {
         await this.messageHandler.applySessionState(messages, model);
       },
-      this.openRouterService
+      this.openRouterService,
+      () => {
+        const runtimeModel = this.messageHandler.getContext()?.selectedModel;
+        if (typeof runtimeModel === 'string' && runtimeModel.trim() !== '') {
+          return runtimeModel;
+        }
+        const storedModel = this.context?.globalState.get<string | null>('gently.selectedModel', null);
+        return typeof storedModel === 'string' && storedModel.trim() !== '' ? storedModel : null;
+      }
     );
 
     this.fileHandler = new FileHandler(

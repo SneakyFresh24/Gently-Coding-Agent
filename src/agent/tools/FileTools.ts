@@ -64,6 +64,7 @@ export class FileTools {
 
       return {
         success: true,
+        path: filePath,
         message: `File ${filePath} written successfully.`,
         ...(hint ? { hint } : {})
       };

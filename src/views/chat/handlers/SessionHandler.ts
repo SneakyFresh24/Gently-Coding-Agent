@@ -10,7 +10,8 @@ export class SessionHandler {
     private readonly sessionManager: HistoryManager,
     private readonly sendMessageToWebview: (message: any) => void,
     private readonly applyRuntimeSessionState?: (messages: any[], model: string | null) => Promise<void>,
-    private readonly openRouterService?: OpenRouterService
+    private readonly openRouterService?: OpenRouterService,
+    private readonly getCurrentSelectedModel?: () => string | null
   ) { }
 
   private normalizeSessionModel(model: unknown): string | null {
@@ -19,6 +20,15 @@ export class SessionHandler {
     if (!trimmed) return null;
     if (trimmed === 'unknown' || trimmed === 'glm-4.6' || trimmed === 'deepseek-chat') return null;
     return /^[^/\s]+\/[^/\s]+$/.test(trimmed) ? trimmed : null;
+  }
+
+  private getGlobalSelectedModel(): string | null {
+    if (!this.getCurrentSelectedModel) return null;
+    return this.normalizeSessionModel(this.getCurrentSelectedModel());
+  }
+
+  private resolveRuntimeModel(sessionModel: unknown): string | null {
+    return this.normalizeSessionModel(sessionModel) || this.getGlobalSelectedModel();
   }
 
   async handleGetSessions(): Promise<void> {
@@ -102,7 +112,7 @@ export class SessionHandler {
       if (activeSession && this.applyRuntimeSessionState) {
         await this.applyRuntimeSessionState(
           activeChatSession?.messages || [],
-          this.normalizeSessionModel(activeSession.metadata?.model)
+          this.resolveRuntimeModel(activeSession.metadata?.model)
         );
       }
 
@@ -144,12 +154,14 @@ export class SessionHandler {
   async handleNewSession(): Promise<void> {
     try {
       console.log('[SessionHandler] Creating new session...');
+      const selectedModel = this.resolveRuntimeModel(null);
       const sessionData = {
         name: 'New Chat',
         temperature: 0.7,
         maxTokens: 4000,
         metadata: {
-          tokenUsage: this.getDefaultTokenUsage()
+          tokenUsage: this.getDefaultTokenUsage(),
+          ...(selectedModel ? { model: selectedModel } : {})
         }
       };
 
@@ -176,7 +188,7 @@ export class SessionHandler {
       });
 
       if (this.applyRuntimeSessionState) {
-        await this.applyRuntimeSessionState([], null);
+        await this.applyRuntimeSessionState([], this.resolveRuntimeModel(session.metadata?.model));
       }
 
       await this.sendTokenUsageForSession(session);
@@ -234,7 +246,7 @@ export class SessionHandler {
       if (this.applyRuntimeSessionState) {
         await this.applyRuntimeSessionState(
           messages,
-          this.normalizeSessionModel(session.metadata?.model)
+          this.resolveRuntimeModel(session.metadata?.model)
         );
       }
 
@@ -303,7 +315,7 @@ export class SessionHandler {
               type: 'clearMessages'
             });
             if (this.applyRuntimeSessionState) {
-              await this.applyRuntimeSessionState([], null);
+              await this.applyRuntimeSessionState([], this.resolveRuntimeModel(null));
             }
             await this.sendTokenUsageEmpty();
           }
@@ -366,7 +378,7 @@ export class SessionHandler {
       });
 
       if (this.applyRuntimeSessionState) {
-        await this.applyRuntimeSessionState([], null);
+        await this.applyRuntimeSessionState([], this.resolveRuntimeModel(null));
       }
 
       // Update sessions list
@@ -722,7 +734,7 @@ export class SessionHandler {
   }
 
   private async sendTokenUsageForSession(session: Session): Promise<void> {
-    const modelId = this.normalizeSessionModel(session.metadata?.model);
+    const modelId = this.resolveRuntimeModel(session.metadata?.model);
     const usage = this.getTokenUsageFromSession(session);
     const maxTokens = modelId && this.openRouterService
       ? await this.openRouterService.getContextLength(modelId)

@@ -2,6 +2,24 @@
 
 All notable changes to the "Gently" extension will be documented in this file.
 
+## [0.9.0] - 2026-03-24
+
+### Added
+- **Global Model Resolver in Session Flow**: Added a runtime model resolver callback path from `ChatViewProvider` into `SessionHandler` to preserve selected model continuity across session state resets.
+- **Tool Message Formatters for Architect Tools**: Added dedicated tool-result formatting for `analyze_project_structure`, `create_plan`, and `ask_question` in the webview tool message component.
+
+### Changed
+- **New Session Model Inheritance**: New chat sessions now inherit the currently selected model into session metadata when available.
+- **Session Runtime Model Resolution**: Session runtime state now resolves model as `session model -> current/global selected model` instead of forcing `null` on reset flows.
+
+### Fixed
+- **`write_file` Result Path Field**: `write_file` success responses now include a structured `path` field (in addition to the message) so UI/tool consumers can reliably resolve the written filename.
+- **Raw JSON Tool Output in UI**: Prevented fallback JSON rendering for key architect tools by introducing compact, explicit summaries:
+  - `📊 Analyzed {projectName} ({type})`
+  - `📋 Plan created (X steps)`
+  - `❓ User selected: ...`
+- **Model Selection Loss on Session Reset**: Fixed model selection disappearing during new-session/clear-session flows by replacing `applyRuntimeSessionState([], null)` resets with resolved model fallback behavior.
+
 ## [0.8.93] - 2026-03-23
 
 ### Added

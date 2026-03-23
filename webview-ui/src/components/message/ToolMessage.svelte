@@ -19,6 +19,20 @@
     return value.length > max ? `${value.slice(0, max)}...` : value;
   }
 
+  function deriveProjectName(analysis: any): string {
+    const packageName = typeof analysis?.packageJson?.name === 'string'
+      ? analysis.packageJson.name.trim()
+      : '';
+    if (packageName) return packageName;
+
+    const rootPath = typeof analysis?.rootPath === 'string' ? analysis.rootPath.trim() : '';
+    if (!rootPath) return 'project';
+
+    const normalized = rootPath.replace(/\\/g, '/').replace(/\/+$/, '');
+    const lastSegment = normalized.split('/').filter(Boolean).pop();
+    return lastSegment || 'project';
+  }
+
   function parseDiffStats(diff: string): { added?: number; deleted?: number } {
     const normalized = diff.trim();
     const slashFormat = normalized.match(/-\s*(\d+)\s*\/\s*\+\s*(\d+)/i);
@@ -100,6 +114,36 @@
         return '❌ Command failed';
       }
       return '⚡ Command executed';
+    }
+
+    if (name === 'analyze_project_structure') {
+      const analysis = parsed?.analysis || {};
+      const projectName = deriveProjectName(analysis);
+      const projectType = String(analysis?.framework || analysis?.projectType || 'unknown');
+      return `📊 Analyzed ${projectName} (${projectType})`;
+    }
+
+    if (name === 'create_plan') {
+      const steps = Array.isArray(parsed?.plan?.steps)
+        ? parsed.plan.steps
+        : (Array.isArray(parsed?.steps) ? parsed.steps : []);
+      return `📋 Plan created (${steps.length} steps)`;
+    }
+
+    if (name === 'ask_question') {
+      const selected = Array.isArray(parsed?.answer)
+        ? parsed.answer
+        : (typeof parsed?.answer === 'string' && parsed.answer.trim() !== '' ? [parsed.answer] : []);
+      if (selected.length > 0) {
+        return `❓ User selected: ${selected.join(', ')}`;
+      }
+
+      const msg = typeof parsed?.message === 'string' ? parsed.message.trim() : '';
+      if (msg) {
+        const cleaned = msg.replace(/^User selected:\s*/i, '').trim();
+        return `❓ User selected: ${truncateText(cleaned || msg, 120)}`;
+      }
+      return '❓ User selected: (none)';
     }
 
     if (name.includes('memory') || name === 'remember' || name === 'recall_memories') {
