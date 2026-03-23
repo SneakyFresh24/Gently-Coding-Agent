@@ -12,7 +12,8 @@ interface OversizeRetryPromptParams {
 }
 
 export function buildTruncatedRetryPrompt(params: TruncatedRetryPromptParams): string {
-  const pathLine = params.recoveredPath ? params.recoveredPath : 'unknown';
+  const hasPath = Boolean(params.recoveredPath);
+  const pathLine = hasPath ? params.recoveredPath! : 'unknown';
   const preview = (params.contentPreview || '').slice(0, 200).replace(/\r?\n/g, '\\n');
   return `
 ❌ Tool call "${params.toolName}" was truncated before completion.
@@ -22,6 +23,7 @@ This usually happens when the content is too large for a single tool call.
 Solution: Split into multiple smaller calls:
 - write_file(path, content) -> Multiple calls with ~30KB each
 - Or use chunked safe_edit_file updates for incremental writes
+${hasPath ? '' : '- IMPORTANT: Put "path" (or "file_path") as the FIRST JSON field before content'}
 
 Recovered partial data:
 - path: "${pathLine}"

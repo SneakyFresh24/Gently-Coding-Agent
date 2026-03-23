@@ -2,6 +2,34 @@
 
 All notable changes to the "Gently" extension will be documented in this file.
 
+## [0.8.93] - 2026-03-23
+
+### Added
+- **Standardized Tool Error Codes**: Introduced canonical tool-flow error codes (`JSON_PARSE_ERROR`, `TOOL_ARGS_TRUNCATED`, `TOOL_ARGS_TOO_LARGE`, `TOOL_EXECUTION_ERROR`, `TOOL_NOT_FOUND`) and aligned retry/error handling around them.
+- **Streaming Incomplete Tool-Call Diagnostics**: Added structured tracking for incomplete streamed tool calls (preview, truncation reason, recovered fields, char count) to improve truncation recovery visibility.
+- **Retry Prompt Templates for LLM Self-Recovery**: Added dedicated retry templates for truncated and oversized tool arguments with explicit chunking guidance.
+- **Regex Search Tooling (Safety-First MVP)**: Added `regex_search` capability with index/fallback metadata, engine provenance, and runtime safety/budget transparency.
+- **Mode-Switch Post-Action Flow**: Added centralized post-tool action handling for workflow tool results (`requestedMode`, `shouldAutoContinue`, `continuationPrompt`) with local follow-up skip logic.
+- **Mode-Switch Loop Protection**: Added recent mode-switch tracking and duplicate-switch suppression to prevent repeated workflow loops.
+- **Tool Message UX Formatter**: Added compact, tool-aware rendering in chat UI (instead of raw JSON blobs), with graceful error/preview fallback for non-JSON content.
+
+### Changed
+- **Tool-Args Pipeline Order**: Enforced robust tool-arg pipeline order: JSON repair -> model-content fixes -> validation -> execution.
+- **Model Content Fixes Coverage**: Expanded model-specific content normalization (DeepSeek entity decode, Llama/Gemini escape normalization, fence trimming) on content-like tool arguments.
+- **Tool Result Truncation Policy**: Added deterministic truncation for large tool outputs with actionable suffix guidance for downstream model behavior.
+- **Context Overflow Recovery**: Improved overflow handling by pruning older tool outputs while protecting recent turns, reducing hard-fail risk in long sessions.
+- **MiniMax Request Tuning**: Added model-specific generation tuning (`temperature`/`top_k`) for MiniMax variants.
+- **Architect Handover Architecture**: Shifted handover flow toward `ask_question`-driven transitions and deferred mode-switch orchestration via dispatcher post-actions.
+- **Pruning UX Signal**: `Pruning conversation...` activity is now emitted only when pruning is actually needed.
+- **Activity Indicator Placement**: Removed top-header duplicate activity rendering; activity feedback now remains in the input section path.
+- **Prompt Guidance for File Writes**: Strengthened write/edit guidance to prefer path-first argument order and sub-50KB chunking.
+
+### Fixed
+- **Truncated JSON Path Recovery**: Improved partial JSON recovery to prioritize path-like fields (`path`, `file_path`, `filePath`, `dir_path`, `directory`) before generic extraction, reducing `path: "unknown"` cases.
+- **Oversized Tool Arguments**: Added hard-fail guards for oversized `write_file.content` and `safe_edit_file.new_content` payloads (>50k chars), with deterministic error propagation.
+- **Session Persistence for Tool Labels**: Preserved `toolName` through history save/load paths so formatted tool messages remain stable after reload.
+- **Provider Error Detection Coverage**: Expanded detection patterns for tool-sequence and context-length failures across more provider-specific wording variants.
+
 ## [0.8.9] - 2026-03-23
 
 ### Added

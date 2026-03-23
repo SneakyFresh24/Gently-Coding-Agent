@@ -36,6 +36,7 @@ export class SessionHistoryManager {
                         timestamp: m.timestamp || Date.now(),
                         role: m.role,
                         content: m.content,
+                        toolName: m.toolName || m.metadata?.toolName,
                         tool_call_id: m.tool_call_id,
                         tool_calls: m.tool_calls
                     }));
@@ -137,6 +138,7 @@ export class SessionHistoryManager {
                 content: message.content || '',
                 metadata: {
                     id: message.id,
+                    toolName: message.toolName,
                     tool_calls: message.tool_calls,
                     tool_call_id: message.tool_call_id,
                     fileReferences: message.fileReferences?.map(ref => ({

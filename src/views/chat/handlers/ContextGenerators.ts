@@ -90,6 +90,13 @@ Current workspace: ${vscode.workspace.name || 'No workspace open'}`;
                 'Ensure that all tool_calls have VALID JSON arguments. Use double quotes, escape special characters, and close all brackets.';
         }
 
+        systemPrompt += `\n\nTOOL ARGUMENT ORDER REMINDER:\n` +
+            `When using write_file or safe_edit_file:\n` +
+            `1. ALWAYS put path/file_path BEFORE content/new_content\n` +
+            `2. Keep content under 50KB per call\n` +
+            `3. Split larger writes into multiple calls\n` +
+            `Example: {"path":"src/file.ts","content":"..."}`;
+
         return systemPrompt;
     }
 

@@ -43,12 +43,18 @@ export const TOOL_DEFINITIONS = {
     write_file: {
         name: 'write_file',
         category: 'file',
-        description: 'Create a new file or overwrite existing file',
+        description: `Write content to a file.
+
+IMPORTANT: Always provide parameters in this exact order:
+1. path (required) - Provide this FIRST
+2. content (required) - Max 50KB per call; split larger files
+
+Example: {"path": "src/file.ts", "content": "..."}`,
         parameters: {
             type: 'object',
             properties: {
-                path: { type: 'string', description: 'Path to the file (relative to workspace root)' },
-                content: { type: 'string', description: 'File content (max 50KB, split larger payloads into multiple calls)', maxLength: 50000 }
+                path: { type: 'string', description: 'Path to the file (relative to workspace root). ALWAYS provide this FIRST.' },
+                content: { type: 'string', description: 'File content. MAXIMUM 50,000 characters. For larger files, split into multiple write_file calls.', maxLength: 50000 }
             },
             required: ['path', 'content']
         }
@@ -57,7 +63,12 @@ export const TOOL_DEFINITIONS = {
     safe_edit_file: {
         name: 'safe_edit_file',
         category: 'file',
-        description: 'Edit a file using smart matching (Line-Range, AST, Anchor, or Fuzzy). Prefer apply_block_edit for multiple hunks.',
+        description: `Edit a file using smart matching (Line-Range, AST, Anchor, or Fuzzy). Prefer apply_block_edit for multiple hunks.
+
+IMPORTANT:
+1. Provide file_path FIRST
+2. Then provide new_content
+3. Keep new_content under 50KB per call`,
         parameters: {
             type: 'object',
             properties: {

@@ -83,6 +83,7 @@ export class TraditionalToolExecutor {
                     timestamp: Date.now(),
                     role: 'tool',
                     content: serializedResult,
+                    toolName: toolCall.function?.name,
                     tool_call_id: toolCall.id,
                 });
 

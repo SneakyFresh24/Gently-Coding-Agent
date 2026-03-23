@@ -69,6 +69,7 @@ export interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system' | 'tool' | 'command-approval' | 'tool-execution';
   content: string;
+  toolName?: string;
   fileReferences?: FileReference[];
   toolCalls?: ToolCall[];
   tool_calls?: ToolCall[];

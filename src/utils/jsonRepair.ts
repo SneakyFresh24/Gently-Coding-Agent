@@ -205,10 +205,28 @@ export function detectTruncation(json: string): { isTruncated: boolean; reason: 
 
 export function extractPartialJsonFields(partialJson: string): Record<string, unknown> {
   const result: Record<string, unknown> = {};
+  const PRIORITY_FIELDS = ['path', 'file_path', 'filePath', 'dir_path', 'directory'];
+
+  for (const field of PRIORITY_FIELDS) {
+    const escapedField = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`"${escapedField}"\\s*:\\s*"([^"]*)"`);
+    const match = partialJson.match(regex);
+    if (match) {
+      result[field] = match[1]
+        .replace(/\\n/g, '\n')
+        .replace(/\\t/g, '\t')
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, '\\');
+    }
+  }
+
   const pattern = /"(\w+)":\s*"((?:[^"\\]|\\.)*)(?:")?/g;
 
   for (const match of partialJson.matchAll(pattern)) {
     const key = match[1];
+    if (Object.prototype.hasOwnProperty.call(result, key)) {
+      continue;
+    }
     const raw = match[2] || '';
     result[key] = raw
       .replace(/\\n/g, '\n')

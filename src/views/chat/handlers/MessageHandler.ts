@@ -180,12 +180,16 @@ export class MessageHandler {
   async applySessionState(sessionMessages: any[], sessionModel: string | null): Promise<void> {
     this.context.conversationHistory = (sessionMessages || [])
       .filter((m: any) => m && (m.role === 'user' || m.role === 'assistant' || m.role === 'system' || m.role === 'tool'))
-      .map((m: any) => fromChatMessage({
-        role: m.role,
-        content: m.content || '',
-        tool_call_id: m.tool_call_id,
-        tool_calls: m.tool_calls
-      }, m.id));
+      .map((m: any) => {
+        const message = fromChatMessage({
+          role: m.role,
+          content: m.content || '',
+          tool_call_id: m.tool_call_id,
+          tool_calls: m.tool_calls
+        }, m.id);
+        message.toolName = m.toolName || m.metadata?.toolName;
+        return message;
+      });
 
     const normalizedModel = this.normalizeModelId(sessionModel);
     this.context.selectedModel = normalizedModel;

@@ -34,6 +34,7 @@ export interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system' | 'tool' | 'command-approval' | 'tool-execution';
   content: string;
+  toolName?: string;
   pinned?: boolean;
   _compressed?: boolean;
   fileReferences?: FileReference[];

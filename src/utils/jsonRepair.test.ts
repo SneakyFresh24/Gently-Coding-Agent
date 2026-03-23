@@ -85,6 +85,14 @@ describe('jsonRepair', () => {
             expect(fields.mode).toBe('w');
         });
 
+        it('should prioritize file_path style keys before generic extraction', () => {
+            const partial = '{"file_path":"src/x.ts","new_content":"abc","directory":"src/utils","content":"zzz';
+            const fields = extractPartialJsonFields(partial);
+            expect(fields.file_path).toBe('src/x.ts');
+            expect(fields.directory).toBe('src/utils');
+            expect(fields.new_content).toBe('abc');
+        });
+
         it('detectTruncation should report unbalanced braces', () => {
             const partial = '{"path":"src/a.ts","content":"abc"';
             const state = detectTruncation(partial);
