@@ -24,6 +24,7 @@ export interface ChatRequest {
     messages: ChatMessage[];
     model?: string;
     temperature?: number;
+    top_k?: number;
     max_tokens?: number;
     stream?: boolean;
     tools?: any[];
@@ -78,6 +79,16 @@ export class OpenRouterHttpError extends Error {
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 const APP_SITE = 'https://github.com/gently-ai/gently-vscode-extension';
 const APP_TITLE = 'Gently - AI Coding Agent';
+const CONTEXT_OVERFLOW_PATTERNS: RegExp[] = [
+    /prompt is too long/i,
+    /exceeds the context window/i,
+    /input token count.*exceeds/i,
+    /maximum context length is \d+ tokens/i,
+    /context window exceeds limit/i,
+    /exceeded model token limit/i,
+    /context length exceeded/i,
+    /token limit exceeded/i
+];
 
 export class OpenRouterService {
     private toolCallProcessor = new StreamingToolCallProcessor();
@@ -110,7 +121,11 @@ export class OpenRouterService {
         const model = request.model;
 
         // Validate & clean messages
-        const messages = this.cleanMessages(request.messages);
+        let messages = this.cleanMessages(request.messages);
+        if (model && model.toLowerCase().includes('mistral')) {
+            messages = this.normalizeMistralMessages(messages);
+            messages = this.applyMistralToolUserSequenceGuard(messages);
+        }
 
         const body: any = {
             messages,
@@ -119,6 +134,7 @@ export class OpenRouterService {
         if (model) body.model = model;
 
         if (request.temperature !== undefined) body.temperature = request.temperature;
+        if (request.top_k !== undefined) body.top_k = request.top_k;
         if (request.max_tokens !== undefined) body.max_tokens = request.max_tokens;
         if (request.tools && request.tools.length > 0) body.tools = request.tools;
         if (request.response_format) body.response_format = request.response_format;
@@ -465,12 +481,8 @@ export class OpenRouterService {
 
         const msg = (error.message || '').toLowerCase();
         if (error.code === 'context_length_exceeded') return true;
-        return (
-            msg.includes('maximum context length') ||
-            msg.includes('requested about') ||
-            msg.includes('reduce the length') ||
-            msg.includes('context length')
-        );
+        if (msg.includes('requested about') || msg.includes('reduce the length')) return true;
+        return CONTEXT_OVERFLOW_PATTERNS.some((pattern) => pattern.test(msg));
     }
 
     isGuardrailPrivacyError(error: unknown): error is OpenRouterHttpError {
@@ -492,8 +504,77 @@ export class OpenRouterService {
             message.includes('tool call result does not follow tool call') ||
             message.includes('tool_result does not follow tool_call') ||
             message.includes('tool call') && message.includes('does not follow') ||
-            message.includes('invalid params') && message.includes('tool')
+            message.includes('invalid params') && message.includes('tool') ||
+            message.includes('invalid function arguments') ||
+            message.includes('context window exceeds limit')
         );
+    }
+
+    private normalizeMistralMessages(messages: ChatMessage[]): ChatMessage[] {
+        const cloned = messages.map((message) => ({
+            ...message,
+            tool_calls: Array.isArray(message.tool_calls)
+                ? message.tool_calls.map((toolCall) => ({ ...toolCall, function: { ...toolCall.function } }))
+                : message.tool_calls
+        }));
+        const idMap = new Map<string, string>();
+        const usedIds = new Set<string>();
+
+        for (const message of cloned) {
+            if (message.role !== 'assistant' || !Array.isArray(message.tool_calls)) continue;
+            message.tool_calls = message.tool_calls.map((toolCall) => {
+                const rawId = String(toolCall?.id || 'toolcall');
+                const normalizedId = this.makeUniqueMistralId(rawId, usedIds);
+                idMap.set(rawId, normalizedId);
+                return { ...toolCall, id: normalizedId };
+            });
+        }
+
+        for (const message of cloned) {
+            if (message.role !== 'tool' || !message.tool_call_id) continue;
+            const rawId = String(message.tool_call_id);
+            message.tool_call_id = idMap.get(rawId) || this.makeUniqueMistralId(rawId, usedIds);
+        }
+
+        return cloned;
+    }
+
+    private applyMistralToolUserSequenceGuard(messages: ChatMessage[]): ChatMessage[] {
+        const guarded: ChatMessage[] = [];
+        for (const message of messages) {
+            const previous = guarded[guarded.length - 1];
+            if (previous?.role === 'tool' && message.role === 'user') {
+                guarded.push({ role: 'assistant', content: 'Done.' });
+            }
+            guarded.push(message);
+        }
+        return guarded;
+    }
+
+    private makeUniqueMistralId(rawId: string, usedIds: Set<string>): string {
+        const base = this.normalizeMistralId(rawId);
+        if (!usedIds.has(base)) {
+            usedIds.add(base);
+            return base;
+        }
+
+        let attempt = 1;
+        while (attempt < 10_000) {
+            const suffix = attempt.toString(36).slice(-2).padStart(2, '0');
+            const candidate = `${base.slice(0, 7)}${suffix}`.slice(0, 9);
+            if (!usedIds.has(candidate)) {
+                usedIds.add(candidate);
+                return candidate;
+            }
+            attempt += 1;
+        }
+
+        return base;
+    }
+
+    private normalizeMistralId(id: string): string {
+        const alphanumeric = (id || '').replace(/[^a-zA-Z0-9]/g, '');
+        return (alphanumeric || 'toolcall0').slice(0, 9).padEnd(9, '0');
     }
 
     private parseRetryAfterMs(retryAfter: string | null): number | undefined {

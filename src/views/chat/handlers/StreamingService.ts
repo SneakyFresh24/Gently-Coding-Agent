@@ -18,6 +18,7 @@ export class StreamingService {
         messages: ChatMessage[],
         options: {
             temperature: number;
+            topK?: number;
             maxTokens: number;
             model: string;
             tools?: any[];
@@ -37,6 +38,7 @@ export class StreamingService {
                     messages,
                     stream: false,
                     temperature: options.temperature,
+                    top_k: options.topK,
                     max_tokens: options.maxTokens,
                     tools: options.tools,
                     model: options.model,
@@ -93,6 +95,7 @@ export class StreamingService {
                     messages,
                     stream: true,
                     temperature: options.temperature,
+                    top_k: options.topK,
                     max_tokens: options.maxTokens,
                     tools: options.tools,
                     model: options.model,

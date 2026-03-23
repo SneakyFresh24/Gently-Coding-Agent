@@ -34,4 +34,39 @@ describe('ToolCallUtils.validateAndRepairToolCalls', () => {
     expect(result.validToolCalls.map((c) => c.id)).toEqual(['dup', 'dup_2', 'dup_3']);
     expect(result.warnings.filter((w) => w.includes('duplicate_tool_call_id_renamed')).length).toBe(2);
   });
+
+  it('applies model-specific content fixes after JSON repair', () => {
+    const calls = [
+      {
+        id: 'call_1',
+        function: {
+          name: 'apply_block_edit',
+          arguments: JSON.stringify({
+            patch: "```diff\n@@\n-&lt;div&gt;\\n+&lt;span&gt;\\n```"
+          })
+        }
+      }
+    ];
+
+    const result = ToolCallUtils.validateAndRepairToolCalls(calls, { model: 'deepseek/deepseek-chat' });
+    expect(result.invalidToolCalls).toHaveLength(0);
+    const parsed = JSON.parse(result.validToolCalls[0].function.arguments);
+    expect(parsed.patch).toContain('<div>');
+    expect(parsed.patch).toContain('<span>');
+    expect(parsed.patch).not.toContain('```');
+  });
+
+  it('normalizes mistral tool ids to alphanumeric 9-char values', () => {
+    const calls = [
+      { id: 'tool-call-very-long-id', function: { name: 'read_file', arguments: '{}' } },
+      { id: 'tool-call-very-long-id', function: { name: 'list_files', arguments: '{}' } }
+    ];
+
+    const result = ToolCallUtils.validateAndRepairToolCalls(calls, { model: 'mistral/medium' });
+    expect(result.invalidToolCalls).toHaveLength(0);
+    const [first, second] = result.validToolCalls.map((c) => c.id);
+    expect(first).toMatch(/^[a-zA-Z0-9]{9}$/);
+    expect(second).toMatch(/^[a-zA-Z0-9]{9}$/);
+    expect(first).not.toBe(second);
+  });
 });

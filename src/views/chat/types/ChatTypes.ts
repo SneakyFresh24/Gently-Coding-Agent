@@ -80,6 +80,9 @@ export interface ChatViewContext {
   conversationSummary?: string;
   sequenceRepairHistory?: string[];
   sequenceRetryCount?: number;
+  consecutiveMistakeCount?: number;
+  recentToolCallFingerprints?: string[];
+  doomLoopAllowedTools?: Set<string>;
 }
 
 /**

@@ -1,3 +1,5 @@
+import * as vscode from 'vscode';
+import { createHash } from 'crypto';
 import { AgentManager } from '../../../agent/agentManager/AgentManager';
 import { ChatViewContext, Message } from '../types/ChatTypes';
 import { ToolCallUtils } from '../utils/ToolCallUtils';
@@ -11,6 +13,9 @@ import { PlanStep } from '../../../agent/planning/types';
 import { PlanningManager } from '../../../agent/agentManager/PlanningManager';
 
 const log = new LogService('ExecutionDispatchers');
+const MAX_TOOL_RESULT_SIZE = 100_000;
+const DOOM_LOOP_THRESHOLD = 3;
+const DOOM_LOOP_HISTORY_LIMIT = 30;
 
 /**
  * Handles traditional, parallel tool execution logic.
@@ -48,16 +53,26 @@ export class TraditionalToolExecutor {
                 if (validToolCalls.length === 0) return;
             }
 
-            const results = await this.executeToolCallsParallel(validToolCalls);
+            const results = await this.executeToolCallsParallel(validToolCalls, context);
+            const resultById = new Map(results.map((entry) => [entry.toolCall.id, entry]));
 
-            results.forEach(({ toolCall, result }) => {
+            validToolCalls.forEach((toolCall) => {
+                const match = resultById.get(toolCall.id);
+                if (!match) return;
+                const serializedResult = this.serializeAndTruncateToolResult(match.result);
                 this.updateConversationHistory({
                     id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                     timestamp: Date.now(),
                     role: 'tool',
-                    content: JSON.stringify(result),
+                    content: serializedResult,
                     tool_call_id: toolCall.id,
                 });
+
+                if (match.success) {
+                    context.consecutiveMistakeCount = 0;
+                } else {
+                    context.consecutiveMistakeCount = (context.consecutiveMistakeCount || 0) + 1;
+                }
             });
 
             await this.triggerFollowUpMessage("\n[SYSTEM NOTE: The tools have finished executing. Review the results. If you made ANY architectural decisions, established new project rules, or learned important workflow facts that should persist across sessions, IMMEDIATELY call the `update_memory_bank` tool to document them. If not, simply summarize the results and continue.]");
@@ -99,18 +114,48 @@ export class TraditionalToolExecutor {
         }
     }
 
-    private async executeToolCallsParallel(toolCalls: ToolCall[]): Promise<{ toolCall: ToolCall, result: any, success: boolean }[]> {
+    private async executeToolCallsParallel(toolCalls: ToolCall[], context: ChatViewContext): Promise<{ toolCall: ToolCall, result: any, success: boolean }[]> {
         const toolManager = this.agentManager.getToolManager();
-        
-        const mappedCalls = toolCalls.map(tc => ({
-            id: tc.id,
-            name: tc.function.name,
-            params: ToolCallUtils.repairAndParseJSON(tc.function.arguments).repaired
-        }));
+        const mappedCalls: { id: string; name: string; params: any }[] = [];
+        const blockedResults: { toolCall: ToolCall, result: any, success: boolean }[] = [];
 
-        const results = await toolManager.executeTools(mappedCalls);
+        for (const toolCall of toolCalls) {
+            const parsed = ToolCallUtils.repairAndParseJSON(toolCall.function.arguments).repaired;
+            const toolName = toolCall.function.name;
+            const fingerprint = this.buildToolFingerprint(toolName, parsed);
+            const shouldPrompt = await this.shouldPromptDoomLoop(context, toolName, fingerprint);
 
-        return results.map(r => {
+            if (shouldPrompt) {
+                const decision = await this.askDoomLoopPermission(toolName);
+                if (decision === 'stop') {
+                    blockedResults.push({
+                        toolCall,
+                        result: { error: `Execution blocked due to repeated identical ${toolName} calls (doom-loop protection).` },
+                        success: false
+                    });
+                    continue;
+                }
+                if (decision === 'always') {
+                    if (!context.doomLoopAllowedTools) {
+                        context.doomLoopAllowedTools = new Set<string>();
+                    }
+                    context.doomLoopAllowedTools.add(toolName);
+                }
+            }
+
+            this.pushDoomLoopFingerprint(context, fingerprint);
+            mappedCalls.push({
+                id: toolCall.id,
+                name: toolName,
+                params: parsed
+            });
+        }
+
+        const executionResults = mappedCalls.length > 0
+            ? await toolManager.executeTools(mappedCalls)
+            : [];
+
+        const computedResults = executionResults.map(r => {
             const originalCall = toolCalls.find(tc => tc.id === r.id)!;
             return {
                 toolCall: originalCall,
@@ -118,6 +163,79 @@ export class TraditionalToolExecutor {
                 success: !r.result.error
             };
         });
+
+        return [...blockedResults, ...computedResults];
+    }
+
+    private serializeAndTruncateToolResult(result: any): string {
+        let serialized: string;
+        if (typeof result === 'string') {
+            serialized = result;
+        } else {
+            try {
+                serialized = JSON.stringify(result);
+            } catch {
+                serialized = String(result);
+            }
+        }
+
+        if (serialized.length <= MAX_TOOL_RESULT_SIZE) {
+            return serialized;
+        }
+
+        const originalLength = serialized.length;
+        return `${serialized.slice(0, MAX_TOOL_RESULT_SIZE)}\n\n---\n[TRUNCATED: Full output was ${originalLength} chars. Use grep or search tools to find specific content.]`;
+    }
+
+    private buildToolFingerprint(toolName: string, args: unknown): string {
+        const stableArgs = this.stableStringify(args);
+        const hash = createHash('sha256').update(stableArgs).digest('hex').slice(0, 16);
+        return `${toolName}:${hash}`;
+    }
+
+    private stableStringify(value: unknown): string {
+        if (value === null || value === undefined) return 'null';
+        if (typeof value !== 'object') return JSON.stringify(value);
+        if (Array.isArray(value)) {
+            return `[${value.map((entry) => this.stableStringify(entry)).join(',')}]`;
+        }
+        const entries = Object.entries(value as Record<string, unknown>)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([key, entry]) => `${JSON.stringify(key)}:${this.stableStringify(entry)}`);
+        return `{${entries.join(',')}}`;
+    }
+
+    private pushDoomLoopFingerprint(context: ChatViewContext, fingerprint: string): void {
+        const history = Array.isArray(context.recentToolCallFingerprints)
+            ? context.recentToolCallFingerprints
+            : [];
+        history.push(fingerprint);
+        while (history.length > DOOM_LOOP_HISTORY_LIMIT) history.shift();
+        context.recentToolCallFingerprints = history;
+    }
+
+    private async shouldPromptDoomLoop(context: ChatViewContext, toolName: string, fingerprint: string): Promise<boolean> {
+        if (context.doomLoopAllowedTools?.has(toolName)) {
+            return false;
+        }
+        const history = Array.isArray(context.recentToolCallFingerprints)
+            ? context.recentToolCallFingerprints
+            : [];
+        const lastTwo = history.slice(-(DOOM_LOOP_THRESHOLD - 1));
+        return lastTwo.length === (DOOM_LOOP_THRESHOLD - 1) && lastTwo.every((item) => item === fingerprint);
+    }
+
+    private async askDoomLoopPermission(toolName: string): Promise<'continue' | 'always' | 'stop'> {
+        const choice = await vscode.window.showWarningMessage(
+            `Repeated identical "${toolName}" tool calls detected. Continue execution?`,
+            { modal: true },
+            'Weiter',
+            'Immer fuer dieses Tool (Session)',
+            'Stop'
+        );
+        if (choice === 'Weiter') return 'continue';
+        if (choice === 'Immer fuer dieses Tool (Session)') return 'always';
+        return 'stop';
     }
 }
 

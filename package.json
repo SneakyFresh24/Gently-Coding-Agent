@@ -2,7 +2,7 @@
   "name": "gently",
   "displayName": "Gently - AI Coding Agent",
   "description": "AI-powered coding assistant — Bring Your Own Key via OpenRouter",
-  "version": "0.8.7",
+  "version": "0.8.9",
   "engines": {
     "vscode": "^1.85.0"
   },

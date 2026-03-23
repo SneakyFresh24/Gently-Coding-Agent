@@ -12,6 +12,12 @@ export interface CompressionResult {
     summaryInserted: boolean;
 }
 
+export interface ToolOutputPruneResult {
+    messages: ChatMessage[];
+    inputTokens: number;
+    prunedMessages: number;
+}
+
 export class TokenBudgetManager {
     private encoderByModel: Map<string, Tiktoken> = new Map();
 
@@ -131,6 +137,55 @@ export class TokenBudgetManager {
         };
     }
 
+    pruneToolOutputsForContext(
+        modelId: string,
+        messages: ChatMessage[],
+        tools: any[] | undefined,
+        inputBudgetTokens: number,
+        options?: { protectTokens?: number; protectedTurns?: number }
+    ): ToolOutputPruneResult {
+        if (messages.length <= 1) {
+            return {
+                messages,
+                inputTokens: this.estimateInputTokens(messages, tools),
+                prunedMessages: 0
+            };
+        }
+
+        const protectTokens = Math.max(0, options?.protectTokens ?? 40_000);
+        const protectedTurns = Math.max(1, options?.protectedTurns ?? 2);
+        const encoder = this.getEncoderForModel(modelId);
+        const cloned = messages.map((message) => ({ ...message }));
+        const [systemMessage, ...history] = cloned;
+        const protectedFrom = this.getProtectedHistoryStart(history, protectedTurns);
+        let totalTokens = this.estimateInputTokensWithEncoder(encoder, cloned, tools);
+        let prunedMessages = 0;
+
+        for (let index = 0; index < protectedFrom; index++) {
+            if (totalTokens <= inputBudgetTokens || totalTokens <= protectTokens) {
+                break;
+            }
+
+            const message = history[index];
+            if (message.role !== 'tool') continue;
+            const current = message.content || '';
+            if (!current || current.startsWith('[Tool output pruned to save context.')) continue;
+
+            const replacement = `[Tool output pruned to save context. Original: ${current.length} chars]`;
+            const beforeTokens = this.countMessageTokens(encoder, message);
+            history[index] = { ...message, content: replacement };
+            const afterTokens = this.countMessageTokens(encoder, history[index]);
+            totalTokens = totalTokens - beforeTokens + afterTokens;
+            prunedMessages += 1;
+        }
+
+        return {
+            messages: [systemMessage, ...history],
+            inputTokens: totalTokens,
+            prunedMessages
+        };
+    }
+
     dispose(): void {
         for (const encoder of this.encoderByModel.values()) {
             encoder.free();
@@ -231,5 +286,20 @@ export class TokenBudgetManager {
         if (!compact) return '';
         const firstSentence = compact.split(/[.!?]/)[0] || compact;
         return firstSentence.slice(0, 120);
+    }
+
+    private getProtectedHistoryStart(history: ChatMessage[], protectedTurns: number): number {
+        let userTurnsSeen = 0;
+        for (let i = history.length - 1; i >= 0; i--) {
+            if (history[i].role === 'user') {
+                userTurnsSeen += 1;
+                if (userTurnsSeen >= protectedTurns) {
+                    return i;
+                }
+            }
+        }
+
+        // If there are not enough user turns yet, protect the newest slice.
+        return Math.max(0, history.length - 4);
     }
 }

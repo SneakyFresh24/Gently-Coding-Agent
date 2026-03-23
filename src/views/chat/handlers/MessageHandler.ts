@@ -105,7 +105,10 @@ export class MessageHandler {
       messageCheckpoints: new Map(),
       toolExecutionStartSent: new Set(),
       sequenceRepairHistory: [],
-      sequenceRetryCount: 0
+      sequenceRetryCount: 0,
+      consecutiveMistakeCount: 0,
+      recentToolCallFingerprints: [],
+      doomLoopAllowedTools: new Set<string>()
     };
 
     this.loadStoredState();

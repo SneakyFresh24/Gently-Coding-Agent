@@ -221,13 +221,8 @@
 
 <ChatLayout {isHidden}>
   <div class="chat-container">
-    {#if $chatStore.messages.length > 0 || $hasTask || $extensionStore.activityLabel || $extensionStore.activeToolCalls.length > 0}
-      <TaskHeader
-        task={$extensionStore.currentTask}
-        activityLabel={$extensionStore.activityLabel}
-        activityPhase={$extensionStore.activityPhase}
-        activeToolCalls={$extensionStore.activeToolCalls}
-      />
+    {#if $chatStore.messages.length > 0 || $hasTask}
+      <TaskHeader task={$extensionStore.currentTask} />
       <MessagesArea messages={$chatStore.messages} />
     {:else}
       <WelcomeSection />

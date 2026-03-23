@@ -21,5 +21,34 @@ describe('OpenRouterService.isToolCallSequenceError', () => {
     });
     expect(service.isToolCallSequenceError(error)).toBe(false);
   });
+
+  it('detects minimax-style invalid function arguments errors', () => {
+    const error = new OpenRouterHttpError({
+      status: 400,
+      message: 'Invalid function arguments provided for tool call'
+    });
+    expect(service.isToolCallSequenceError(error)).toBe(true);
+  });
+
+  it('detects context-window-exceeds-limit as sequence issue pattern', () => {
+    const error = new OpenRouterHttpError({
+      status: 400,
+      message: 'context window exceeds limit while resolving tool call'
+    });
+    expect(service.isToolCallSequenceError(error)).toBe(true);
+  });
 });
 
+describe('OpenRouterService.isContextLengthError', () => {
+  const service = new OpenRouterService({
+    getKey: async () => 'test-key'
+  } as any);
+
+  it('detects expanded overflow pattern variants', () => {
+    const error = new OpenRouterHttpError({
+      status: 400,
+      message: 'Input token count exceeds model limit'
+    });
+    expect(service.isContextLengthError(error)).toBe(true);
+  });
+});

@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { ChatViewContext, Message, toChatMessage, fromChatMessage } from '../types/ChatTypes';
 import { AgentManager } from '../../../agent/agentManager/AgentManager';
 import { SessionHistoryManager } from './SessionHistoryManager';
-import { ReferenceParser, PromptManager, ConversationPruner } from './ContextGenerators';
+import { ReferenceParser, PromptManager, ConversationPruner, MAX_HISTORY_LENGTH } from './ContextGenerators';
 import { StreamingService } from './StreamingService';
 import { ToolCallManager } from '../toolcall';
 import { ToolCallDispatcher } from './ExecutionDispatchers';
@@ -26,6 +26,8 @@ export class ChatFlowManager {
     private readonly sequenceRetryMaxAttempts = 3;
     private readonly sequenceBackoffBaseMs = 2000;
     private readonly sequenceRepairHistoryLimit = 10;
+    private readonly toolOutputPruneProtectTokens = 40_000;
+    private readonly toolOutputPruneProtectedTurns = 2;
     private readonly modelWarningByFlow = new Set<string>();
     private readonly knownSequenceIssueModels = new Set<string>([
         'minimax/minimax-m2.7',
@@ -67,7 +69,10 @@ export class ChatFlowManager {
             this.sendMessageToWebview({ type: 'activityUpdate', label: 'Denkt nach...' });
             this.sendMessageToWebview({ type: 'activityUpdate', label: 'Analyzing project...' });
             const { enhancedMessage, loadedReferences } = await this.referenceParser.processMessageWithReferences(userMessage, silent, fileReferences);
-            this.sendMessageToWebview({ type: 'activityUpdate', label: 'Pruning conversation...' });
+            const needsPruning = context.conversationHistory.length > MAX_HISTORY_LENGTH;
+            if (needsPruning) {
+                this.sendMessageToWebview({ type: 'activityUpdate', label: 'Pruning conversation...' });
+            }
 
             if (!silent && enhancedMessage) {
                 await this.sessionHistoryManager.addMessageToHistory(context, enhancedMessage, userMessage, loadedReferences);
@@ -105,7 +110,8 @@ export class ChatFlowManager {
         }
 
         const mode = this.modeService.getCurrentMode();
-        const temperature = mode?.temperature ?? 0.7;
+        const baseTemperature = mode?.temperature ?? 0.7;
+        const sampling = this.getSamplingOverrides(context.selectedModel, baseTemperature);
         const modelMaxOutput = await this.openRouterService.getMaxTokens(context.selectedModel);
         const modelContextLength = await this.openRouterService.getContextLength(context.selectedModel);
 
@@ -202,6 +208,36 @@ export class ChatFlowManager {
         }
 
         if (compression.inputTokens > modelContextLength) {
+            const overflowRescue = this.tokenBudgetManager.pruneToolOutputsForContext(
+                context.selectedModel,
+                rawMessages,
+                tools,
+                inputBudget,
+                {
+                    protectTokens: this.toolOutputPruneProtectTokens,
+                    protectedTurns: this.toolOutputPruneProtectedTurns
+                }
+            );
+
+            if (overflowRescue.prunedMessages > 0) {
+                rawMessages = overflowRescue.messages;
+                context.conversationHistory = rawMessages.slice(1).map((chatMessage, index) =>
+                    fromChatMessage(chatMessage, context.conversationHistory[index]?.id)
+                );
+                compression = this.tokenBudgetManager.compressMessagesForBudget(
+                    context.selectedModel,
+                    rawMessages,
+                    tools,
+                    inputBudget
+                );
+                this.sendMessageToWebview({
+                    type: 'info',
+                    message: `Context overflow rescued by pruning ${overflowRescue.prunedMessages} older tool outputs.`
+                });
+            }
+        }
+
+        if (compression.inputTokens > modelContextLength) {
             const warning = `Context weiterhin ueber Limit (${compression.inputTokens}/${modelContextLength}) nach Komprimierung.`;
             compressionWarnings.push(warning);
             this.logCompressionEvent(
@@ -237,7 +273,8 @@ export class ChatFlowManager {
         while (true) {
             try {
                 const result = await this.streamingService.streamResponse(messages, {
-                    temperature,
+                    temperature: sampling.temperature,
+                    topK: sampling.topK,
                     maxTokens,
                     model: context.selectedModel,
                     tools,
@@ -595,6 +632,17 @@ export class ChatFlowManager {
         const tools = mode.getToolsForMode(this.agentManager);
         log.info(`getToolsForMode: mode=${mode.id}, returning ${tools?.length || 0} tools`);
         return tools;
+    }
+
+    private getSamplingOverrides(modelId: string, baseTemperature: number): { temperature: number; topK?: number } {
+        const normalized = modelId.toLowerCase();
+        if (normalized.includes('minimax-m2')) {
+            return { temperature: 1.0, topK: 40 };
+        }
+        if (normalized.includes('minimax-m1')) {
+            return { temperature: baseTemperature, topK: 20 };
+        }
+        return { temperature: baseTemperature };
     }
 
     private getConfiguredMaxTokens(): number {

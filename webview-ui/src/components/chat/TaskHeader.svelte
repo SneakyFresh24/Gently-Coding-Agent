@@ -1,44 +1,23 @@
 <script lang="ts">
   import type { Task } from '../../lib/types';
   import Icon from '../ui/Icon.svelte';
-  import ActivityIndicator from './ActivityIndicator.svelte';
-  import type { ToolCallInfo } from '../../lib/types';
 
   let {
     task,
-    activityLabel = null as string | null,
-    activityPhase = 'idle' as 'idle' | 'sending' | 'thinking' | 'tooling',
-    activeToolCalls = [] as ToolCallInfo[],
   }: {
     task: Task | null;
-    activityLabel?: string | null;
-    activityPhase?: 'idle' | 'sending' | 'thinking' | 'tooling';
-    activeToolCalls?: ToolCallInfo[];
   } = $props();
 </script>
 
-{#if task || activityLabel || activeToolCalls.length > 0}
+{#if task}
   <div class="task-header">
-    {#if task}
-      <div class="task-icon">
-        <Icon name="rocket" size={14} />
-      </div>
-      <div class="task-info">
-        <span class="task-label">Task</span>
-        <span class="task-text">{task.text}</span>
-      </div>
-    {/if}
-
-    {#if activityLabel || activeToolCalls.length > 0}
-      <div class="activity-slot">
-        <ActivityIndicator
-          compact={true}
-          label={activityLabel}
-          phase={activityPhase}
-          tools={activeToolCalls}
-        />
-      </div>
-    {/if}
+    <div class="task-icon">
+      <Icon name="rocket" size={14} />
+    </div>
+    <div class="task-info">
+      <span class="task-label">Task</span>
+      <span class="task-text">{task.text}</span>
+    </div>
   </div>
 {/if}
 
@@ -81,11 +60,5 @@
     -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
     overflow: hidden;
-  }
-
-  .activity-slot {
-    min-width: 220px;
-    max-width: 50%;
-    margin-left: auto;
   }
 </style>

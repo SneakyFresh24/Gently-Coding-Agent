@@ -8,6 +8,8 @@ import { OpenRouterService } from '../../../services/OpenRouterService';
 import { LogService } from '../../../services/LogService';
 
 const log = new LogService('ContextGenerators');
+export const MAX_HISTORY_LENGTH = 20;
+export const NUM_MESSAGES_TO_PRUNE = 10;
 
 /**
  * Handles parsing of @references in user messages.
@@ -115,10 +117,11 @@ export class ConversationPruner {
         private agentManager: AgentManager
     ) { }
 
-    async pruneConversationHistory(context: ChatViewContext): Promise<void> {
-        const MAX_HISTORY_LENGTH = 20;
-        const NUM_MESSAGES_TO_PRUNE = 10;
+    shouldPrune(historyLength: number): boolean {
+        return historyLength > MAX_HISTORY_LENGTH;
+    }
 
+    async pruneConversationHistory(context: ChatViewContext): Promise<void> {
         if (context.conversationHistory.length <= MAX_HISTORY_LENGTH) return;
 
         log.info(`Pruning conversation history from ${context.conversationHistory.length} messages...`);

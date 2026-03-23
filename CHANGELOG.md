@@ -2,6 +2,34 @@
 
 All notable changes to the "Gently" extension will be documented in this file.
 
+## [0.8.9] - 2026-03-23
+
+### Added
+- **Sequence Error Recovery (Minimax/Provider)**: Added targeted auto-retry flow for tool-call sequence errors (`tool call result does not follow tool call`) with exponential backoff (2s/4s/8s).
+- **Repair Diagnostics for Conversation History**: Introduced structured repair result tracking (`repaired`, `fixes`, `issuesBefore`, `issuesAfter`, `repairHash`) for tool-call sequence healing.
+- **Retry Visibility in UI**: Added `retryStatus` webview event to show sequence-repair retries with attempt/delay/fixes.
+- **Activity & Tool Progress UI (v1.1)**:
+  - New `ActivityIndicator.svelte` with anti-flicker label smoothing and accessible live-region semantics.
+  - New `TypewriterText.svelte` for lightweight activity typewriter animation.
+  - New `ToolExecutionBadge.svelte` for active tool visibility and compact low-stakes grouping.
+
+### Changed
+- **Follow-up Validation Wiring**: Replaced dummy follow-up validation callbacks with real `ToolCallManager` sequence validation and repair.
+- **Tool-Call Sequence Preflight**: Chat flow now performs preflight sequence validation/repair before request retries and logs model-aware diagnostics for known problematic models.
+- **Token Tracking Semantics**:
+  - Split UI tracking between `currentContextTokens` and cumulative session totals.
+  - `tokenTrackerUpdate` now includes context-oriented fields (`currentContextTokens`, `modelContextLength`, `session*` totals, compression metadata).
+- **Proactive Context Compression**:
+  - Added thresholded behavior (proactive near high utilization, aggressive near critical utilization).
+  - Added compression warnings and throttled compression observability logs.
+
+### Fixed
+- **Misleading Token Utilization**: Fixed UI over-100% confusion caused by comparing session-cumulative totals against single-request context limits.
+- **Pinned Message Safety During Compression**: Compression now preserves pinned messages and avoids dropping protected context.
+- **Compression Stability**: Added optional summary injection (`_compressed`) when larger portions of history are trimmed, improving context continuity.
+- **Stale Tool Indicators**: Added timeout-based cleanup (30s) for orphaned tool badges when completion events are missing.
+- **Activity Indicator Flicker**: Added minimum label visibility smoothing (300ms) to prevent rapid UI label flashing.
+
 ## [0.8.0] - 2026-03-21
 
 ### Added

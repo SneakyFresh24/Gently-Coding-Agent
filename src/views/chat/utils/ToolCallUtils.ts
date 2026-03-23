@@ -3,6 +3,7 @@
 // =====================================================
 
 import { repairAndParseJSON, createLLMErrorMessage } from '../../../utils/jsonRepair';
+import { createHash } from 'crypto';
 
 export interface ToolCallValidationResult {
   validToolCalls: any[];
@@ -83,7 +84,7 @@ export class ToolCallUtils {
           console.log(`[PARALLEL] ✅ Normalized empty arguments for tool: ${toolCall.function.name}`);
         }
 
-        // Use JSON repair system
+        // 1) Repair malformed JSON arguments
         const repairResult = repairAndParseJSON(toolCall.function.arguments);
 
         if (!repairResult.success) {
@@ -96,14 +97,45 @@ export class ToolCallUtils {
           continue;
         }
 
-        // If repair was needed, update the tool call
-        if (repairResult.repairActions && repairResult.repairActions.length > 0) {
-          console.log(`[PARALLEL] ✅ Tool call ${index} JSON repaired:`, repairResult.repairActions);
-          // Update the tool call with repaired arguments
-          toolCall.function.arguments = JSON.stringify(repairResult.repaired);
+        // 2) Apply model-specific content fixes on repaired args
+        const repairedArgs = repairResult.repaired;
+        if (!repairedArgs || typeof repairedArgs !== 'object' || Array.isArray(repairedArgs)) {
+          invalidToolCalls.push({
+            toolCall,
+            index,
+            error: `Tool call "${toolCall.function.name}" must contain an object JSON payload.`
+          });
+          continue;
         }
 
-        if (typeof toolCall.id === 'string' && toolCall.id.trim() !== '') {
+        const fixedArgs = this.applyModelContentFixesToArgs(repairedArgs, options?.model);
+
+        // 3) Final argument serialization for execution
+        toolCall.function.arguments = JSON.stringify(fixedArgs);
+
+        // If repair was needed, emit diagnostics
+        if (repairResult.repairActions && repairResult.repairActions.length > 0) {
+          console.log(`[PARALLEL] ✅ Tool call ${index} JSON repaired:`, repairResult.repairActions);
+        }
+
+        if (this.isMistralModel(options?.model)) {
+          const originalId = typeof toolCall.id === 'string' && toolCall.id.trim() !== ''
+            ? toolCall.id.trim()
+            : `tool_${index + 1}`;
+          const normalizedBaseId = this.normalizeToolCallIdForMistral(originalId);
+          let normalizedId = normalizedBaseId;
+          let duplicateSuffix = 1;
+          while (seenIds.has(normalizedId)) {
+            duplicateSuffix += 1;
+            normalizedId = this.buildUniqueMistralId(normalizedBaseId, duplicateSuffix);
+          }
+          seenIds.set(normalizedId, 1);
+          if (normalizedId !== originalId) {
+            const warning = `[${modelTag}] mistral_tool_call_id_normalized: "${originalId}" -> "${normalizedId}"`;
+            warnings.push(warning);
+          }
+          toolCall.id = normalizedId;
+        } else if (typeof toolCall.id === 'string' && toolCall.id.trim() !== '') {
           const originalId = toolCall.id.trim();
           const currentCount = seenIds.get(originalId) || 0;
           if (currentCount > 0) {
@@ -138,6 +170,84 @@ export class ToolCallUtils {
     } catch {
       return null;
     }
+  }
+
+  static applyModelContentFixes(content: string, modelId?: string, _filePath?: string): string {
+    if (typeof content !== 'string') return content;
+    let fixed = content;
+    const model = (modelId || '').toLowerCase();
+
+    if (model.includes('deepseek')) {
+      fixed = fixed.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    }
+
+    if (model.includes('llama') || model.includes('gemini')) {
+      fixed = fixed.replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+    }
+
+    if (fixed.startsWith('```')) {
+      fixed = fixed.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/, '');
+    }
+
+    return fixed;
+  }
+
+  private static applyModelContentFixesToArgs(value: unknown, modelId?: string, keyHint?: string): unknown {
+    if (typeof value === 'string') {
+      return this.isContentLikeKey(keyHint)
+        ? this.applyModelContentFixes(value, modelId)
+        : value;
+    }
+
+    if (Array.isArray(value)) {
+      return value.map((entry) => this.applyModelContentFixesToArgs(entry, modelId, keyHint));
+    }
+
+    if (value && typeof value === 'object') {
+      const fixed: Record<string, unknown> = {};
+      for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+        fixed[key] = this.applyModelContentFixesToArgs(entry, modelId, key);
+      }
+      return fixed;
+    }
+
+    return value;
+  }
+
+  private static isContentLikeKey(key?: string): boolean {
+    if (!key) return false;
+    const normalized = key.toLowerCase();
+    const contentLikeKeys = new Set([
+      'content',
+      'text',
+      'diff',
+      'patch',
+      'oldtext',
+      'newtext',
+      'old_text',
+      'new_text',
+      'replacement',
+      'search',
+      'replace',
+      'code',
+      'snippet'
+    ]);
+    return contentLikeKeys.has(normalized);
+  }
+
+  private static isMistralModel(model?: string): boolean {
+    return (model || '').toLowerCase().includes('mistral');
+  }
+
+  private static normalizeToolCallIdForMistral(id: string): string {
+    const alphanumeric = (id || '').replace(/[^a-zA-Z0-9]/g, '');
+    return (alphanumeric || 'toolcall0').slice(0, 9).padEnd(9, '0');
+  }
+
+  private static buildUniqueMistralId(baseId: string, sequence: number): string {
+    const suffix = createHash('sha256').update(`${baseId}:${sequence}`).digest('hex').slice(0, 3);
+    const prefix = baseId.slice(0, 6).padEnd(6, '0');
+    return `${prefix}${suffix}`.slice(0, 9);
   }
 
   /**
