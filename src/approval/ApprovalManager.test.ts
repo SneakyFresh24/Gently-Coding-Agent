@@ -82,21 +82,6 @@ describe('AutoApproveManager', () => {
     expect(result).toBe(true);
   });
 
-  it('maps verify_and_auto_fix to editFiles policy', async () => {
-    const manager = new AutoApproveManager(context);
-    await manager.setSettings({
-      ...manager.getSettings(),
-      actions: {
-        ...manager.getSettings().actions,
-        editFiles: true,
-        editFilesExternally: false,
-      },
-    });
-
-    const result = await manager.shouldAutoApprove('verify_and_auto_fix', { path: 'src/app.ts' });
-    expect(result).toBe(true);
-  });
-
   it('maps restore_checkpoint to editFiles policy', async () => {
     const manager = new AutoApproveManager(context);
     await manager.setSettings({

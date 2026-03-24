@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { AgentManager } from '../../../agent/agentManager/AgentManager';
 import { FileReferenceManager, FileReference } from '../../../agent/fileReferenceManager';
 import { RESPONSE_FORMATTING_PROMPT } from '../../../agent/prompts/responseFormatting';
+import { PromptBuilder } from '../../../agent/prompts/PromptBuilder';
 import { ModeService } from '../../../modes/ModeService';
 import { ChatViewContext } from '../types/ChatTypes';
 import { OpenRouterService } from '../../../services/OpenRouterService';
@@ -49,32 +50,72 @@ export class ReferenceParser {
  * Manages construction of system prompts and context integration.
  */
 export class PromptManager {
+    private readonly promptBuilder = new PromptBuilder();
+
     constructor(
         private readonly agentManager: AgentManager,
         private readonly modeService: ModeService
     ) { }
 
     async prepareSystemPrompt(context: ChatViewContext, retryCount: number = 0): Promise<string> {
-        // Use the system prompt defined in the current mode
+        const memoryBankContext = await this.agentManager.getMemoryBankContext();
+        const memoriesPrompt = await this.agentManager.getMemoryManager().getMemoriesForPrompt('');
+        const mode = this.modeService.getCurrentMode();
+        const fallbackPrompt = this.buildLegacySystemPrompt(context, retryCount, memoryBankContext, memoriesPrompt);
+
+        if (!this.modeService.isPromptPipelineEnabled()) {
+            return fallbackPrompt;
+        }
+
+        try {
+            const modeTools = mode ? mode.getToolsForMode(this.agentManager) : this.agentManager.getFormattedTools();
+            const modeToolNames = (modeTools || [])
+                .map((tool: any) => tool?.function?.name || tool?.name)
+                .filter((name: unknown): name is string => typeof name === 'string' && name.length > 0);
+            const toolSpecs = this.agentManager.getPromptToolSpecs(modeToolNames);
+
+            const result = this.promptBuilder.build({
+                mode: mode?.id || context.selectedMode || 'architect',
+                model: context.selectedModel,
+                workspaceName: vscode.workspace.name || 'No workspace open',
+                retryCount,
+                memoryBankContext,
+                memoriesPrompt,
+                conversationSummary: context.conversationSummary,
+                tools: toolSpecs,
+                promptConfig: this.modeService.getPromptConfig()
+            }, {
+                strictTemplates: false,
+                legacyFallbackPrompt: fallbackPrompt
+            });
+
+            log.info(`PromptBuilder active: id=${result.metadata.promptId} version=${result.metadata.version} variant=${result.metadata.variant} hash=${result.metadata.hash} fallback=${result.metadata.usedFallback}`);
+            return result.prompt;
+        } catch (error) {
+            log.warn(`PromptBuilder failed, using legacy prompt: ${(error as Error).message}`);
+            return fallbackPrompt;
+        }
+    }
+
+    private buildLegacySystemPrompt(
+        context: ChatViewContext,
+        retryCount: number,
+        memoryBankContext: string,
+        memoriesPrompt: string
+    ): string {
         let systemPrompt = this.modeService.getSystemPrompt() || `You are Gently, an AI coding agent integrated into VS Code.
 You help delevopers write, understand, and debug code.
 Current workspace: ${vscode.workspace.name || 'No workspace open'}`;
 
         systemPrompt += `\n\n${RESPONSE_FORMATTING_PROMPT}`;
 
-        const memoryBankContext = await this.agentManager.getMemoryBankContext();
         if (memoryBankContext) {
             systemPrompt += `\n\n${memoryBankContext}`;
         }
 
-        const memoriesPrompt = await this.agentManager.getMemoryManager().getMemoriesForPrompt('');
         if (memoriesPrompt) {
             systemPrompt += memoriesPrompt;
         }
-
-        systemPrompt += `\n\n--- GUARDIAN MEMORY ---\n` +
-            `Wichtige Architektur-Entscheidungen und Regeln werden automatisch von Guardian in decisions.md und rules.md gespeichert.\n` +
-            `Berücksichtige diese Dokumente immer bei Architektur-Änderungen oder neuen Features.\n`;
 
         const modelLower = (context.selectedModel || '').toLowerCase();
         if (modelLower.includes('minimax') || modelLower.includes('m2.5') || modelLower.includes('glm')) {

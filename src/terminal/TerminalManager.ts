@@ -9,7 +9,6 @@ import { WebviewCommunicatorImpl } from './communication/WebviewCommunicator';
 import { ExecutionOptions, CommandResult, OutputChunk } from './execution/types/ExecutionTypes';
 import { ApprovalManager } from '../approval/ApprovalManager';
 import { TerminalMode, QuickPattern, ApprovalRequest } from '../types/approval';
-import { GuardianService } from '../guardian/GuardianService';
 
 /**
  * Terminal Manager implementation with modular architecture
@@ -18,28 +17,17 @@ export class TerminalManager {
   private executor: ShellIntegrationExecutor;
   private approvalManager: ApprovalManager;
   private webviewCommunicator: WebviewCommunicatorImpl;
-  private guardian: GuardianService | null = null;
 
   constructor(
     private context: vscode.ExtensionContext,
-    private sendMessageToWebview: (message: any) => void,
-    guardianService?: GuardianService
+    private sendMessageToWebview: (message: any) => void
   ) {
     // Initialize components
     this.webviewCommunicator = new WebviewCommunicatorImpl(sendMessageToWebview);
     this.executor = new ShellIntegrationExecutor(this.webviewCommunicator);
     this.approvalManager = new ApprovalManager(context, sendMessageToWebview);
-    this.guardian = guardianService || null;
 
     console.log('[TerminalManager] Initialized with modular architecture (Refactored)');
-  }
-
-  /**
-   * Set the Guardian service for security checks
-   */
-  public setGuardianService(guardian: GuardianService): void {
-    this.guardian = guardian;
-    console.log('[TerminalManager] Guardian service bridged');
   }
 
   /**
@@ -59,15 +47,6 @@ export class TerminalManager {
     try {
       // Determine working directory
       const cwd = options.cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
-
-      // 1. Guardian Check (Security)
-      if (this.guardian) {
-        const securityCheck = await this.guardian.beforeRunCommand(command);
-        if (!securityCheck.allow) {
-          console.warn(`[TerminalManager] Command blocked by Guardian: ${securityCheck.reason}`);
-          throw new Error(`Security Exception: ${securityCheck.reason}`);
-        }
-      }
 
       // Check autoConfirm flag
       if (options.autoConfirm) {

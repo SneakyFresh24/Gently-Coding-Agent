@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 import { ModeManager } from './ModeManager';
 import { ArchitectMode } from './ArchitectMode';
 import { CodeMode } from './CodeMode';
+import type { PromptConfig, PromptContext, PromptVariant } from '../agent/prompts/types';
 
 /**
  * Service für die Verwaltung und Integration des Mode-Systems
@@ -174,9 +175,44 @@ export class ModeService {
   /**
    * Gibt den System-Prompt für den aktuellen Modus zurück
    */
-  getSystemPrompt(): string {
+  getSystemPrompt(promptContext?: PromptContext): string {
     const currentMode = this.modeManager.getCurrentMode();
-    return currentMode ? currentMode.systemPrompt : '';
+    if (!currentMode) {
+      return '';
+    }
+    if (promptContext && currentMode.buildSystemPrompt) {
+      return currentMode.buildSystemPrompt(promptContext);
+    }
+    return currentMode.systemPrompt;
+  }
+
+  /**
+   * Gibt die Prompt-Konfiguration des aktuellen Modus zurück.
+   */
+  getPromptConfig(): PromptConfig | undefined {
+    const currentMode = this.modeManager.getCurrentMode();
+    if (!currentMode?.promptConfig) {
+      return undefined;
+    }
+
+    const configuredVariant = vscode.workspace.getConfiguration('gently').get<string>('promptPipeline.variant');
+    const configuredPromptId = vscode.workspace.getConfiguration('gently').get<string>('promptPipeline.promptId');
+    const variant = (configuredVariant === 'default' || configuredVariant === 'minimal' || configuredVariant === 'detailed')
+      ? configuredVariant as PromptVariant
+      : currentMode.promptConfig.variant;
+
+    return {
+      ...currentMode.promptConfig,
+      promptId: configuredPromptId?.trim() ? configuredPromptId.trim() : currentMode.promptConfig.promptId,
+      variant
+    };
+  }
+
+  /**
+   * Feature flag for the new prompt pipeline.
+   */
+  isPromptPipelineEnabled(): boolean {
+    return vscode.workspace.getConfiguration('gently').get<boolean>('promptPipeline.enabled', true);
   }
 
   /**

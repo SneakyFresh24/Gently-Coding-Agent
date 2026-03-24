@@ -10,7 +10,6 @@ import {
   ProjectTools,
   CheckpointTools,
   PlanningTools,
-  VerificationTools,
   MemoryBankTools,
   SafeEditTool,
   ApplyBlockEditTool,
@@ -33,7 +32,6 @@ export class ToolManager implements IAgentService {
   private projectTools: ProjectTools;
   private checkpointTools: CheckpointTools;
   private planningTools: PlanningTools;
-  private verificationTools: VerificationTools;
   private memoryBankTools: MemoryBankTools;
   private safeEditTool: SafeEditTool;
   private applyBlockEditTool: ApplyBlockEditTool;
@@ -61,7 +59,6 @@ export class ToolManager implements IAgentService {
     checkpointTools: CheckpointTools,
     planningTools: PlanningTools,
     planningManager: PlanningManager,
-    verificationTools: VerificationTools,
     memoryBankTools: MemoryBankTools,
     safeEditTool: SafeEditTool,
     applyBlockEditTool: ApplyBlockEditTool,
@@ -78,7 +75,6 @@ export class ToolManager implements IAgentService {
     this.checkpointTools = checkpointTools;
     this.planningTools = planningTools;
     this.planningManager = planningManager;
-    this.verificationTools = verificationTools;
     this.memoryBankTools = memoryBankTools;
     this.safeEditTool = safeEditTool;
     this.applyBlockEditTool = applyBlockEditTool;
@@ -127,7 +123,6 @@ export class ToolManager implements IAgentService {
       this.projectTools.registerTools(this.toolRegistry);
       this.checkpointTools.registerTools(this.toolRegistry);
       this.planningTools.registerTools(this.toolRegistry);
-      this.verificationTools.registerTools(this.toolRegistry);
       this.memoryBankTools.registerTools(this.toolRegistry);
       this.safeEditTool.registerTools(this.toolRegistry);
       this.applyBlockEditTool.registerTools(this.toolRegistry);
@@ -531,6 +526,13 @@ export class ToolManager implements IAgentService {
    */
   getToolsForPrompt(): string {
     return this.toolRegistry.getToolsForPrompt();
+  }
+
+  /**
+   * Get structured tool specs for PromptBuilder.
+   */
+  getPromptToolSpecs(toolNames?: string[]): Array<{ name: string; description: string; parameters: Record<string, unknown> }> {
+    return this.toolRegistry.getPromptToolSpecs(toolNames);
   }
 
   // ==================== TOOL MODULE MANAGEMENT ====================

@@ -482,38 +482,10 @@ const MessageSchemas: Record<string, any> = {
     required: [],
     fields: {}
   },
-  'refresh': {
-    required: [],
-    fields: {}
-  },
-  'analyzeWorkspace': {
-    required: [],
-    fields: {}
-  },
-  'openSettings': {
-    required: [],
-    fields: {}
-  },
-  'dismissAllIssues': {
-    required: [],
-    fields: {}
-  },
   'navigateToFile': {
     required: ['path'],
     fields: {
       path: { type: 'string', maxLength: 1000, sanitizer: 'filePath' }
-    }
-  },
-  'dismissIssue': {
-    required: ['issueId'],
-    fields: {
-      issueId: { type: 'string', maxLength: 100 }
-    }
-  },
-  'fixIssue': {
-    required: ['issueId'],
-    fields: {
-      issueId: { type: 'string', maxLength: 100 }
     }
   },
   'addMemory': {
@@ -594,10 +566,6 @@ const MessageSchemas: Record<string, any> = {
     }
   },
 
-  'refreshGuardian': {
-    required: [],
-    fields: {}
-  },
   'login': {
     required: ['email', 'password'],
     fields: {

@@ -5,7 +5,6 @@ export * from './MemoryTools';
 export * from './ProjectTools';
 export * from './CheckpointTools';
 export * from './PlanningTools';
-export * from './VerificationTools';
 export * from './MemoryBankTools';
 export * from './SafeEditTool';
 export * from './ApplyBlockEditTool';

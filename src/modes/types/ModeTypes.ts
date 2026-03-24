@@ -4,6 +4,7 @@
 
 import { AgentTool } from '../../agent/agentManager/AgentManager';
 import { HistoryManager } from '../../services/HistoryManager';
+import type { PromptConfig, PromptContext } from '../../agent/prompts/types';
 
 /**
  * Basis-Schnittstelle für alle Modi
@@ -18,6 +19,7 @@ export interface GentlyMode {
   // Modus-Konfiguration
   readonly systemPrompt: string;
   readonly availableTools: string[];
+  readonly promptConfig?: PromptConfig;
   readonly maxTokens?: number;
   readonly temperature?: number;
   
@@ -27,6 +29,7 @@ export interface GentlyMode {
   
   // Modus-spezifische Methoden
   canHandleTool(toolName: string): boolean;
+  buildSystemPrompt?(context: PromptContext): string;
   getToolFilter?(tools: AgentTool[]): AgentTool[];
   getToolsForMode(agentManager: any): any[];
 }

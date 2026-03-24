@@ -21,13 +21,6 @@
           "type": "webview",
           "icon": "$(comment-discussion)",
           "contextualTitle": "Gently AI Assistant"
-        },
-        {
-          "id": "gently.guardianView",
-          "name": "Guardian",
-          "type": "webview",
-          "icon": "$(shield)",
-          "contextualTitle": "Gently Guardian - Code Health Monitor"
         }
       ]
     },
@@ -60,46 +53,6 @@
         "title": "Open File"
       },
       {
-        "command": "gently.guardian.start",
-        "title": "Start Guardian",
-        "icon": "$(shield)"
-      },
-      {
-        "command": "gently.guardian.stop",
-        "title": "Stop Guardian",
-        "icon": "$(shield)"
-      },
-      {
-        "command": "gently.guardian.analyzeWorkspace",
-        "title": "Analyze Workspace",
-        "icon": "$(search)"
-      },
-      {
-        "command": "gently.guardian.analyzeFile",
-        "title": "Analyze Current File",
-        "icon": "$(file-code)"
-      },
-      {
-        "command": "gently.guardian.showIssues",
-        "title": "Show Code Issues",
-        "icon": "$(warning)"
-      },
-      {
-        "command": "gently.guardian.dismissAllIssues",
-        "title": "Dismiss All Issues",
-        "icon": "$(discard)"
-      },
-      {
-        "command": "gently.guardian.openSettings",
-        "title": "Open Guardian Settings",
-        "icon": "$(settings-gear)"
-      },
-      {
-        "command": "gently.guardian.fixAllIssues",
-        "title": "Fix All Issues",
-        "icon": "$(lightbulb)"
-      },
-      {
         "command": "gently.configureApiKey",
         "title": "Configure OpenRouter API Key",
         "icon": "$(key)"
@@ -116,21 +69,6 @@
           "command": "gently.toggleAgentMode",
           "when": "view == gently.chatView",
           "group": "navigation"
-        },
-        {
-          "command": "gently.guardian.analyzeWorkspace",
-          "when": "view == gently.guardianView",
-          "group": "navigation"
-        },
-        {
-          "command": "gently.guardian.start",
-          "when": "view == gently.guardianView",
-          "group": "navigation"
-        },
-        {
-          "command": "gently.guardian.stop",
-          "when": "view == gently.guardianView",
-          "group": "navigation"
         }
       ],
       "view/item/context": [
@@ -143,38 +81,6 @@
       "commandPalette": [
         {
           "command": "gently.openChat",
-          "when": "true"
-        },
-        {
-          "command": "gently.guardian.start",
-          "when": "true"
-        },
-        {
-          "command": "gently.guardian.stop",
-          "when": "true"
-        },
-        {
-          "command": "gently.guardian.analyzeWorkspace",
-          "when": "true"
-        },
-        {
-          "command": "gently.guardian.analyzeFile",
-          "when": "true"
-        },
-        {
-          "command": "gently.guardian.showIssues",
-          "when": "true"
-        },
-        {
-          "command": "gently.guardian.dismissAllIssues",
-          "when": "true"
-        },
-        {
-          "command": "gently.guardian.openSettings",
-          "when": "true"
-        },
-        {
-          "command": "gently.guardian.fixAllIssues",
           "when": "true"
         }
       ]
@@ -229,10 +135,25 @@
           "default": "deepseek/deepseek-chat",
           "description": "OpenRouter model slug (e.g. deepseek/deepseek-chat, anthropic/claude-3.5-sonnet, openai/gpt-4o)"
         },
-        "gently.verificationModel": {
+        "gently.promptPipeline.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the modular PromptBuilder pipeline. Falls back to legacy prompts on build errors."
+        },
+        "gently.promptPipeline.variant": {
+          "type": "string",
+          "default": "default",
+          "enum": [
+            "default",
+            "minimal",
+            "detailed"
+          ],
+          "description": "Prompt variant used by the modular prompt pipeline."
+        },
+        "gently.promptPipeline.promptId": {
           "type": "string",
           "default": "",
-          "description": "Optional model used by verify_and_auto_fix. If empty, Gently uses the selected chat model."
+          "description": "Optional prompt registry id override (e.g. architect-core, code-core) for rollback/testing."
         },
         "gently.validation.enabled": {
           "type": "boolean",
@@ -243,112 +164,6 @@
           "type": "boolean",
           "default": false,
           "description": "Enable strict validation mode"
-        },
-        "gently.guardian.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable Guardian code health monitoring"
-        },
-        "gently.guardian.autoStart": {
-          "type": "boolean",
-          "default": true,
-          "description": "Automatically start Guardian when extension activates"
-        },
-        "gently.guardian.showNotifications": {
-          "type": "boolean",
-          "default": true,
-          "description": "Show notifications for Guardian findings"
-        },
-        "gently.guardian.statusBarItem": {
-          "type": "boolean",
-          "default": true,
-          "description": "Show Guardian status in status bar"
-        },
-        "gently.guardian.outputChannel": {
-          "type": "boolean",
-          "default": true,
-          "description": "Show Guardian output in dedicated channel"
-        },
-        "gently.guardian.autoAnalysis": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable automatic code analysis"
-        },
-        "gently.guardian.analysisInterval": {
-          "type": "number",
-          "default": 300000,
-          "minimum": 60000,
-          "maximum": 3600000,
-          "description": "Analysis interval in milliseconds (default: 5 minutes)"
-        },
-        "gently.guardian.maxIssuesPerFile": {
-          "type": "number",
-          "default": 10,
-          "minimum": 1,
-          "maximum": 50,
-          "description": "Maximum issues to report per file"
-        },
-        "gently.guardian.severityThreshold": {
-          "type": "string",
-          "default": "medium",
-          "enum": [
-            "low",
-            "medium",
-            "high",
-            "critical"
-          ],
-          "description": "Minimum severity level for issues"
-        },
-        "gently.guardian.enabledIssueTypes": {
-          "type": "array",
-          "default": [
-            "code_duplication",
-            "dead_code",
-            "architectural_drift",
-            "security_pattern",
-            "performance_issue"
-          ],
-          "items": {
-            "type": "string",
-            "enum": [
-              "code_duplication",
-              "dead_code",
-              "architectural_drift",
-              "security_pattern",
-              "performance_issue",
-              "maintainability",
-              "test_coverage"
-            ]
-          },
-          "description": "Types of issues to detect"
-        },
-        "gently.guardian.excludePatterns": {
-          "type": "array",
-          "default": [
-            "**/node_modules/**",
-            "**/dist/**",
-            "**/build/**",
-            "**/.git/**",
-            "**/coverage/**"
-          ],
-          "items": {
-            "type": "string"
-          },
-          "description": "File patterns to exclude from analysis"
-        },
-        "gently.guardian.includePatterns": {
-          "type": "array",
-          "default": [
-            "**/*.ts",
-            "**/*.js",
-            "**/*.tsx",
-            "**/*.jsx",
-            "**/*.py"
-          ],
-          "items": {
-            "type": "string"
-          },
-          "description": "File patterns to include in analysis"
         }
       }
     }
@@ -360,12 +175,12 @@
     "build:webview": "cd webview-ui && npm run build",
     "build:scripts": "tsc -p tsconfig.scripts.json",
     "compile": "tsc -p ./",
+    "lint:prompts": "node scripts/lint-prompts.js",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js",
     "test:unit": "vitest run src/agent/tools/ToolRegistry.test.ts src/commands/CommandRegistry.test.ts src/modes/tests/ModeManager.test.ts src/performance/cache.test.ts src/performance/performanceOptimizer.test.ts src/performance/sessionManagerIntegration.test.ts src/plugins/tests/PluginManager.test.ts src/session/SessionManager.test.ts src/terminal/TerminalManagerRefactored.test.ts src/utils/constants.test.ts src/utils/errorHandler.test.ts",
-    "test:guardian": "vitest run src/guardian/tests/",
     "test:toolcall": "vitest run src/views/chat/toolcall/__tests__/",
     "test:toolcall:watch": "vitest watch src/views/chat/toolcall/__tests__/",
     "test:toolcall:coverage": "vitest run --coverage src/views/chat/toolcall/__tests__/",

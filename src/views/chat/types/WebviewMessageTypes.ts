@@ -392,33 +392,6 @@ export interface GetValidationMetricsMessage {
   type: 'getValidationMetrics';
 }
 
-/**
- * Refresh Guardian analysis
- */
-export interface RefreshGuardianMessage {
-  type: 'refresh';
-}
-
-/**
- * Run workspace analysis
- */
-export interface AnalyzeWorkspaceMessage {
-  type: 'analyzeWorkspace';
-}
-
-/**
- * Open Guardian settings
- */
-export interface OpenSettingsMessage {
-  type: 'openSettings';
-}
-
-/**
- * Dismiss all Guardian issues
- */
-export interface DismissAllIssuesMessage {
-  type: 'dismissAllIssues';
-}
 
 /**
  * Navigate to file location
@@ -429,22 +402,6 @@ export interface NavigateToFileMessage {
   lineNumber?: number;
 }
 
-/**
- * Dismiss a single Guardian issue
- */
-export interface DismissIssueMessage {
-  type: 'dismissIssue';
-  issueId: string;
-}
-
-/**
- * Fix a Guardian issue
- */
-export interface FixIssueMessage {
-  type: 'fixIssue';
-  issueId: string;
-  suggestionId: string;
-}
 
 /**
  * Add a memory
@@ -1060,23 +1017,6 @@ export interface TerminalStatusMessage {
 }
 
 /**
- * Guardian data updated
- */
-export interface UpdateDataMessage {
-  type: 'updateData';
-  issues: Array<Record<string, unknown>>;
-  stats: Record<string, unknown>;
-}
-
-/**
- * Set prompt from Guardian suggestion
- */
-export interface SetPromptFromGuardianMessage {
-  type: 'setPromptFromGuardian';
-  prompt: string;
-}
-
-/**
  * Workspace information
  */
 export interface WorkspaceInfoMessage {
@@ -1329,13 +1269,7 @@ export type InboundWebviewMessage =
   | ToggleQuickPatternMessage
   | EnhancePromptMessage
   | GetValidationMetricsMessage
-  | RefreshGuardianMessage
-  | AnalyzeWorkspaceMessage
-  | OpenSettingsMessage
-  | DismissAllIssuesMessage
   | NavigateToFileMessage
-  | DismissIssueMessage
-  | FixIssueMessage
   | AddMemoryMessage
   | DeleteMemoryMessage
   | SyncTasksMessage
@@ -1405,8 +1339,6 @@ export type OutboundWebviewMessage =
   | TerminalModeChangedMessage
   | QuickPatternsChangedMessage
   | TerminalStatusMessage
-  | UpdateDataMessage
-  | SetPromptFromGuardianMessage
   | WorkspaceInfoMessage
   | MemoriesUpdateMessage
   | CurrentPlanResponseMessage

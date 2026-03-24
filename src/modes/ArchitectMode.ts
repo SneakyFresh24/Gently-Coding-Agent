@@ -4,6 +4,7 @@
 
 import { AgentManager, AgentTool } from '../agent/agentManager/AgentManager';
 import { BaseMode } from './BaseMode';
+import type { PromptConfig } from '../agent/prompts/types';
 
 /**
  * Architect Mode - Für Planen und Designen vor der Implementierung
@@ -67,6 +68,11 @@ You are the Strategist. You bridge the gap between user requirements and technic
 
   readonly maxTokens = 4096;
   readonly temperature = 0.7; // Architect needs more creativity
+  readonly promptConfig: PromptConfig = {
+    promptId: 'architect-core',
+    variant: 'default',
+    labels: ['stable']
+  };
 
   /**
    * Get tools for this mode (filtered by availableTools)

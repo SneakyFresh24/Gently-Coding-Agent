@@ -3,6 +3,7 @@
 // =====================================================
 
 import { BaseMode } from './BaseMode';
+import type { PromptConfig } from '../agent/prompts/types';
 
 /**
  * Code Mode - Für Schreiben, Modifizieren und Refactoring von Code
@@ -23,15 +24,13 @@ CORE RULES:
 - Use safe_edit_file / write_file / update_memory_bank directly.
 - For write_file/safe_edit_file: ALWAYS place path/file_path before content/new_content.
 - Keep each content payload under 50KB; split larger writes into multiple calls.
-- After every change: ALWAYS call verify_and_auto_fix.
 - NEVER create a plan. You ARE the coder.
 
 WORKFLOW:
 1. Examine the Architect's plan in chat history.
 2. Read/analyze relevant files with read_file / list_files / find_files.
 3. Implement changes with safe_edit_file or write_file.
-4. Verify immediately with verify_and_auto_fix.
-5. Summarize what was changed and why.
+4. Summarize what was changed and why.
 
 You are the Implementation Expert. You bridge the gap between architectural design and a working production system.`;
 
@@ -47,7 +46,6 @@ You are the Implementation Expert. You bridge the gap between architectural desi
     'run_linter',
     'run_type_check',
     'execute_test',
-    'verify_and_auto_fix',
     'create_checkpoint',
     'restore_checkpoint',
     'analyze_project_structure'
@@ -55,6 +53,11 @@ You are the Implementation Expert. You bridge the gap between architectural desi
 
   readonly maxTokens = 4096;
   readonly temperature = 0.4;
+  readonly promptConfig: PromptConfig = {
+    promptId: 'code-core',
+    variant: 'default',
+    labels: ['stable']
+  };
 
   /**
    * Get tools for this mode (filtered by availableTools)

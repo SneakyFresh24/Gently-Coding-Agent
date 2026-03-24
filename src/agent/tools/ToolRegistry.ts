@@ -90,6 +90,20 @@ export class ToolRegistry {
   }
 
   /**
+   * Get structured tool specs for prompt composition.
+   */
+  getPromptToolSpecs(toolNames?: string[]): Array<{ name: string; description: string; parameters: Record<string, unknown> }> {
+    const filterSet = toolNames ? new Set(toolNames) : null;
+    return this.getAll()
+      .filter(tool => !filterSet || filterSet.has(tool.name))
+      .map(tool => ({
+        name: tool.name,
+        description: tool.description,
+        parameters: (tool.parameters as any)?.properties || {}
+      }));
+  }
+
+  /**
    * Get tools description string for prompts (Legacy support)
    */
   getToolsForPrompt(): string {

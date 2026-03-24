@@ -19,7 +19,6 @@ import { RegexSearchService } from './retrieval/RegexSearchService';
 import { ProjectStructureAnalyzer } from './ProjectStructureAnalyzer';
 import { GitDiffService } from './GitDiffService';
 import { CheckpointManager } from './checkpoints/CheckpointManager';
-import { VerificationAgent } from './verification/VerificationAgent';
 import { EditorEngine } from './editors/EditorEngine';
 import { ASTAnalyzer } from './ASTAnalyzer';
 import { CodebaseMapGenerator } from './CodebaseMapGenerator';
@@ -30,7 +29,6 @@ import {
     ProjectTools,
     CheckpointTools,
     PlanningTools,
-    VerificationTools,
     MemoryBankTools,
     SafeEditTool,
     ApplyBlockEditTool,
@@ -49,46 +47,6 @@ import { CONTEXT_LIMITS } from '../utils';
 import { ApprovalManager, AutoApproveManager } from '../approval/ApprovalManager';
 import { HookManager } from '../hooks/HookManager';
 import { TokenTracker } from '../utils/TokenTracker';
-import { OpenRouterService } from '../services/OpenRouterService';
-
-function resolveVerificationModel(context: vscode.ExtensionContext): string {
-    const config = vscode.workspace.getConfiguration('gently');
-    const configuredVerificationModel = config.get<string>('verificationModel')?.trim();
-    if (configuredVerificationModel) return configuredVerificationModel;
-
-    const selectedModelFromState = context.globalState.get<string | null>('gently.selectedModel', null)?.trim();
-    if (selectedModelFromState) return selectedModelFromState;
-
-    const selectedModelFromConfig = config.get<string>('selectedModel')?.trim();
-    if (selectedModelFromConfig) return selectedModelFromConfig;
-
-    const envVerification = process.env.GENTLY_VERIFICATION_MODEL?.trim();
-    if (envVerification) return envVerification;
-
-    const envModel = process.env.GENTLY_MODEL?.trim();
-    if (envModel) return envModel;
-
-    return 'openai/gpt-4o-mini';
-}
-
-function createVerificationAgent(
-    c: Container,
-    context: vscode.ExtensionContext
-): VerificationAgent | undefined {
-    const orService = c.resolve<any>('openRouterService') as OpenRouterService | undefined;
-    if (!orService) return undefined;
-
-    const verificationModel = resolveVerificationModel(context);
-    console.log(`[ServiceProvider] Verification model resolved: ${verificationModel}`);
-
-    return new VerificationAgent(
-        orService,
-        c.resolve<any>('terminalManager') || null,
-        c.resolve('fileOps'),
-        c.resolve('workspaceRoot'),
-        verificationModel
-    );
-}
 
 /**
  * Configure all services in the container
@@ -101,7 +59,6 @@ export function configureServices(container: Container, context: vscode.Extensio
     container.force('workspaceRoot', workspaceRoot);
 
     // 1.5 Register Optional/Late-Bound Services (avoid "Service not registered" errors)
-    container.register('guardianService', () => undefined);
     container.register('terminalManager', () => undefined);
     container.register('openRouterService', () => undefined);
     container.register('agentSessions', (c) => {
@@ -154,8 +111,7 @@ export function configureServices(container: Container, context: vscode.Extensio
     container.register('astAnalyzer', (c) => new ASTAnalyzer(c.resolve('context'), c.resolve('fileOps')));
     container.register('editorEngine', (c) => new EditorEngine(
         c.resolve('fileOps'),
-        c.resolve('astAnalyzer'),
-        c.resolve<any>('guardianService') // This is now safe because we registered it above
+        c.resolve('astAnalyzer')
     ));
     container.register('projectAnalyzer', (c) => new ProjectStructureAnalyzer(c.resolve('workspaceRoot')));
     container.register('toolRegistry', () => new ToolRegistry());
@@ -173,7 +129,6 @@ export function configureServices(container: Container, context: vscode.Extensio
     container.register('memoryBankTools', (c) => new MemoryBankTools(c.resolve('memoryBankManager')));
     container.register('projectTools', (c) => new ProjectTools(c.resolve('projectAnalyzer')));
     container.register('checkpointTools', (c) => new CheckpointTools(c.resolve('checkpointManager')));
-    container.register('verificationTools', (c) => new VerificationTools(() => createVerificationAgent(c, context)));
     container.register('planningTools', (c) => new PlanningTools(
         c.resolve('planningManager'),
         c.resolve<any>('terminalManager') || null,
@@ -188,8 +143,7 @@ export function configureServices(container: Container, context: vscode.Extensio
     container.register('applyBlockEditTool', (c) => new ApplyBlockEditTool(
         c.resolve('fileOps'),
         c.resolve('contextManager'),
-        c.resolve('editorEngine'),
-        c.resolve<any>('guardianService')
+        c.resolve('editorEngine')
     ));
     container.register('commandTools', (c) => new CommandTools(
         () => c.resolve<any>('terminalManager') || null,
@@ -220,7 +174,6 @@ export function configureServices(container: Container, context: vscode.Extensio
             c.resolve('checkpointTools'),
             c.resolve('planningTools'),
             c.resolve('planningManager'),
-            c.resolve('verificationTools'),
             c.resolve('memoryBankTools'),
             c.resolve('safeEditTool'),
             c.resolve('applyBlockEditTool'),
@@ -244,11 +197,7 @@ export function configureServices(container: Container, context: vscode.Extensio
         return tm;
     });
 
-    // 5. Validation/Verification (Requires OpenRouterService)
-    container.register('verificationAgent', (c) => {
-        return createVerificationAgent(c, context);
-    });
-
+    // 5. Validation (Requires OpenRouterService)
     container.register('validationManager', (c) => {
         const orService = c.resolve<any>('openRouterService');
         if (!orService) return undefined;

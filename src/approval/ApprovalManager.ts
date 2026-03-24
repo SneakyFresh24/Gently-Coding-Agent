@@ -150,8 +150,7 @@ export class AutoApproveManager {
     'record_correction',
     'accept_pattern_suggestion',
     'reject_pattern_suggestion',
-    'restore_checkpoint',
-    'verify_and_auto_fix'
+    'restore_checkpoint'
   ]);
   private static readonly COMMAND_TOOLS = new Set<string>([
     'run_command',

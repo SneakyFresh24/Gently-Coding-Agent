@@ -8,7 +8,6 @@ import { ChatCommands } from './handlers/ChatCommands';
 import { SettingsCommands } from './handlers/SettingsCommands';
 import { FileCommands } from './handlers/FileCommands';
 import { PanelCommands } from './handlers/PanelCommands';
-import { GuardianCommands } from './handlers/GuardianCommands';
 
 /**
  * Initialize and register all commands
@@ -46,12 +45,6 @@ export function initializeCommands(context: CommandContext): CommandRegistry {
     )
   );
 
-  registry.registerMany(
-    Object.fromEntries(
-      GuardianCommands.getAllCommands(context).map(cmd => [cmd.command, cmd])
-    )
-  );
-
   return registry;
 }
 
@@ -61,5 +54,4 @@ export { ChatCommands };
 export { SettingsCommands };
 export { FileCommands };
 export { PanelCommands };
-export { GuardianCommands };
 export * from './types/CommandTypes';

@@ -13,7 +13,6 @@ import { TerminalManager } from '../../terminal/TerminalManager';
 import { OpenRouterService } from '../../services/OpenRouterService';
 import { GitDiffService } from '../GitDiffService';
 import { CheckpointManager } from '../checkpoints/CheckpointManager';
-import { VerificationAgent } from '../verification/VerificationAgent';
 import {
   FileOperationManager,
   ToolManager,
@@ -207,33 +206,19 @@ export class AgentManager {
     return this.container.resolve<ToolManager>('toolManager').getToolsForPrompt();
   }
 
+  getPromptToolSpecs(toolNames?: string[]): Array<{ name: string; description: string; parameters: Record<string, unknown> }> {
+    return this.container.resolve<ToolManager>('toolManager').getPromptToolSpecs(toolNames);
+  }
+
   setTerminalManager(terminalManager: TerminalManager): void {
     this.container.force('terminalManager', terminalManager);
     this.container.resolve<ToolManager>('toolManager').setTerminalManager(terminalManager);
-
-    // Bridge GuardianService if it already exists
-    const guardianService = this.container.resolve<any>('guardianService');
-    if (guardianService && (terminalManager as any).setGuardianService) {
-      (terminalManager as any).setGuardianService(guardianService);
-    }
 
     agentLogger.info('Terminal manager updated in DI container and bridged');
   }
 
   getTerminalManager(): TerminalManager | undefined {
     return this.container.resolve<any>('terminalManager');
-  }
-
-  setGuardianService(guardianService: any): void {
-    this.container.force('guardianService', guardianService);
-
-    // Bridge to TerminalManager if it exists
-    const terminalManager = this.container.resolve<any>('terminalManager');
-    if (terminalManager && terminalManager.setGuardianService) {
-      terminalManager.setGuardianService(guardianService);
-    }
-
-    agentLogger.info('Guardian service updated in DI container and bridged');
   }
 
   setEventCallback(callback: (event: PlanEvent) => void): void {
@@ -286,8 +271,8 @@ export class AgentManager {
   }
 
   setValidationMessageCallback(callback: (msg: string) => void): void {
-    // VerificationAgent does not support message callbacks — this is a no-op.
-    agentLogger.info('setValidationMessageCallback called — VerificationAgent has no callback support yet');
+    void callback;
+    agentLogger.info('setValidationMessageCallback called (no-op)');
   }
 
   getMemoryManager(): MemoryManager {
@@ -328,15 +313,6 @@ export class AgentManager {
 
   async updateMemory(id: string, content: string, category?: any): Promise<Memory | null> {
     return this.memoryManager.updateMemory(id, content, category);
-  }
-
-  async recordGuardianInsight(insight: any): Promise<void> {
-    try {
-      const description = typeof insight === 'string' ? insight : insight?.description || JSON.stringify(insight);
-      await this.addMemory(`Guardian Insight: ${description}`, 'agent', 'general');
-    } catch (e) {
-      agentLogger.error('Failed to record guardian insight', e);
-    }
   }
 
   async readFile(filePath: string): Promise<FileInfo> {

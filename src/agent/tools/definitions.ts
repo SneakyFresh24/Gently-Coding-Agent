@@ -566,21 +566,6 @@ IMPORTANT:
         parameters: { type: 'object', properties: {} }
     },
 
-    // --- Verification Tools ---
-    verify_and_auto_fix: {
-        name: 'verify_and_auto_fix',
-        category: 'verification',
-        description: `Run a terminal command. If it fails, an autonomous Verification Agent will intercept the error, analyze it, fix the files, and re-run until success.`,
-        parameters: {
-            type: 'object',
-            properties: {
-                command: { type: 'string', description: 'The shell command to run' },
-                max_retries: { type: 'number', description: 'Maximum self-healing attempts (default: 3)' }
-            },
-            required: ['command']
-        }
-    },
-
     // --- Execution Tools ---
     run_command: {
         name: 'run_command',
@@ -610,7 +595,7 @@ IMPORTANT:
                 },
                 description: {
                     type: 'string',
-                    description: 'Brief explanation of why this command is being executed (for the User and Guardian)'
+                    description: 'Brief explanation of why this command is being executed (for the user and system logs)'
                 },
                 autoConfirm: {
                     type: 'boolean',

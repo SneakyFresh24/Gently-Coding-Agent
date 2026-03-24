@@ -427,7 +427,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   public sendPromptToChat(prompt: string): void {
-    this._view?.webview.postMessage({ type: 'setPromptFromGuardian', prompt });
+    void this.messageHandler.sendMessage(prompt, false);
   }
 
   private _getHtmlForWebview(webview: vscode.Webview): string {

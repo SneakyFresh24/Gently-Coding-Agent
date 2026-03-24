@@ -105,7 +105,6 @@ IMMEDIATE ACTIONS:
 1. Review the plan in the conversation history
 2. Start with Step 1 of the plan
 3. Use safe_edit_file or write_file to implement
-4. Call verify_and_auto_fix after each file change
 
 DO NOT:
 - Ask for clarification

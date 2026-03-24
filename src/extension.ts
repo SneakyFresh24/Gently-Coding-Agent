@@ -14,7 +14,6 @@ import { HistoryManager } from './services/HistoryManager';
 import { CommandRegistry } from './commands/CommandRegistry';
 import { PluginManager, PluginLoader } from './plugins';
 import { ModeService } from './modes';
-import { GuardianIntegration } from './guardian/GuardianIntegration';
 import { ApiKeyManager } from './services/ApiKeyManager';
 import { OpenRouterService } from './services/OpenRouterService';
 
@@ -23,7 +22,6 @@ let agentManager: AgentManager;
 let historyManager: HistoryManager;
 let pluginManager: PluginManager;
 let modeService: ModeService;
-let guardianIntegration: GuardianIntegration;
 let apiKeyManager: ApiKeyManager;
 let openRouterService: OpenRouterService;
 let isWebviewProviderRegistered = false;
@@ -93,7 +91,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   initializeCommands(commandContext);
 
-  // ── Guardian chat bridge ──────────────────────────────────────────────────
+  // ── Chat bridge ───────────────────────────────────────────────────────────
   context.subscriptions.push(
     vscode.commands.registerCommand('gently.chat.sendPrompt', async (prompt: string) => {
       try {
@@ -107,51 +105,6 @@ export async function activate(context: vscode.ExtensionContext) {
     })
   );
 
-
-  // ── Guardian integration ──────────────────────────────────────────────────
-  try {
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (workspaceFolders && workspaceFolders.length > 0) {
-      const workspaceRoot = workspaceFolders[0].uri.fsPath;
-      agentLogger.info('Starting Guardian initialization...', 'Extension');
-
-      // Resolve deps from the DI container
-      const memoryManager = agentManager.baseMemoryManager;
-      const validationManager = agentManager.validationManager;
-      const codebaseIndexer = container.resolve<any>('indexer');
-      const hybridRetriever = container.resolve<any>('hybridRetriever');
-
-      if (!memoryManager) {
-        agentLogger.error('CRITICAL: memoryManager is undefined – skipping Guardian', null, 'Extension');
-      } else {
-        const { RelationshipGraph } = await import('./agent/graph/RelationshipGraph');
-        const relationshipGraph = new RelationshipGraph({ workspaceRoot });
-
-        guardianIntegration = new GuardianIntegration(
-          workspaceRoot,
-          relationshipGraph,
-          memoryManager,
-          validationManager as any,
-          hybridRetriever,
-          codebaseIndexer,
-          agentManager,
-          context.extensionUri
-        );
-
-        await guardianIntegration.initialize();
-
-        const gs = guardianIntegration.getGuardianService();
-        if (gs) {
-          agentManager.setGuardianService(gs);
-        }
-        context.subscriptions.push(guardianIntegration);
-        
-        agentLogger.info('Guardian integration initialized successfully ✓', 'Extension');
-      }
-    }
-  } catch (error) {
-    agentLogger.error('FAILED to initialize Guardian integration', error, 'Extension');
-  }
 }
 
 export async function deactivate() {
@@ -167,5 +120,4 @@ export async function deactivate() {
   }
 
   if (agentManager) agentManager.dispose();
-  if (guardianIntegration) guardianIntegration.dispose();
 }

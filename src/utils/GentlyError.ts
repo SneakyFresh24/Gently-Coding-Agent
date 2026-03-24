@@ -5,7 +5,6 @@ export enum ErrorCategory {
     SYSTEM = 'SYSTEM',
     RETRIEVAL = 'RETRIEVAL',
     NATIVE_DEP = 'NATIVE_DEP',
-    GUARDIAN = 'GUARDIAN',
     AGENT = 'AGENT',
     VALIDATION = 'VALIDATION',
     API = 'API'

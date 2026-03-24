@@ -7,6 +7,7 @@ import {
   ModeContext
 } from './types/ModeTypes';
 import { AgentTool } from '../agent/agentManager/AgentManager';
+import type { PromptConfig, PromptContext } from '../agent/prompts/types';
 
 /**
  * Basisklasse für alle Modi
@@ -21,6 +22,7 @@ export abstract class BaseMode implements GentlyMode {
   // Modus-Konfiguration
   abstract readonly systemPrompt: string;
   abstract readonly availableTools: string[];
+  readonly promptConfig?: PromptConfig;
   readonly maxTokens?: number;
   readonly temperature?: number;
 
@@ -60,6 +62,14 @@ export abstract class BaseMode implements GentlyMode {
    */
   canHandleTool(toolName: string): boolean {
     return this.availableTools.includes(toolName);
+  }
+
+  /**
+   * Optional custom system prompt builder hook per mode.
+   * Defaults to legacy static system prompt for backward compatibility.
+   */
+  buildSystemPrompt(_context: PromptContext): string {
+    return this.systemPrompt;
   }
 
   /**

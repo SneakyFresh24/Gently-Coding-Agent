@@ -12,7 +12,6 @@ import * as path from 'path';
 import { fileExists, readFileAsync, copyFileAsync, safeWriteFile } from '../../utils/persistenceUtils';
 import { FileOperations } from '../fileOperations';
 import { ASTAnalyzer } from '../ASTAnalyzer';
-import { GuardianService } from '../../guardian/GuardianService';
 
 export interface HunkEdit {
     id: string;
@@ -74,8 +73,7 @@ export interface EditResult {
 export class EditorEngine {
     constructor(
         private fileOps: FileOperations,
-        private astAnalyzer: ASTAnalyzer,
-        private guardian?: GuardianService
+        private astAnalyzer: ASTAnalyzer
     ) { }
 
     async executeEdit(request: EditRequest): Promise<EditResult> {
