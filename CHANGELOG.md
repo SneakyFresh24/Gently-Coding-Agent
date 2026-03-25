@@ -2,6 +2,32 @@
 
 All notable changes to the "Gently" extension will be documented in this file.
 
+## [0.9.2] - 2026-03-25
+
+### Added
+- **Hybrid Pruning Configuration**: Added new settings for fast local pruning behavior:
+  - `gently.pruning.strategy` (`hybrid|legacy`, default `hybrid`)
+  - `gently.pruning.maxHistoryLength` (default `50`)
+  - `gently.pruning.maxToolOutputChars` (default `500`)
+  - `gently.pruning.protectedTurns` (default `2`)
+- **Hybrid Pruning Test Coverage**: Added focused unit tests for first-pair retention, protected-turn behavior, priority truncation markers, defensive `tool_calls[].result` handling, and legacy fallback path.
+
+### Changed
+- **Conversation Pruning Pipeline (v2)**: Replaced default summarization-first pruning with a two-phase hybrid pipeline:
+  - Phase 1: Tool-output pruning with priority extraction (`head + error lines + tail`)
+  - Phase 2: Rule-based history truncation with first-pair retention and dedupe
+- **Default History Threshold**: Increased default `MAX_HISTORY_LENGTH` from `20` to `50` for hybrid mode.
+- **Standardized Truncation Markers**: Introduced deterministic marker format for testability and diagnostics:
+  - `[TRUNCATED <from>→tool_output]`
+  - `[TRUNCATED <from>→history_limit]`
+- **Pruning Observability**: Added structured pruning logs including before/after message count, estimated token savings, and per-phase reduction stats.
+- **UI Activity Cleanup**: Removed explicit `Pruning conversation...` activity update (pruning is now fast enough to avoid visible UX noise).
+
+### Fixed
+- **First-Pair Preservation in Architect Flows**: First response retention now works even when the initial assistant message includes `tool_calls`.
+- **Context Stability During Repeated Pruning**: Prevented repeated history-marker accumulation by filtering prior history-limit markers before inserting a fresh marker.
+- **Forward Compatibility for Tool Result Shapes**: Added defensive pruning support for provider/plugin variants that may include tool output in `assistant.tool_calls[*].result`.
+
 ## [0.9.0] - 2026-03-24
 
 ### Added

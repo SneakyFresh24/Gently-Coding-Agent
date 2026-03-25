@@ -1087,6 +1087,23 @@ export interface ToolCompleteMessage {
   comment: string;
 }
 
+export interface WriteStartedMessage {
+  type: 'write_started';
+  path?: string;
+  bytes?: number;
+  timestamp: number;
+}
+
+export interface WriteFinishedMessage {
+  type: 'write_finished';
+  path?: string;
+  bytes?: number;
+  success: boolean;
+  durationMs?: number;
+  error?: string;
+  timestamp: number;
+}
+
 /**
  * Plan step completed
  */
@@ -1347,6 +1364,8 @@ export type OutboundWebviewMessage =
   | TaskUpdateMessage
   | TaskCompleteMessage
   | ToolCompleteMessage
+  | WriteStartedMessage
+  | WriteFinishedMessage
   | PlanStepCompletedMessage
   | CheckpointCreatedConfirmationMessage
   | IterativePlanCompletedMessage

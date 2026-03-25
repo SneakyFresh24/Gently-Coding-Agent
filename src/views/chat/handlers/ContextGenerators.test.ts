@@ -181,7 +181,8 @@ describe('ConversationPruner (Hybrid v2)', () => {
     it('uses legacy summarization path when configured', async () => {
         vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue(
             createConfiguration({
-                'pruning.strategy': 'legacy'
+                'pruning.strategy': 'legacy',
+                'performance.legacyPruneCooldownMsgs': 20
             }) as any
         );
 
@@ -204,5 +205,63 @@ describe('ConversationPruner (Hybrid v2)', () => {
 
         expect(context.conversationSummary).toContain('legacy-summary');
         expect(agentManager.addMemory).toHaveBeenCalled();
+    });
+
+    it('applies legacy cooldown and avoids repeated summary calls', async () => {
+        vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue(
+            createConfiguration({
+                'pruning.strategy': 'legacy',
+                'performance.legacyPruneCooldownMsgs': 20
+            }) as any
+        );
+
+        const streamChatMessage = vi.fn(async function* () {
+            yield 'legacy-summary';
+        });
+        const openRouterService = { streamChatMessage };
+        const agentManager = {
+            addMemory: vi.fn().mockResolvedValue(undefined)
+        };
+        const pruner = new ConversationPruner(openRouterService as any, agentManager as any);
+        const context = createContext(
+            Array.from({ length: 25 }, (_, index) =>
+                msg(`m-${index}`, index % 2 === 0 ? 'user' : 'assistant', `message ${index}`)
+            )
+        );
+
+        await pruner.pruneConversationHistory(context);
+        const firstSummary = context.conversationSummary;
+        await pruner.pruneConversationHistory(context);
+
+        expect(streamChatMessage).toHaveBeenCalledTimes(1);
+        expect(context.conversationSummary).toBe(firstSummary);
+    });
+
+    it('falls back to deterministic pruning when legacy summarization fails', async () => {
+        vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue(
+            createConfiguration({
+                'pruning.strategy': 'legacy'
+            }) as any
+        );
+
+        const openRouterService = {
+            async *streamChatMessage() {
+                throw new Error('stream-failure');
+            }
+        };
+        const agentManager = {
+            addMemory: vi.fn().mockResolvedValue(undefined)
+        };
+        const pruner = new ConversationPruner(openRouterService as any, agentManager as any);
+        const context = createContext(
+            Array.from({ length: 25 }, (_, index) =>
+                msg(`m-${index}`, index % 2 === 0 ? 'user' : 'assistant', `message ${index}`)
+            )
+        );
+
+        const before = context.conversationHistory.length;
+        await pruner.pruneConversationHistory(context);
+
+        expect(context.conversationHistory.length).toBeLessThan(before);
     });
 });

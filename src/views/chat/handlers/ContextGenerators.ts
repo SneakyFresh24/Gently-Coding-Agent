@@ -7,6 +7,7 @@ import { ModeService } from '../../../modes/ModeService';
 import { ChatViewContext, Message } from '../types/ChatTypes';
 import { OpenRouterService } from '../../../services/OpenRouterService';
 import { LogService } from '../../../services/LogService';
+import type { PromptConfig } from '../../../agent/prompts/types';
 
 const log = new LogService('ContextGenerators');
 export const MAX_HISTORY_LENGTH = 50;
@@ -26,6 +27,7 @@ interface PruningConfig {
     maxHistoryLength: number;
     maxToolOutputChars: number;
     protectedTurns: number;
+    legacyPruneCooldownMsgs: number;
 }
 
 /**
@@ -74,8 +76,26 @@ export class PromptManager {
     ) { }
 
     async prepareSystemPrompt(context: ChatViewContext, retryCount: number = 0): Promise<string> {
+        const start = Date.now();
+        const workspaceName = vscode.workspace.name || 'No workspace open';
+        const memoryBankStart = Date.now();
         const memoryBankContext = await this.agentManager.getMemoryBankContext();
+        log.info(JSON.stringify({
+            'perf.phase': 'getMemoryBankContext',
+            duration_ms: Date.now() - memoryBankStart,
+            flow_id: context.currentFlowId || null,
+            model: context.selectedModel || null,
+            workspace: workspaceName
+        }));
+        const memoriesStart = Date.now();
         const memoriesPrompt = await this.agentManager.getMemoryManager().getMemoriesForPrompt('');
+        log.info(JSON.stringify({
+            'perf.phase': 'getMemoriesForPrompt',
+            duration_ms: Date.now() - memoriesStart,
+            flow_id: context.currentFlowId || null,
+            model: context.selectedModel || null,
+            workspace: workspaceName
+        }));
         const mode = this.modeService.getCurrentMode();
         const fallbackPrompt = this.buildLegacySystemPrompt(context, retryCount, memoryBankContext, memoriesPrompt);
 
@@ -90,25 +110,51 @@ export class PromptManager {
                 .filter((name: unknown): name is string => typeof name === 'string' && name.length > 0);
             const toolSpecs = this.agentManager.getPromptToolSpecs(modeToolNames);
 
+            const basePromptConfig = this.modeService.getPromptConfig();
+            const promptConfig: PromptConfig | undefined = context.promptVariantOverride
+                ? (
+                    basePromptConfig
+                        ? { ...basePromptConfig, variant: context.promptVariantOverride }
+                        : basePromptConfig
+                )
+                : basePromptConfig;
+
             const result = this.promptBuilder.build({
                 mode: mode?.id || context.selectedMode || 'architect',
                 model: context.selectedModel,
-                workspaceName: vscode.workspace.name || 'No workspace open',
+                workspaceName,
                 retryCount,
                 memoryBankContext,
                 memoriesPrompt,
                 conversationSummary: context.conversationSummary,
                 tools: toolSpecs,
-                promptConfig: this.modeService.getPromptConfig()
+                promptConfig
             }, {
                 strictTemplates: false,
                 legacyFallbackPrompt: fallbackPrompt
             });
 
             log.info(`PromptBuilder active: id=${result.metadata.promptId} version=${result.metadata.version} variant=${result.metadata.variant} hash=${result.metadata.hash} fallback=${result.metadata.usedFallback}`);
+            log.info(JSON.stringify({
+                'perf.phase': 'prepareSystemPrompt',
+                duration_ms: Date.now() - start,
+                flow_id: context.currentFlowId || null,
+                model: context.selectedModel || null,
+                workspace: workspaceName,
+                variant: result.metadata.variant
+            }));
             return result.prompt;
         } catch (error) {
             log.warn(`PromptBuilder failed, using legacy prompt: ${(error as Error).message}`);
+            log.info(JSON.stringify({
+                'perf.phase': 'prepareSystemPrompt',
+                duration_ms: Date.now() - start,
+                flow_id: context.currentFlowId || null,
+                model: context.selectedModel || null,
+                workspace: workspaceName,
+                variant: context.promptVariantOverride || this.modeService.getPromptConfig()?.variant || 'default',
+                fallback: true
+            }));
             return fallbackPrompt;
         }
     }
@@ -176,6 +222,7 @@ When using create_plan, use valid JSON.
  * Handles summarization and pruning of conversation history.
  */
 export class ConversationPruner {
+    private lastLegacySummaryHistoryLength = 0;
     constructor(
         private openRouterService: OpenRouterService,
         private agentManager: AgentManager
@@ -222,6 +269,7 @@ export class ConversationPruner {
 
     private async pruneConversationHistoryLegacy(context: ChatViewContext): Promise<void> {
         if (context.conversationHistory.length <= LEGACY_MAX_HISTORY_LENGTH) return;
+        const config = this.getPruningConfig();
 
         log.info(`Pruning conversation history from ${context.conversationHistory.length} messages...`);
         let pruneIndex = NUM_MESSAGES_TO_PRUNE;
@@ -234,6 +282,12 @@ export class ConversationPruner {
         }
 
         const messagesToSummarize = context.conversationHistory.slice(0, pruneIndex);
+        const messagesSinceLastSummary = Math.max(0, context.conversationHistory.length - this.lastLegacySummaryHistoryLength);
+        if (this.lastLegacySummaryHistoryLength > 0 && messagesSinceLastSummary < config.legacyPruneCooldownMsgs) {
+            log.info(`Legacy pruning cooldown active (${messagesSinceLastSummary}/${config.legacyPruneCooldownMsgs}). Applying deterministic fallback.`);
+            context.conversationHistory = context.conversationHistory.slice(pruneIndex);
+            return;
+        }
         if (!context.selectedModel) {
             log.warn('Skipping conversation summary because no model is selected.');
             return;
@@ -250,18 +304,27 @@ Conversation Segment:
 ${messagesToSummarize.map(m => `[${m.role}]: ${m.content}`).join('\n')}
 `;
 
-            let summary = '';
-            for await (const chunk of this.openRouterService.streamChatMessage({
-                messages: [{ role: 'user', content: summaryPrompt }],
-                model: context.selectedModel,
-                stream: true,
-                temperature: 0.1,
-                max_tokens: 1000
-            })) {
-                if (typeof chunk === 'string') {
-                    summary += chunk;
+            const summaryPromise = (async () => {
+                let summary = '';
+                for await (const chunk of this.openRouterService.streamChatMessage({
+                    messages: [{ role: 'user', content: summaryPrompt }],
+                    model: context.selectedModel || undefined,
+                    stream: true,
+                    temperature: 0.1,
+                    max_tokens: 1000
+                })) {
+                    if (typeof chunk === 'string') {
+                        summary += chunk;
+                    }
                 }
-            }
+                return summary;
+            })();
+
+            const timeoutMs = 25000;
+            const summary = await Promise.race<string>([
+                summaryPromise,
+                new Promise<string>((_, reject) => setTimeout(() => reject(new Error(`legacy_summary_timeout_${timeoutMs}ms`)), timeoutMs))
+            ]);
 
             if (summary) {
                 context.conversationSummary = summary;
@@ -271,10 +334,13 @@ ${messagesToSummarize.map(m => `[${m.role}]: ${m.content}`).join('\n')}
                     log.error('Failed to persist summary to memory:', memError);
                 }
                 context.conversationHistory = context.conversationHistory.slice(pruneIndex);
+                this.lastLegacySummaryHistoryLength = context.conversationHistory.length;
                 log.info(`History pruned. ${context.conversationHistory.length} messages remaining.`);
             }
         } catch (error) {
             log.error('Failed to summarize and prune conversation history:', error);
+            log.info('Legacy pruning fallback activated after summary failure.');
+            context.conversationHistory = context.conversationHistory.slice(pruneIndex);
         }
     }
 
@@ -285,11 +351,13 @@ ${messagesToSummarize.map(m => `[${m.role}]: ${m.content}`).join('\n')}
         const maxHistoryLength = this.sanitizePositiveInt(config.get<number>('pruning.maxHistoryLength', MAX_HISTORY_LENGTH), MAX_HISTORY_LENGTH);
         const maxToolOutputChars = this.sanitizePositiveInt(config.get<number>('pruning.maxToolOutputChars', DEFAULT_MAX_TOOL_OUTPUT_CHARS), DEFAULT_MAX_TOOL_OUTPUT_CHARS);
         const protectedTurns = this.sanitizePositiveInt(config.get<number>('pruning.protectedTurns', DEFAULT_PROTECTED_TURNS), DEFAULT_PROTECTED_TURNS);
+        const legacyPruneCooldownMsgs = this.sanitizePositiveInt(config.get<number>('performance.legacyPruneCooldownMsgs', 20), 20);
         return {
             strategy,
             maxHistoryLength,
             maxToolOutputChars,
-            protectedTurns
+            protectedTurns,
+            legacyPruneCooldownMsgs
         };
     }
 

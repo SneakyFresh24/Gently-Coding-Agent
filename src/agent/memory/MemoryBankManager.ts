@@ -1,5 +1,6 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import * as vscode from 'vscode';
 
 export interface MemoryBankFile {
     name: string;
@@ -10,10 +11,23 @@ export class MemoryBankManager {
     private workspaceRoot: string;
     private memoryBankPath: string;
     private isInitialized: boolean = false;
+    private contextCache: { value: string; createdAt: number } | null = null;
+    private inFlightFormattedContext: Promise<string> | null = null;
 
     constructor(workspaceRoot: string) {
         this.workspaceRoot = workspaceRoot;
         this.memoryBankPath = path.join(workspaceRoot, '.gently', 'memory-bank');
+    }
+
+    invalidateCache(): void {
+        this.contextCache = null;
+    }
+
+    private getCacheTtlMs(): number {
+        const configured = vscode.workspace.getConfiguration('gently').get<number>('performance.memoryBankCacheTtlMs', 30000);
+        if (!Number.isFinite(configured)) return 30000;
+        const normalized = Math.floor(Number(configured));
+        return normalized > 0 ? normalized : 30000;
     }
 
     /**
@@ -90,6 +104,7 @@ export class MemoryBankManager {
         const filePath = path.join(this.memoryBankPath, filename);
         try {
             await fs.writeFile(filePath, content, 'utf-8');
+            this.invalidateCache();
             console.log(`[MemoryBankManager] Wrote memory bank file: ${filename}`);
         } catch (error) {
             console.error('[MemoryBankManager] Error writing memory bank:', error);
@@ -120,6 +135,7 @@ export class MemoryBankManager {
 
             const appendContent = exists ? `\n\n---\n\n${content}` : content;
             await fs.appendFile(filePath, appendContent, 'utf-8');
+            this.invalidateCache();
             console.log(`[MemoryBankManager] Appended to memory bank file: ${filename}`);
         } catch (error) {
             console.error('[MemoryBankManager] Error appending to memory bank:', error);
@@ -131,8 +147,34 @@ export class MemoryBankManager {
      * Formats all memory bank files into a single context string
      */
     async getFormattedContext(options: { includeHeader?: boolean; compact?: boolean } = {}): Promise<string> {
+        const canCache = options.includeHeader !== false && !options.compact;
+        const ttlMs = this.getCacheTtlMs();
+        const now = Date.now();
+        if (canCache && this.contextCache && (now - this.contextCache.createdAt) < ttlMs) {
+            console.log(JSON.stringify({
+                'perf.phase': 'memory_bank_context',
+                cache_hit: true,
+                duration_ms: 0
+            }));
+            return this.contextCache.value;
+        }
+
+        if (canCache && this.inFlightFormattedContext) {
+            return this.inFlightFormattedContext;
+        }
+
+        const run = async (): Promise<string> => {
+            const start = Date.now();
         const banks = await this.getAllMemoryBanks();
         if (banks.length === 0) {
+            if (canCache) {
+                this.contextCache = { value: '', createdAt: Date.now() };
+            }
+            console.log(JSON.stringify({
+                'perf.phase': 'memory_bank_context',
+                cache_hit: false,
+                duration_ms: Date.now() - start
+            }));
             return '';
         }
 
@@ -152,6 +194,26 @@ export class MemoryBankManager {
             }
         }
 
+            if (canCache) {
+                this.contextCache = { value: structuredContext, createdAt: Date.now() };
+            }
+            console.log(JSON.stringify({
+                'perf.phase': 'memory_bank_context',
+                cache_hit: false,
+                duration_ms: Date.now() - start
+            }));
         return structuredContext;
+        };
+
+        if (!canCache) {
+            return run();
+        }
+
+        this.inFlightFormattedContext = run();
+        try {
+            return await this.inFlightFormattedContext;
+        } finally {
+            this.inFlightFormattedContext = null;
+        }
     }
 }

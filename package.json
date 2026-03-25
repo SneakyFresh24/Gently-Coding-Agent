@@ -185,6 +185,51 @@
           "maximum": 10,
           "description": "Number of most recent user turns protected from tool-output pruning."
         },
+        "gently.performance.memoryBankCacheTtlMs": {
+          "type": "number",
+          "default": 30000,
+          "minimum": 1000,
+          "maximum": 300000,
+          "description": "TTL in milliseconds for caching formatted memory-bank prompt context."
+        },
+        "gently.performance.legacyPruneCooldownMsgs": {
+          "type": "number",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 500,
+          "description": "Minimum newly added messages before another legacy LLM summary is allowed."
+        },
+        "gently.performance.adaptivePromptVariant": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable adaptive downshift to minimal prompt variant under context pressure."
+        },
+        "gently.performance.adaptiveVariantUsageThresholdPercent": {
+          "type": "number",
+          "default": 75,
+          "minimum": 1,
+          "maximum": 99,
+          "description": "Usage percentage threshold to force minimal prompt variant."
+        },
+        "gently.performance.adaptiveVariantNoToolTurns": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 20,
+          "description": "Number of recent turns used when checking for zero tool-call activity."
+        },
+        "gently.performance.adaptiveVariantMinConversationLength": {
+          "type": "number",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 500,
+          "description": "Minimum conversation length before no-tool adaptive minimal variant can trigger."
+        },
+        "gently.retrieval.rerankerEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable cross-encoder reranking in hybrid retrieval (disable for lower latency)."
+        },
         "gently.validation.enabled": {
           "type": "boolean",
           "default": true,

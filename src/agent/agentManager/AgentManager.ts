@@ -253,6 +253,10 @@ export class AgentManager {
     return await this.container.resolve<MemoryBankManager>('memoryBankManager').getFormattedContext();
   }
 
+  invalidateMemoryBankCache(): void {
+    this.container.resolve<MemoryBankManager>('memoryBankManager').invalidateCache();
+  }
+
   async updateMemoryBank(category: string, content: string, append: boolean = false): Promise<void> {
     const manager = this.container.resolve<MemoryBankManager>('memoryBankManager');
     if (append) {

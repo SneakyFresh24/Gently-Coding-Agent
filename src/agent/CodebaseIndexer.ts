@@ -403,6 +403,9 @@ export class CodebaseIndexer {
       await this.generateEmbeddings();
     }
 
+    const rerankerEnabled = vscode.workspace.getConfiguration('gently').get<boolean>('retrieval.rerankerEnabled', true);
+    this.hybridRetriever.setRerankerEnabled(rerankerEnabled !== false);
+
     const hybridResults = await this.hybridRetriever.search(query, {
       topK: maxResults,
       bm25Weight: 0.6,

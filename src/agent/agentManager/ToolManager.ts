@@ -363,7 +363,38 @@ export class ToolManager implements IAgentService {
       }
 
       // 3. EXECUTION
+      const executionStart = Date.now();
+      const isWriteTool = toolName === 'write_file';
+      const writePath = params?.path || params?.file_path;
+      const contentLength = typeof params?.content === 'string' ? params.content.length : 0;
+      if (isWriteTool && this.eventCallback) {
+        this.eventCallback({
+          type: 'write_started',
+          path: writePath,
+          bytes: contentLength,
+          timestamp: Date.now()
+        });
+      }
       const result = await tool.execute(params);
+      if (isWriteTool && this.eventCallback) {
+        this.eventCallback({
+          type: 'write_finished',
+          path: writePath,
+          bytes: contentLength,
+          success: result?.success !== false,
+          durationMs: Date.now() - executionStart,
+          timestamp: Date.now()
+        });
+      }
+      if (isWriteTool) {
+        console.log(JSON.stringify({
+          'perf.phase': 'write_file',
+          duration_ms: Date.now() - executionStart,
+          tool: toolName,
+          file_path: writePath,
+          bytes: contentLength
+        }));
+      }
 
       // 4. POST-HOOKS
       await this.hookManager.executePostHooks(toolName, params, result);
@@ -375,6 +406,17 @@ export class ToolManager implements IAgentService {
 
       return result;
     } catch (error) {
+      if (toolName === 'write_file' && this.eventCallback) {
+        this.eventCallback({
+          type: 'write_finished',
+          path: params?.path || params?.file_path,
+          bytes: typeof params?.content === 'string' ? params.content.length : 0,
+          success: false,
+          error: String(error),
+          durationMs: 0,
+          timestamp: Date.now()
+        });
+      }
       console.error(`[ToolManager] Error executing tool ${toolName}:`, error);
       throw error;
     }

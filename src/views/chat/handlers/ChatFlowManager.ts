@@ -110,10 +110,15 @@ export class ChatFlowManager {
         const mode = this.modeService.getCurrentMode();
         const baseTemperature = mode?.temperature ?? 0.7;
         const sampling = this.getSamplingOverrides(context.selectedModel, baseTemperature);
+        const modelMaxOutputStart = Date.now();
         const modelMaxOutput = await this.openRouterService.getMaxTokens(context.selectedModel);
+        this.logPerf('getMaxTokens', Date.now() - modelMaxOutputStart, context, { model: context.selectedModel });
+        const modelContextLengthStart = Date.now();
         const modelContextLength = await this.openRouterService.getContextLength(context.selectedModel);
+        this.logPerf('getContextLength', Date.now() - modelContextLengthStart, context, { model: context.selectedModel });
 
         this.sendMessageToWebview({ type: 'activityUpdate', label: 'Preparing prompt...' });
+        context.promptVariantOverride = this.resolveAdaptivePromptVariant(context, modelContextLength);
         const systemPrompt = await this.promptManager.prepareSystemPrompt(context, retryCount);
         const strictSequenceMode = this.isKnownSequenceIssueModel(context.selectedModel);
         if (strictSequenceMode) {
@@ -479,6 +484,56 @@ export class ChatFlowManager {
             });
             await this.generateAndStreamResponse(context, retryPrompt, 0, true);
         }
+    }
+
+    private resolveAdaptivePromptVariant(context: ChatViewContext, modelContextLength: number): 'minimal' | undefined {
+        const config = vscode.workspace.getConfiguration('gently');
+        const adaptiveEnabled = config.get<boolean>('performance.adaptivePromptVariant', true);
+        if (!adaptiveEnabled || modelContextLength <= 0) return undefined;
+
+        const usageThreshold = this.sanitizePositiveInt(config.get<number>('performance.adaptiveVariantUsageThresholdPercent', 75), 75);
+        const noToolTurns = this.sanitizePositiveInt(config.get<number>('performance.adaptiveVariantNoToolTurns', 3), 3);
+        const minConversationLength = this.sanitizePositiveInt(config.get<number>('performance.adaptiveVariantMinConversationLength', 20), 20);
+
+        const approxUsedTokens = Math.ceil(
+            context.conversationHistory.reduce((sum, msg) => sum + (msg.content?.length || 0), 0) / 4
+        );
+        const usagePercent = (approxUsedTokens / modelContextLength) * 100;
+        const recentMessages = context.conversationHistory.slice(-Math.max(1, noToolTurns * 2));
+        const recentToolCalls = recentMessages.reduce((sum, msg) => {
+            if (msg.role !== 'assistant' || !Array.isArray(msg.tool_calls)) return sum;
+            return sum + msg.tool_calls.length;
+        }, 0);
+        const conversationLength = context.conversationHistory.length;
+
+        const useMinimal = usagePercent > usageThreshold || (recentToolCalls === 0 && conversationLength > minConversationLength);
+        this.logPerf('adaptivePromptVariantDecision', 0, context, {
+            usage_percent: Number(usagePercent.toFixed(2)),
+            usage_threshold_percent: usageThreshold,
+            recent_tool_calls: recentToolCalls,
+            recent_turn_window: noToolTurns,
+            conversation_length: conversationLength,
+            min_conversation_length: minConversationLength,
+            variant: useMinimal ? 'minimal' : 'configured'
+        });
+        return useMinimal ? 'minimal' : undefined;
+    }
+
+    private sanitizePositiveInt(value: number | undefined, fallback: number): number {
+        if (!Number.isFinite(value)) return fallback;
+        const normalized = Math.floor(Number(value));
+        return normalized > 0 ? normalized : fallback;
+    }
+
+    private logPerf(phase: string, durationMs: number, context: ChatViewContext, extra: Record<string, unknown> = {}): void {
+        log.info(JSON.stringify({
+            'perf.phase': phase,
+            duration_ms: durationMs,
+            flow_id: context.currentFlowId || null,
+            model: context.selectedModel || null,
+            workspace: vscode.workspace.name || 'No workspace open',
+            ...extra
+        }));
     }
 
     private buildTruncationFollowUpPrompt(incomplete: IncompleteToolCall): string {

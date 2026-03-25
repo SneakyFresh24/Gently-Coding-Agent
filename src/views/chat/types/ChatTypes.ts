@@ -85,6 +85,7 @@ export interface ChatViewContext {
   recentToolCallFingerprints?: string[];
   doomLoopAllowedTools?: Set<string>;
   recentModeSwitches?: string[];
+  promptVariantOverride?: 'default' | 'minimal' | 'detailed';
 }
 
 /**

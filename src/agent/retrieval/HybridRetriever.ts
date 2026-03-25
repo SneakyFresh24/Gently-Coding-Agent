@@ -24,6 +24,7 @@ export class HybridRetriever {
   private reranker: CrossEncoderReranker | null = null;
   private fileToChunks: Map<string, string[]> = new Map();
   private embeddingProvider: TransformersEmbeddingProvider;
+  private rerankerEnabled: boolean = true;
 
   constructor(
     hnsw: HNSWIndex,
@@ -75,6 +76,10 @@ export class HybridRetriever {
     const lexicalWeight = 1 - denseWeight;
 
     const startTime = Date.now();
+    let embeddingGenerationMs = 0;
+    let hnswSearchMs = 0;
+    let bm25SearchMs = 0;
+    let rerankerMs = 0;
 
     // Stage 0: Dynamic efSearch scaling based on index size
     const stats = this.hnsw.getStats();
@@ -88,8 +93,17 @@ export class HybridRetriever {
 
     // Stage 1: Parallel Coarse Retrieval
     const [denseResults, lexicalResults] = await Promise.all([
-      this.searchDense(query, rerankCount),
-      this.bm25.search(query, rerankCount)
+      this.searchDense(query, rerankCount).then((result) => {
+        embeddingGenerationMs = result.embeddingGenerationMs;
+        hnswSearchMs = result.hnswSearchMs;
+        return result.results;
+      }),
+      (async () => {
+        const start = Date.now();
+        const results = await this.bm25.search(query, rerankCount);
+        bm25SearchMs = Date.now() - start;
+        return results;
+      })()
     ]);
 
     // Stage 2: Reciprocal Rank Fusion (RRF)
@@ -100,11 +114,13 @@ export class HybridRetriever {
 
     // Stage 3: (Optional) Cross-Encoder Re-ranking
     let finalResults: HybridSearchResult[];
-    if (this.reranker && candidates.length > 0) {
+    if (this.reranker && this.rerankerEnabled && candidates.length > 0) {
+      const rerankStart = Date.now();
       const reranked = await this.reranker.rerank(
         query,
         candidates.map(c => ({ id: c.id, content: c.content }))
       );
+      rerankerMs = Date.now() - rerankStart;
 
       // Merge reranker scores back (weighted 0.8 Reranker / 0.2 RRF)
       finalResults = candidates.map((c, i) => {
@@ -125,19 +141,41 @@ export class HybridRetriever {
 
     const totalTime = Date.now() - startTime;
     console.log(`[HybridRetriever] Search complete in ${totalTime}ms (Dense: ${denseResults.length}, Lexical: ${lexicalResults.length})`);
+    console.log(JSON.stringify({
+      'perf.phase': 'hybrid_retriever_search',
+      retrieval_stage: 'complete',
+      duration_ms: totalTime,
+      embedding_generation_ms: embeddingGenerationMs,
+      hnsw_search_ms: hnswSearchMs,
+      bm25_search_ms: bm25SearchMs,
+      reranker_ms: rerankerMs,
+      reranker_enabled: this.rerankerEnabled
+    }));
 
     return finalResults.slice(0, topK);
   }
 
-  private async searchDense(query: string, k: number): Promise<SearchResult[]> {
+  private async searchDense(query: string, k: number): Promise<{ results: SearchResult[]; embeddingGenerationMs: number; hnswSearchMs: number }> {
+    const embeddingStart = Date.now();
     const embedding = await this.embeddingProvider.embed(query);
+    const embeddingGenerationMs = Date.now() - embeddingStart;
+    const hnswStart = Date.now();
     const results = await this.hnsw.search(embedding, k);
-    return results.map(r => ({
+    const hnswSearchMs = Date.now() - hnswStart;
+    return {
+      embeddingGenerationMs,
+      hnswSearchMs,
+      results: results.map(r => ({
       id: r.id,
       score: r.score,
       content: (r.metadata as any)?.content || '',
       metadata: r.metadata
-    }));
+      }))
+    };
+  }
+
+  setRerankerEnabled(enabled: boolean): void {
+    this.rerankerEnabled = enabled;
   }
 
   /**

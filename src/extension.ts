@@ -60,6 +60,21 @@ export async function activate(context: vscode.ExtensionContext) {
     console.error('Failed to initialize agent:', err);
   }
 
+  const memoryBankWatcher = vscode.workspace.createFileSystemWatcher('**/.gently/memory-bank/*.md');
+  const invalidateMemoryBankCache = () => {
+    try {
+      agentManager.invalidateMemoryBankCache();
+    } catch (error) {
+      console.warn('[extension] Failed to invalidate memory-bank cache:', error);
+    }
+  };
+  context.subscriptions.push(
+    memoryBankWatcher,
+    memoryBankWatcher.onDidChange(invalidateMemoryBankCache),
+    memoryBankWatcher.onDidCreate(invalidateMemoryBankCache),
+    memoryBankWatcher.onDidDelete(invalidateMemoryBankCache)
+  );
+
   // ── Chat view provider ────────────────────────────────────────────────────
   chatViewProvider = new ChatViewProvider(
     context.extensionUri,
