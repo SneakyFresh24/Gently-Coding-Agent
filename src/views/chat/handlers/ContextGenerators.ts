@@ -4,13 +4,29 @@ import { FileReferenceManager, FileReference } from '../../../agent/fileReferenc
 import { RESPONSE_FORMATTING_PROMPT } from '../../../agent/prompts/responseFormatting';
 import { PromptBuilder } from '../../../agent/prompts/PromptBuilder';
 import { ModeService } from '../../../modes/ModeService';
-import { ChatViewContext } from '../types/ChatTypes';
+import { ChatViewContext, Message } from '../types/ChatTypes';
 import { OpenRouterService } from '../../../services/OpenRouterService';
 import { LogService } from '../../../services/LogService';
 
 const log = new LogService('ContextGenerators');
-export const MAX_HISTORY_LENGTH = 20;
+export const MAX_HISTORY_LENGTH = 50;
 export const NUM_MESSAGES_TO_PRUNE = 10;
+const LEGACY_MAX_HISTORY_LENGTH = 20;
+const DEFAULT_MAX_TOOL_OUTPUT_CHARS = 500;
+const DEFAULT_PROTECTED_TURNS = 2;
+const TRUNCATION_PREFIX = '[TRUNCATED';
+const MARKER_ARROW = '→';
+const TOOL_OUTPUT_REASON = 'tool_output';
+const HISTORY_LIMIT_REASON = 'history_limit';
+
+type PruningStrategy = 'hybrid' | 'legacy';
+
+interface PruningConfig {
+    strategy: PruningStrategy;
+    maxHistoryLength: number;
+    maxToolOutputChars: number;
+    protectedTurns: number;
+}
 
 /**
  * Handles parsing of @references in user messages.
@@ -166,11 +182,46 @@ export class ConversationPruner {
     ) { }
 
     shouldPrune(historyLength: number): boolean {
-        return historyLength > MAX_HISTORY_LENGTH;
+        const config = this.getPruningConfig();
+        const threshold = config.strategy === 'legacy' ? LEGACY_MAX_HISTORY_LENGTH : config.maxHistoryLength;
+        return historyLength > threshold;
     }
 
     async pruneConversationHistory(context: ChatViewContext): Promise<void> {
-        if (context.conversationHistory.length <= MAX_HISTORY_LENGTH) return;
+        const config = this.getPruningConfig();
+        const threshold = config.strategy === 'legacy' ? LEGACY_MAX_HISTORY_LENGTH : config.maxHistoryLength;
+        if (context.conversationHistory.length <= threshold) return;
+
+        if (config.strategy === 'legacy') {
+            await this.pruneConversationHistoryLegacy(context);
+            return;
+        }
+
+        const beforeMessages = context.conversationHistory;
+        const beforeCount = beforeMessages.length;
+        const beforeTokens = this.estimateTokens(beforeMessages);
+        const phase1Result = this.pruneToolOutputs(beforeMessages, config);
+        const phase2Result = this.truncateHistoryByRules(phase1Result.messages, config.maxHistoryLength);
+        const finalMessages = phase2Result.messages;
+        const afterTokens = this.estimateTokens(finalMessages);
+        const savedTokens = Math.max(0, beforeTokens - afterTokens);
+
+        context.conversationHistory = finalMessages;
+
+        log.info(
+            `Hybrid Pruning: ${beforeCount}->${finalMessages.length} msgs, saved ~${savedTokens} tokens, ` +
+            `phase1=${phase1Result.toolOutputsPruned}, phase2=${phase2Result.messagesDropped}`
+        );
+
+        if (finalMessages.length > config.maxHistoryLength) {
+            log.warn(
+                `Hybrid pruning remains above maxHistoryLength (${finalMessages.length}/${config.maxHistoryLength}) due to protected/pinned/system messages.`
+            );
+        }
+    }
+
+    private async pruneConversationHistoryLegacy(context: ChatViewContext): Promise<void> {
+        if (context.conversationHistory.length <= LEGACY_MAX_HISTORY_LENGTH) return;
 
         log.info(`Pruning conversation history from ${context.conversationHistory.length} messages...`);
         let pruneIndex = NUM_MESSAGES_TO_PRUNE;
@@ -225,5 +276,193 @@ ${messagesToSummarize.map(m => `[${m.role}]: ${m.content}`).join('\n')}
         } catch (error) {
             log.error('Failed to summarize and prune conversation history:', error);
         }
+    }
+
+    private getPruningConfig(): PruningConfig {
+        const config = vscode.workspace.getConfiguration('gently');
+        const strategyRaw = String(config.get<string>('pruning.strategy', 'hybrid')).toLowerCase();
+        const strategy: PruningStrategy = strategyRaw === 'legacy' ? 'legacy' : 'hybrid';
+        const maxHistoryLength = this.sanitizePositiveInt(config.get<number>('pruning.maxHistoryLength', MAX_HISTORY_LENGTH), MAX_HISTORY_LENGTH);
+        const maxToolOutputChars = this.sanitizePositiveInt(config.get<number>('pruning.maxToolOutputChars', DEFAULT_MAX_TOOL_OUTPUT_CHARS), DEFAULT_MAX_TOOL_OUTPUT_CHARS);
+        const protectedTurns = this.sanitizePositiveInt(config.get<number>('pruning.protectedTurns', DEFAULT_PROTECTED_TURNS), DEFAULT_PROTECTED_TURNS);
+        return {
+            strategy,
+            maxHistoryLength,
+            maxToolOutputChars,
+            protectedTurns
+        };
+    }
+
+    private sanitizePositiveInt(value: number | undefined, fallback: number): number {
+        if (!Number.isFinite(value)) return fallback;
+        const normalized = Math.floor(Number(value));
+        return normalized > 0 ? normalized : fallback;
+    }
+
+    private pruneToolOutputs(messages: Message[], config: PruningConfig): { messages: Message[]; toolOutputsPruned: number } {
+        const protectedFrom = this.getProtectedHistoryStart(messages, config.protectedTurns);
+        let toolOutputsPruned = 0;
+
+        const updated = messages.map((message, index) => {
+            if (index >= protectedFrom) return message;
+            let changed = false;
+            let nextMessage: Message = message;
+
+            if (message.role === 'tool' && typeof message.content === 'string') {
+                const truncatedToolContent = this.truncateToolOutputWithMarker(message.content, config.maxToolOutputChars);
+                if (truncatedToolContent !== message.content) {
+                    nextMessage = { ...nextMessage, content: truncatedToolContent };
+                    changed = true;
+                    toolOutputsPruned += 1;
+                }
+            }
+
+            // Defensive fallback: some providers may attach result fields directly to assistant tool calls.
+            if (message.role === 'assistant' && Array.isArray(message.tool_calls)) {
+                const updatedToolCalls = message.tool_calls.map((toolCall: any) => {
+                    if (!toolCall || typeof toolCall !== 'object') return toolCall;
+                    const resultValue = toolCall.result;
+                    if (typeof resultValue !== 'string') return toolCall;
+                    const truncatedResult = this.truncateToolOutputWithMarker(resultValue, config.maxToolOutputChars);
+                    if (truncatedResult === resultValue) return toolCall;
+                    changed = true;
+                    toolOutputsPruned += 1;
+                    return { ...toolCall, result: truncatedResult };
+                });
+
+                if (changed) {
+                    nextMessage = { ...nextMessage, tool_calls: updatedToolCalls };
+                }
+            }
+
+            return changed ? nextMessage : message;
+        });
+
+        return { messages: updated, toolOutputsPruned };
+    }
+
+    private truncateHistoryByRules(messages: Message[], maxHistoryLength: number): { messages: Message[]; messagesDropped: number } {
+        const withoutOldMarkers = messages.filter((message) => !this.isHistoryLimitMarker(message));
+        if (withoutOldMarkers.length <= maxHistoryLength) {
+            return { messages: withoutOldMarkers, messagesDropped: 0 };
+        }
+
+        const selectedIndexes = new Set<number>();
+        this.addMandatorySystemAndPinned(withoutOldMarkers, selectedIndexes);
+        this.addFirstPair(withoutOldMarkers, selectedIndexes);
+
+        const targetSize = Math.max(1, maxHistoryLength - 1);
+        for (let i = withoutOldMarkers.length - 1; i >= 0 && selectedIndexes.size < targetSize; i--) {
+            selectedIndexes.add(i);
+        }
+
+        const truncated = withoutOldMarkers.filter((_, index) => selectedIndexes.has(index));
+        const messagesDropped = Math.max(0, withoutOldMarkers.length - truncated.length);
+        if (messagesDropped <= 0) {
+            return { messages: truncated, messagesDropped: 0 };
+        }
+
+        const marker = this.buildMarker(`${withoutOldMarkers.length}msgs`, HISTORY_LIMIT_REASON);
+        const markerMessage: Message = {
+            id: `prune-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            role: 'system',
+            content: marker,
+            timestamp: Date.now(),
+            isSystemMessage: true
+        };
+        const insertAt = this.findSystemInsertIndex(truncated);
+        const withMarker = [...truncated.slice(0, insertAt), markerMessage, ...truncated.slice(insertAt)];
+
+        return { messages: withMarker, messagesDropped };
+    }
+
+    private addMandatorySystemAndPinned(messages: Message[], selectedIndexes: Set<number>): void {
+        messages.forEach((message, index) => {
+            if (message.role === 'system' || message.pinned) {
+                selectedIndexes.add(index);
+            }
+        });
+    }
+
+    private addFirstPair(messages: Message[], selectedIndexes: Set<number>): void {
+        const firstUserIndex = messages.findIndex((message) => message.role === 'user');
+        if (firstUserIndex < 0) return;
+        selectedIndexes.add(firstUserIndex);
+        const firstAssistantAfterUser = messages.findIndex((message, index) => index > firstUserIndex && message.role === 'assistant');
+        if (firstAssistantAfterUser >= 0) {
+            selectedIndexes.add(firstAssistantAfterUser);
+        }
+    }
+
+    private getProtectedHistoryStart(messages: Message[], protectedTurns: number): number {
+        let userTurnsSeen = 0;
+        for (let i = messages.length - 1; i >= 0; i--) {
+            if (messages[i].role === 'user') {
+                userTurnsSeen += 1;
+                if (userTurnsSeen >= protectedTurns) {
+                    return i;
+                }
+            }
+        }
+        return 0;
+    }
+
+    private truncateToolOutputWithMarker(content: string, maxLen: number): string {
+        if (!content || content.length <= maxLen) return content;
+        const marker = this.buildMarker(String(content.length), TOOL_OUTPUT_REASON);
+        if (maxLen <= marker.length) {
+            return marker.slice(0, maxLen);
+        }
+        const contentBudget = maxLen - marker.length - 1;
+        const prioritized = this.truncateWithPriority(content, contentBudget);
+        return `${prioritized}\n${marker}`;
+    }
+
+    private truncateWithPriority(content: string, maxLen: number): string {
+        if (!content || maxLen <= 0) return '';
+        if (content.length <= maxLen) return content;
+
+        const lines = content.split('\n');
+        const head = lines.slice(0, 3);
+        const errorLines = lines.filter((line) => /(error|failed|exception)/i.test(line)).slice(0, 5);
+        const tail = lines.slice(-5);
+        const combined = [...head, ...errorLines, ...tail];
+        const deduped: string[] = [];
+        const seen = new Set<string>();
+        for (const line of combined) {
+            if (seen.has(line)) continue;
+            seen.add(line);
+            deduped.push(line);
+        }
+
+        return deduped.join('\n').slice(0, maxLen);
+    }
+
+    private buildMarker(from: string, reason: string): string {
+        return `${TRUNCATION_PREFIX} ${from}${MARKER_ARROW}${reason}]`;
+    }
+
+    private isHistoryLimitMarker(message: Message): boolean {
+        return message.role === 'system'
+            && typeof message.content === 'string'
+            && message.content.startsWith(TRUNCATION_PREFIX)
+            && message.content.includes(`${MARKER_ARROW}${HISTORY_LIMIT_REASON}]`);
+    }
+
+    private findSystemInsertIndex(messages: Message[]): number {
+        let index = 0;
+        while (index < messages.length && messages[index].role === 'system') {
+            index++;
+        }
+        return index;
+    }
+
+    private estimateTokens(messages: Message[]): number {
+        const totalChars = messages.reduce((sum, message) => {
+            const contentLen = typeof message.content === 'string' ? message.content.length : 0;
+            const toolCallLen = Array.isArray(message.tool_calls) ? JSON.stringify(message.tool_calls).length : 0;
+            return sum + contentLen + toolCallLen;
+        }, 0);
+        return Math.ceil(totalChars / 4);
     }
 }

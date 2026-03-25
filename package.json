@@ -155,6 +155,36 @@
           "default": "",
           "description": "Optional prompt registry id override (e.g. architect-core, code-core) for rollback/testing."
         },
+        "gently.pruning.strategy": {
+          "type": "string",
+          "default": "hybrid",
+          "enum": [
+            "hybrid",
+            "legacy"
+          ],
+          "description": "Conversation pruning strategy (hybrid = fast local pruning, legacy = LLM summarization fallback)."
+        },
+        "gently.pruning.maxHistoryLength": {
+          "type": "number",
+          "default": 50,
+          "minimum": 10,
+          "maximum": 200,
+          "description": "Maximum conversation messages kept before pruning in hybrid mode."
+        },
+        "gently.pruning.maxToolOutputChars": {
+          "type": "number",
+          "default": 500,
+          "minimum": 100,
+          "maximum": 10000,
+          "description": "Maximum characters kept for pruned tool outputs in hybrid mode."
+        },
+        "gently.pruning.protectedTurns": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 10,
+          "description": "Number of most recent user turns protected from tool-output pruning."
+        },
         "gently.validation.enabled": {
           "type": "boolean",
           "default": true,

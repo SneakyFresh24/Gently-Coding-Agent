@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { ChatViewContext, Message, toChatMessage, fromChatMessage } from '../types/ChatTypes';
 import { AgentManager } from '../../../agent/agentManager/AgentManager';
 import { SessionHistoryManager } from './SessionHistoryManager';
-import { ReferenceParser, PromptManager, ConversationPruner, MAX_HISTORY_LENGTH } from './ContextGenerators';
+import { ReferenceParser, PromptManager, ConversationPruner } from './ContextGenerators';
 import { StreamingService } from './StreamingService';
 import { ToolCallManager } from '../toolcall';
 import { ToolCallDispatcher } from './ExecutionDispatchers';
@@ -71,10 +71,6 @@ export class ChatFlowManager {
             this.sendMessageToWebview({ type: 'activityUpdate', label: 'Denkt nach...' });
             this.sendMessageToWebview({ type: 'activityUpdate', label: 'Analyzing project...' });
             const { enhancedMessage, loadedReferences } = await this.referenceParser.processMessageWithReferences(userMessage, silent, fileReferences);
-            const needsPruning = context.conversationHistory.length > MAX_HISTORY_LENGTH;
-            if (needsPruning) {
-                this.sendMessageToWebview({ type: 'activityUpdate', label: 'Pruning conversation...' });
-            }
 
             if (!silent && enhancedMessage) {
                 await this.sessionHistoryManager.addMessageToHistory(context, enhancedMessage, userMessage, loadedReferences);
