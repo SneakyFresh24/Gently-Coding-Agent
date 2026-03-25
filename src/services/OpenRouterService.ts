@@ -7,6 +7,14 @@ import { ApiKeyManager } from './ApiKeyManager';
 import { StreamingToolCallProcessor } from '../core/streaming/StreamingToolCallProcessor';
 import { StreamChunk, ToolCall as CoreToolCall, UsageInfo } from '../core/streaming/types';
 import { TokenTracker } from '../utils/TokenTracker';
+import {
+    getProviderCacheHints,
+    requiresMessageSequenceFix,
+    sanitizeSchemaForGemini,
+    isGeminiModelFamily,
+    getImageMimeFallback,
+    ReasoningConfig
+} from '../utils/modelPolicy';
 
 export type ToolCall = CoreToolCall;
 
@@ -24,12 +32,19 @@ export interface ChatRequest {
     messages: ChatMessage[];
     model?: string;
     temperature?: number;
+    top_p?: number;
     top_k?: number;
     max_tokens?: number;
     stream?: boolean;
     tools?: any[];
     response_format?: { type: 'json_object' } | { type: 'json_schema', json_schema: any };
+    reasoning?: ReasoningConfig;
     plugins?: any[];
+    modelPolicyOptions?: {
+        providerCachingEnabled?: boolean;
+        geminiSchemaSanitizationEnabled?: boolean;
+        webpFallbackEnabled?: boolean;
+    };
 }
 
 export interface Tool {
@@ -122,10 +137,24 @@ export class OpenRouterService {
 
         // Validate & clean messages
         let messages = this.cleanMessages(request.messages);
-        if (model && model.toLowerCase().includes('mistral')) {
+        if (requiresMessageSequenceFix(model)) {
             messages = this.normalizeMistralMessages(messages);
             messages = this.applyMistralToolUserSequenceGuard(messages);
         }
+        messages = this.applyImagePayloadPolicy(
+            messages,
+            model,
+            request.modelPolicyOptions?.webpFallbackEnabled !== false
+        );
+        const providerCachingEnabled = request.modelPolicyOptions?.providerCachingEnabled !== false;
+        if (providerCachingEnabled) {
+            messages = this.applyProviderCacheHints(messages);
+        }
+        const tools = this.sanitizeToolsForModel(
+            request.tools,
+            model,
+            request.modelPolicyOptions?.geminiSchemaSanitizationEnabled !== false
+        );
 
         const body: any = {
             messages,
@@ -134,11 +163,16 @@ export class OpenRouterService {
         if (model) body.model = model;
 
         if (request.temperature !== undefined) body.temperature = request.temperature;
+        if (request.top_p !== undefined) body.top_p = request.top_p;
         if (request.top_k !== undefined) body.top_k = request.top_k;
         if (request.max_tokens !== undefined) body.max_tokens = request.max_tokens;
-        if (request.tools && request.tools.length > 0) body.tools = request.tools;
+        if (tools && tools.length > 0) body.tools = tools;
         if (request.response_format) body.response_format = request.response_format;
+        if (request.reasoning && Object.keys(request.reasoning).length > 0) body.reasoning = request.reasoning;
         if (request.plugins && request.plugins.length > 0) body.plugins = request.plugins;
+        if (providerCachingEnabled) {
+            body.providerOptions = getProviderCacheHints('openrouter');
+        }
 
         console.log(`[OpenRouterService] Sending request: model=${model || '<openrouter-default>'}, messages=${messages.length}, stream=${body.stream}`);
 
@@ -397,6 +431,97 @@ export class OpenRouterService {
             if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0) return true;
             return typeof m.content === 'string' && m.content.trim() !== '';
         });
+    }
+
+    private applyProviderCacheHints(messages: ChatMessage[]): ChatMessage[] {
+        if (!Array.isArray(messages) || messages.length === 0) return messages;
+        const cloned = messages.map((message) => ({ ...message })) as Array<ChatMessage & Record<string, any>>;
+        const systemIndexes = cloned
+            .map((message, index) => ({ message, index }))
+            .filter(({ message }) => message.role === 'system')
+            .slice(0, 2)
+            .map(({ index }) => index);
+
+        const lastStart = Math.max(0, cloned.length - 2);
+        const targetIndexes = new Set<number>([...systemIndexes, ...Array.from({ length: cloned.length - lastStart }, (_, i) => lastStart + i)]);
+
+        for (const index of targetIndexes) {
+            const target = cloned[index];
+            if (!target) continue;
+            target.cache_control = { type: 'ephemeral' };
+            target.cacheControl = { type: 'ephemeral' };
+        }
+
+        return cloned;
+    }
+
+    private sanitizeToolsForModel(tools: any[] | undefined, modelId: string | undefined, enabled: boolean): any[] | undefined {
+        if (!enabled || !Array.isArray(tools) || tools.length === 0 || !isGeminiModelFamily(modelId)) {
+            return tools;
+        }
+        return tools.map((tool) => {
+            if (!tool || typeof tool !== 'object' || !tool.function || typeof tool.function !== 'object') {
+                return tool;
+            }
+            const parameters = (tool.function as any).parameters;
+            if (!parameters || typeof parameters !== 'object') return tool;
+            return {
+                ...tool,
+                function: {
+                    ...tool.function,
+                    parameters: sanitizeSchemaForGemini(parameters)
+                }
+            };
+        });
+    }
+
+    private applyImagePayloadPolicy(messages: ChatMessage[], modelId: string | undefined, enabled: boolean): ChatMessage[] {
+        if (!enabled || !Array.isArray(messages) || messages.length === 0) return messages;
+        return messages.map((message) => {
+            const content: any = (message as any).content;
+            if (!content || typeof content !== 'object') return message;
+
+            // Hook-point for future multimodal payloads:
+            // If content parts carry image mime types, normalize unsupported webp -> png for affected models.
+            const patchedContent = this.patchImageMimeNode(content, modelId);
+            if (patchedContent === content) return message;
+            return { ...(message as any), content: patchedContent };
+        });
+    }
+
+    private patchImageMimeNode(node: any, modelId: string | undefined): any {
+        if (!node || typeof node !== 'object') return node;
+        if (Array.isArray(node)) {
+            let changed = false;
+            const next = node.map((entry) => {
+                const patched = this.patchImageMimeNode(entry, modelId);
+                if (patched !== entry) changed = true;
+                return patched;
+            });
+            return changed ? next : node;
+        }
+
+        const clone: any = { ...node };
+        let changed = false;
+        for (const key of ['mimeType', 'mime_type', 'mediaType', 'media_type']) {
+            if (typeof clone[key] === 'string') {
+                const fallback = getImageMimeFallback(modelId, clone[key]);
+                if (fallback !== clone[key]) {
+                    clone[key] = fallback;
+                    changed = true;
+                }
+            }
+        }
+        for (const [key, value] of Object.entries(clone)) {
+            if (value && typeof value === 'object') {
+                const patched = this.patchImageMimeNode(value, modelId);
+                if (patched !== value) {
+                    clone[key] = patched;
+                    changed = true;
+                }
+            }
+        }
+        return changed ? clone : node;
     }
 
     /** List available models from OpenRouter (for UI pickers) */

@@ -70,6 +70,19 @@ describe('ToolCallUtils.validateAndRepairToolCalls', () => {
     expect(first).not.toBe(second);
   });
 
+  it('normalizes claude tool ids with disallowed characters and keeps uniqueness', () => {
+    const calls = [
+      { id: 'tool_üñïçödé_123', function: { name: 'read_file', arguments: '{}' } },
+      { id: 'tool_üñïçödé_123', function: { name: 'list_files', arguments: '{}' } }
+    ];
+
+    const result = ToolCallUtils.validateAndRepairToolCalls(calls, { model: 'anthropic/claude-4.1-sonnet' });
+    expect(result.invalidToolCalls).toHaveLength(0);
+    expect(result.validToolCalls[0].id).toBe('tool______d__123');
+    expect(result.validToolCalls[1].id).toBe('tool______d__123_2');
+    expect(result.warnings.some((w) => w.includes('claude_tool_call_id_normalized'))).toBe(true);
+  });
+
   it('rejects oversized write_file content with standardized code', () => {
     const calls = [
       {

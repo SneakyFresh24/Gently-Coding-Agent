@@ -2,7 +2,7 @@
   "name": "gently",
   "displayName": "Gently - AI Coding Agent",
   "description": "AI-powered coding assistant — Bring Your Own Key via OpenRouter",
-  "version": "0.9.0",
+  "version": "0.9.4",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -229,6 +229,40 @@
           "type": "boolean",
           "default": true,
           "description": "Enable cross-encoder reranking in hybrid retrieval (disable for lower latency)."
+        },
+        "gently.modelPolicies.skipReasoningForIncompatibleModels": {
+          "type": "boolean",
+          "default": true,
+          "description": "Skip streaming reasoning content for models with known low-signal or noisy reasoning output."
+        },
+        "gently.modelPolicies.providerCaching.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable provider-specific cache hints for selected prompt messages."
+        },
+        "gently.modelPolicies.geminiSchemaSanitization.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Sanitize JSON schemas for Gemini compatibility before sending tool definitions."
+        },
+        "gently.modelPolicies.reasoningEffort": {
+          "type": "string",
+          "default": "medium",
+          "enum": [
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "description": "Preferred reasoning effort level for model families that support reasoning controls."
+        },
+        "gently.modelPolicies.webpFallback.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Prepare WebP fallback policy hook (active when image payload support is enabled)."
         },
         "gently.validation.enabled": {
           "type": "boolean",

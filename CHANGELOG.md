@@ -2,6 +2,22 @@
 
 All notable changes to the "Gently" extension will be documented in this file.
 
+## [0.9.3] - 2026-03-25
+
+### Added
+- **Model Policy Layer (v1)**: Added centralized model-policy utilities (`src/utils/modelPolicy.ts`) covering model-family detection, reasoning policies, provider cache-hints, Gemini schema sanitization, Claude ID normalization, and WebP fallback hook-points.
+- **Model Policy Settings**:
+  - `gently.modelPolicies.skipReasoningForIncompatibleModels`
+  - `gently.modelPolicies.providerCaching.enabled`
+  - `gently.modelPolicies.geminiSchemaSanitization.enabled`
+  - `gently.modelPolicies.reasoningEffort`
+  - `gently.modelPolicies.webpFallback.enabled`
+
+### Changed
+- **Streaming Reasoning Handling**: Reasoning deltas are now skipped by policy for known noisy/incompatible models (default on, configurable).
+- **Request Normalization**: Request pipeline now uses model-policy decisions for sequence-fix application, provider cache hints, and Gemini tool-schema sanitization.
+- **Sampling/Reasoning Wiring**: Chat flow now forwards policy-driven `top_p`, `top_k`, and reasoning configuration through the streaming request path.
+
 ## [0.9.2] - 2026-03-25
 
 ### Added

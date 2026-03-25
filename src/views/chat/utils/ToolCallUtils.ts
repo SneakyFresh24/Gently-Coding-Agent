@@ -6,6 +6,7 @@ import { repairAndParseJSON, createLLMErrorMessage } from '../../../utils/jsonRe
 import { createHash } from 'crypto';
 import { ToolResultErrorCodes, ToolResultErrorCode } from '../toolcall/ToolResultErrorCodes';
 import * as path from 'path';
+import { isClaudeModelFamily, normalizeToolCallIdForClaude } from '../../../utils/modelPolicy';
 
 export interface ToolCallValidationResult {
   validToolCalls: any[];
@@ -191,6 +192,23 @@ export class ToolCallUtils {
           seenIds.set(normalizedId, 1);
           if (normalizedId !== originalId) {
             const warning = `[${modelTag}] mistral_tool_call_id_normalized: "${originalId}" -> "${normalizedId}"`;
+            warnings.push(warning);
+          }
+          toolCall.id = normalizedId;
+        } else if (isClaudeModelFamily(options?.model)) {
+          const originalId = typeof toolCall.id === 'string' && toolCall.id.trim() !== ''
+            ? toolCall.id.trim()
+            : `tool_${index + 1}`;
+          const sanitized = normalizeToolCallIdForClaude(originalId);
+          let normalizedId = sanitized;
+          let duplicateSuffix = 2;
+          while (seenIds.has(normalizedId)) {
+            normalizedId = `${sanitized}_${duplicateSuffix}`;
+            duplicateSuffix += 1;
+          }
+          seenIds.set(normalizedId, 1);
+          if (normalizedId !== originalId) {
+            const warning = `[${modelTag}] claude_tool_call_id_normalized: "${originalId}" -> "${normalizedId}"`;
             warnings.push(warning);
           }
           toolCall.id = normalizedId;

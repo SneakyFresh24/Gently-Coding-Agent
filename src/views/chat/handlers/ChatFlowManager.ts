@@ -16,6 +16,7 @@ import { SessionType } from '../../../services/HistoryManager';
 import { TokenBudgetManager } from './TokenBudgetManager';
 import { ConversationRepairResult } from '../toolcall';
 import { buildTruncatedRetryPrompt } from '../toolcall/ToolRetryPrompts';
+import { getModelPolicyResult, getReasoningConfig, ReasoningConfig, ReasoningEffort } from '../../../utils/modelPolicy';
 
 const log = new LogService('ChatFlowManager');
 
@@ -278,7 +279,9 @@ export class ChatFlowManager {
             try {
                 const result = await this.streamingService.streamResponse(messages, {
                     temperature: sampling.temperature,
+                    topP: sampling.topP,
                     topK: sampling.topK,
+                    reasoningConfig: sampling.reasoningConfig,
                     maxTokens,
                     model: context.selectedModel,
                     tools,
@@ -727,15 +730,39 @@ export class ChatFlowManager {
         return tools;
     }
 
-    private getSamplingOverrides(modelId: string, baseTemperature: number): { temperature: number; topK?: number } {
-        const normalized = modelId.toLowerCase();
-        if (normalized.includes('minimax-m2')) {
-            return { temperature: 1.0, topK: 40 };
-        }
-        if (normalized.includes('minimax-m1')) {
-            return { temperature: baseTemperature, topK: 20 };
-        }
-        return { temperature: baseTemperature };
+    private getSamplingOverrides(
+        modelId: string,
+        baseTemperature: number
+    ): { temperature: number; topP?: number; topK?: number; reasoningConfig?: ReasoningConfig } {
+        const policy = getModelPolicyResult(modelId);
+        const config = vscode.workspace.getConfiguration('gently');
+        const effortRaw = String(config.get<string>('modelPolicies.reasoningEffort', 'medium')).toLowerCase();
+        const allowedEfforts: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+        const effort: ReasoningEffort = allowedEfforts.includes(effortRaw as ReasoningEffort)
+            ? effortRaw as ReasoningEffort
+            : 'medium';
+        const reasoningConfig = getReasoningConfig(modelId, effort, 'openrouter');
+
+        const shouldUsePolicyTemperature = policy.family === 'minimax' || policy.family === 'claude';
+        const temperature = shouldUsePolicyTemperature ? policy.recommendedTemperature : baseTemperature;
+        log.info(JSON.stringify({
+            'perf.phase': 'modelPolicySampling',
+            duration_ms: 0,
+            model: modelId,
+            workspace: vscode.workspace.name || 'No workspace open',
+            family: policy.family,
+            temperature,
+            top_p: policy.recommendedTopP,
+            top_k: policy.recommendedTopK,
+            reasoning_enabled: Object.keys(reasoningConfig).length > 0
+        }));
+
+        return {
+            temperature,
+            topP: policy.recommendedTopP,
+            topK: policy.recommendedTopK,
+            reasoningConfig: Object.keys(reasoningConfig).length > 0 ? reasoningConfig : undefined
+        };
     }
 
     private getConfiguredMaxTokens(): number {
