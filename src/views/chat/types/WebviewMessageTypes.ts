@@ -714,6 +714,17 @@ export interface ClearMessagesMessage {
 }
 
 /**
+ * Notify webview that conversation history was compacted/compressed.
+ */
+export interface MessagesCompressedMessage {
+  type: 'messagesCompressed';
+  remainingMessages: Message[];
+  droppedCount: number;
+  summaryInserted: boolean;
+  source: 'budget' | 'overflow_rescue';
+}
+
+/**
  * Generic error message
  */
 export interface ErrorMessage {
@@ -1325,6 +1336,7 @@ export type OutboundWebviewMessage =
   | SessionsUpdateMessage
   | LoadMessagesMessage
   | ClearMessagesMessage
+  | MessagesCompressedMessage
   | ErrorMessage
   | InfoMessage
   | AddFileReferenceMessage

@@ -4,8 +4,20 @@
 
 import { HistoryManager, SessionType, SessionStatus, Session } from '../../../services/HistoryManager';
 import { ModelPricing, OpenRouterService } from '../../../services/OpenRouterService';
+import { Mutex } from '../../../core/state/Mutex';
+
+class MutexTimeoutError extends Error {
+  constructor(operation: string, timeoutMs: number) {
+    super(`Session operation "${operation}" timed out after ${timeoutMs}ms while waiting for lock.`);
+    this.name = 'MutexTimeoutError';
+  }
+}
 
 export class SessionHandler {
+  private readonly sessionMutex = new Mutex();
+  private readonly sessionLockTimeoutMs = 3000;
+  private latestSwitchToken = 0;
+
   constructor(
     private readonly sessionManager: HistoryManager,
     private readonly sendMessageToWebview: (message: any) => void,
@@ -27,11 +39,29 @@ export class SessionHandler {
     return this.normalizeSessionModel(this.getCurrentSelectedModel());
   }
 
+  private async withSessionLock<T>(operation: string, fn: () => Promise<T>): Promise<T> {
+    try {
+      return await this.sessionMutex.runExclusive(async () => fn(), this.sessionLockTimeoutMs);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('Mutex acquire timeout')) {
+        throw new MutexTimeoutError(operation, this.sessionLockTimeoutMs);
+      }
+      throw error;
+    }
+  }
+
+  private emitSessionBusy(operation: string): void {
+    this.sendMessageToWebview({
+      type: 'info',
+      message: `Session operation "${operation}" is busy. Please retry.`
+    });
+  }
+
   private resolveRuntimeModel(sessionModel: unknown): string | null {
     return this.normalizeSessionModel(sessionModel) || this.getGlobalSelectedModel();
   }
 
-  async handleGetSessions(): Promise<void> {
+  async handleGetSessions(options?: { suppressActiveMessagesLoad?: boolean }): Promise<void> {
     try {
       console.log('[SessionHandler] Getting sessions...');
       // Force refresh of sessions from storage
@@ -101,7 +131,7 @@ export class SessionHandler {
 
       // Also send messages from active session to UI
       const activeChatSession = activeSession as any; // Cast to access ChatSession properties
-      if (activeChatSession && activeChatSession.messages && activeChatSession.messages.length > 0) {
+      if (!options?.suppressActiveMessagesLoad && activeChatSession && activeChatSession.messages && activeChatSession.messages.length > 0) {
         console.log(`[SessionHandler] Sending ${activeChatSession.messages.length} messages from active session to UI`);
         this.sendMessageToWebview({
           type: 'loadMessages',
@@ -153,46 +183,45 @@ export class SessionHandler {
 
   async handleNewSession(): Promise<void> {
     try {
-      console.log('[SessionHandler] Creating new session...');
-      const selectedModel = this.resolveRuntimeModel(null);
-      const sessionData = {
-        name: 'New Chat',
-        temperature: 0.7,
-        maxTokens: 4000,
-        metadata: {
-          tokenUsage: this.getDefaultTokenUsage(),
-          ...(selectedModel ? { model: selectedModel } : {})
+      await this.withSessionLock('newSession', async () => {
+        console.log('[SessionHandler] Creating new session...');
+        this.sendMessageToWebview({
+          type: 'clearMessages'
+        });
+        const selectedModel = this.resolveRuntimeModel(null);
+        const sessionData = {
+          name: 'New Chat',
+          temperature: 0.7,
+          maxTokens: 4000,
+          metadata: {
+            tokenUsage: this.getDefaultTokenUsage(),
+            ...(selectedModel ? { model: selectedModel } : {})
+          }
+        };
+
+        const session = await this.sessionManager.createSession(SessionType.CHAT, sessionData);
+        console.log(`[SessionHandler] Created new session: ${session.id}`);
+        await this.sessionManager.setActiveSession(SessionType.CHAT, session.id);
+        console.log(`[SessionHandler] Set active session: ${session.id}`);
+
+        this.sendMessageToWebview({
+          type: 'restoreSessionState',
+          tasks: null,
+          context: null
+        });
+
+        if (this.applyRuntimeSessionState) {
+          await this.applyRuntimeSessionState([], this.resolveRuntimeModel(session.metadata?.model));
         }
-      };
 
-      const session = await this.sessionManager.createSession(SessionType.CHAT, sessionData);
-      console.log(`[SessionHandler] Created new session: ${session.id}`);
-
-      // Set as active session
-      await this.sessionManager.setActiveSession(SessionType.CHAT, session.id);
-      console.log(`[SessionHandler] Set active session: ${session.id}`);
-
-      // Send updated sessions
-      console.log(`[SessionHandler] Getting sessions to update UI`);
-      await this.handleGetSessions();
-      console.log(`[SessionHandler] Sessions updated in UI`);
-
-      // Clear messages and state in UI
-      this.sendMessageToWebview({
-        type: 'clearMessages'
+        await this.sendTokenUsageForSession(session);
+        await this.handleGetSessions({ suppressActiveMessagesLoad: true });
       });
-      this.sendMessageToWebview({
-        type: 'restoreSessionState',
-        tasks: null,
-        context: null
-      });
-
-      if (this.applyRuntimeSessionState) {
-        await this.applyRuntimeSessionState([], this.resolveRuntimeModel(session.metadata?.model));
-      }
-
-      await this.sendTokenUsageForSession(session);
     } catch (error) {
+      if (error instanceof MutexTimeoutError) {
+        this.emitSessionBusy('newSession');
+        return;
+      }
       console.error('[SessionHandler] Error creating new session:', error);
       this.sendMessageToWebview({
         type: 'error',
@@ -201,67 +230,75 @@ export class SessionHandler {
     }
   }
 
+  private async handleSwitchSessionInternal(sessionId: string, switchToken: number): Promise<void> {
+    const session = await this.sessionManager.getSession(sessionId);
+    if (!session) {
+      console.error(`[SessionHandler] Session not found: ${sessionId}`);
+      return;
+    }
+
+    console.log(`[SessionHandler] Switching to session ${sessionId}`);
+    const chatSession = session as any; // Cast to access ChatSession properties
+    console.log(`[SessionHandler] Session has ${chatSession.messages?.length || 0} messages`);
+
+    const messageCounts = {
+      user: 0,
+      assistant: 0,
+      system: 0,
+      'command-approval': 0,
+      'tool-execution': 0
+    };
+
+    if (chatSession.messages) {
+      chatSession.messages.forEach((m: any) => {
+        if (m.role in messageCounts) {
+          (messageCounts as any)[m.role]++;
+        }
+      });
+    }
+
+    console.log('[SessionHandler] Message breakdown:', messageCounts);
+    await this.sessionManager.setActiveSession(SessionType.CHAT, sessionId);
+
+    const messages = chatSession.messages || [];
+    if (switchToken !== this.latestSwitchToken) {
+      console.log(`[SessionHandler] Ignoring stale switch load for ${sessionId}`);
+      return;
+    }
+    this.sendMessageToWebview({
+      type: 'loadMessages',
+      messages
+    });
+
+    if (this.applyRuntimeSessionState) {
+      await this.applyRuntimeSessionState(
+        messages,
+        this.resolveRuntimeModel(session.metadata?.model)
+      );
+    }
+
+    this.sendMessageToWebview({
+      type: 'restoreSessionState',
+      tasks: session.metadata.tasks,
+      context: session.metadata.context
+    });
+
+    await this.handleGetSessions({ suppressActiveMessagesLoad: true });
+    console.log(`[SessionHandler] Switched to session: ${sessionId}`);
+  }
+
   async handleSwitchSession(sessionId: string): Promise<void> {
+    const switchToken = ++this.latestSwitchToken;
     try {
-      const session = await this.sessionManager.getSession(sessionId);
-      if (!session) {
-        console.error(`[SessionHandler] Session not found: ${sessionId}`);
+      await this.withSessionLock('switchSession', async () => {
+        this.sendMessageToWebview({ type: 'clearMessages' });
+        await this.handleSwitchSessionInternal(sessionId, switchToken);
+      });
+    } catch (error) {
+      if (error instanceof MutexTimeoutError) {
+        this.emitSessionBusy('switchSession');
         return;
       }
-
-      console.log(`[SessionHandler] Switching to session ${sessionId}`);
-      const chatSession = session as any; // Cast to access ChatSession properties
-      console.log(`[SessionHandler] Session has ${chatSession.messages?.length || 0} messages`);
-
-      // Count message types
-      const messageCounts = {
-        user: 0,
-        assistant: 0,
-        system: 0,
-        'command-approval': 0,
-        'tool-execution': 0
-      };
-
-      if (chatSession.messages) {
-        chatSession.messages.forEach((m: any) => {
-          if (m.role in messageCounts) {
-            (messageCounts as any)[m.role]++;
-          }
-        });
-      }
-
-      console.log('[SessionHandler] Message breakdown:', messageCounts);
-
-      // Set as active
-      await this.sessionManager.setActiveSession(SessionType.CHAT, sessionId);
-
-      // Send messages to UI
-      const messages = chatSession.messages || [];
-      console.log(`[SessionHandler] Sending ${messages.length} messages to UI`);
-      this.sendMessageToWebview({
-        type: 'loadMessages',
-        messages
-      });
-
-      if (this.applyRuntimeSessionState) {
-        await this.applyRuntimeSessionState(
-          messages,
-          this.resolveRuntimeModel(session.metadata?.model)
-        );
-      }
-
-      // Restore specialized session state to store
-      this.sendMessageToWebview({
-        type: 'restoreSessionState',
-        tasks: session.metadata.tasks,
-        context: session.metadata.context
-      });
-
-      // Update sessions list
-      await this.handleGetSessions();
-
-      console.log(`[SessionHandler] Switched to session: ${sessionId}`);
-    } catch (error) {
       console.error('[SessionHandler] Error switching session:', error);
       this.sendMessageToWebview({
         type: 'error',
@@ -273,80 +310,78 @@ export class SessionHandler {
   async handleSessionAction(action: string, sessionId: string, payload?: any): Promise<void> {
     try {
       console.log(`[SessionHandler] Handling session action: ${action} for session: ${sessionId}`);
-
       if (action === 'clearAll') {
-        // Handle clearing all sessions
         await this.handleClearAllSessions();
         return;
       }
 
-      const session = await this.sessionManager.getSession(sessionId);
-      if (!session) {
-        console.error(`[SessionHandler] Session not found: ${sessionId}`);
+      await this.withSessionLock(`sessionAction:${action}`, async () => {
+        const session = await this.sessionManager.getSession(sessionId);
+        if (!session) {
+          console.error(`[SessionHandler] Session not found: ${sessionId}`);
+          return;
+        }
+
+        switch (action) {
+          case 'rename':
+            console.log(`[SessionHandler] Renaming session to: ${payload.title}`);
+            await this.sessionManager.updateSession(sessionId, {
+              name: payload.title
+            });
+            break;
+          case 'delete': {
+            console.log(`[SessionHandler] Deleting session: ${sessionId}`);
+            await this.sessionManager.deleteSession(sessionId);
+            console.log(`[SessionHandler] Session deleted successfully: ${sessionId}`);
+            this.sendMessageToWebview({ type: 'clearMessages' });
+
+            const allSessions = await this.sessionManager.getSessionsByType(SessionType.CHAT);
+            console.log(`[SessionHandler] Found ${allSessions.length} remaining sessions`);
+            if (allSessions.length > 0) {
+              const recentSession = allSessions.sort((a, b) => b.updatedAt - a.updatedAt)[0];
+              console.log(`[SessionHandler] Switching to most recent session: ${recentSession.id}`);
+              const switchToken = ++this.latestSwitchToken;
+              await this.handleSwitchSessionInternal(recentSession.id, switchToken);
+            } else {
+              console.log(`[SessionHandler] No sessions left - user must create one manually`);
+              if (this.applyRuntimeSessionState) {
+                await this.applyRuntimeSessionState([], this.resolveRuntimeModel(null));
+              }
+              await this.sendTokenUsageEmpty();
+            }
+            break;
+          }
+          case 'pin':
+          case 'unpin':
+            console.log(`[SessionHandler] ${action === 'pin' ? 'Pinning' : 'Unpinning'} session: ${sessionId}`);
+            await this.sessionManager.updateSession(sessionId, {
+              metadata: {
+                ...session.metadata,
+                isPinned: action === 'pin'
+              }
+            });
+            break;
+          case 'archive':
+          case 'unarchive':
+            console.log(`[SessionHandler] ${action === 'archive' ? 'Archiving' : 'Unarchiving'} session: ${sessionId}`);
+            await this.sessionManager.updateSession(sessionId, {
+              status: (action === 'archive' ? SessionStatus.ARCHIVED : SessionStatus.ACTIVE) as SessionStatus,
+              metadata: {
+                ...session.metadata
+              }
+            });
+            break;
+        }
+
+        console.log(`[SessionHandler] Updating sessions list after action: ${action}`);
+        await this.handleGetSessions({ suppressActiveMessagesLoad: action === 'delete' });
+        console.log(`[SessionHandler] Sessions list updated successfully`);
+      });
+    } catch (error) {
+      if (error instanceof MutexTimeoutError) {
+        this.emitSessionBusy(`sessionAction:${action}`);
         return;
       }
-
-      switch (action) {
-        case 'rename':
-          console.log(`[SessionHandler] Renaming session to: ${payload.title}`);
-          await this.sessionManager.updateSession(sessionId, {
-            name: payload.title
-          });
-          break;
-        case 'delete':
-          console.log(`[SessionHandler] Deleting session: ${sessionId}`);
-          await this.sessionManager.deleteSession(sessionId);
-          console.log(`[SessionHandler] Session deleted successfully: ${sessionId}`);
-
-          // Get all remaining sessions
-          const allSessions = await this.sessionManager.getSessionsByType(SessionType.CHAT);
-          console.log(`[SessionHandler] Found ${allSessions.length} remaining sessions`);
-
-          if (allSessions.length > 0) {
-            // Switch to the most recent session
-            const recentSession = allSessions.sort((a, b) => b.updatedAt - a.updatedAt)[0];
-            console.log(`[SessionHandler] Switching to most recent session: ${recentSession.id}`);
-            await this.handleSwitchSession(recentSession.id);
-          } else {
-            console.log(`[SessionHandler] No sessions left - user must create one manually`);
-            // Don't create a new session automatically
-            // Clear messages in UI
-            this.sendMessageToWebview({
-              type: 'clearMessages'
-            });
-            if (this.applyRuntimeSessionState) {
-              await this.applyRuntimeSessionState([], this.resolveRuntimeModel(null));
-            }
-            await this.sendTokenUsageEmpty();
-          }
-          break;
-        case 'pin':
-        case 'unpin':
-          console.log(`[SessionHandler] ${action === 'pin' ? 'Pinning' : 'Unpinning'} session: ${sessionId}`);
-          await this.sessionManager.updateSession(sessionId, {
-            metadata: {
-              ...session.metadata,
-              isPinned: action === 'pin'
-            }
-          });
-          break;
-        case 'archive':
-        case 'unarchive':
-          console.log(`[SessionHandler] ${action === 'archive' ? 'Archiving' : 'Unarchiving'} session: ${sessionId}`);
-          await this.sessionManager.updateSession(sessionId, {
-            status: (action === 'archive' ? SessionStatus.ARCHIVED : SessionStatus.ACTIVE) as SessionStatus,
-            metadata: {
-              ...session.metadata
-            }
-          });
-          break;
-      }
-
-      // Update sessions list
-      console.log(`[SessionHandler] Updating sessions list after action: ${action}`);
-      await this.handleGetSessions();
-      console.log(`[SessionHandler] Sessions list updated successfully`);
-    } catch (error) {
       console.error('[SessionHandler] Error handling session action:', error);
       this.sendMessageToWebview({
         type: 'error',
@@ -360,36 +395,35 @@ export class SessionHandler {
    */
   async handleClearAllSessions(): Promise<void> {
     try {
-      console.log('[SessionHandler] Clearing all chat sessions...');
+      await this.withSessionLock('clearAllSessions', async () => {
+        this.sendMessageToWebview({
+          type: 'clearMessages'
+        });
+        console.log('[SessionHandler] Clearing all chat sessions...');
+        const chatSessions = await this.sessionManager.getSessionsByType(SessionType.CHAT);
+        console.log(`[SessionHandler] Found ${chatSessions.length} chat sessions to delete`);
 
-      // Get all chat sessions
-      const chatSessions = await this.sessionManager.getSessionsByType(SessionType.CHAT);
-      console.log(`[SessionHandler] Found ${chatSessions.length} chat sessions to delete`);
+        for (const session of chatSessions) {
+          await this.sessionManager.deleteSession(session.id);
+          console.log(`[SessionHandler] Deleted session: ${session.id}`);
+        }
 
-      // Delete all chat sessions
-      for (const session of chatSessions) {
-        await this.sessionManager.deleteSession(session.id);
-        console.log(`[SessionHandler] Deleted session: ${session.id}`);
-      }
+        if (this.applyRuntimeSessionState) {
+          await this.applyRuntimeSessionState([], this.resolveRuntimeModel(null));
+        }
 
-      // Clear messages in UI
-      this.sendMessageToWebview({
-        type: 'clearMessages'
-      });
-
-      if (this.applyRuntimeSessionState) {
-        await this.applyRuntimeSessionState([], this.resolveRuntimeModel(null));
-      }
-
-      // Update sessions list
-      await this.handleGetSessions();
-
-      console.log('[SessionHandler] All chat sessions cleared successfully');
-      this.sendMessageToWebview({
-        type: 'info',
-        message: 'All chat sessions cleared'
+        await this.handleGetSessions({ suppressActiveMessagesLoad: true });
+        console.log('[SessionHandler] All chat sessions cleared successfully');
+        this.sendMessageToWebview({
+          type: 'info',
+          message: 'All chat sessions cleared'
+        });
       });
     } catch (error) {
+      if (error instanceof MutexTimeoutError) {
+        this.emitSessionBusy('clearAllSessions');
+        return;
+      }
       console.error('[SessionHandler] Error clearing all sessions:', error);
       this.sendMessageToWebview({
         type: 'error',

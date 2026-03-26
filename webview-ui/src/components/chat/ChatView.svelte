@@ -112,6 +112,20 @@
       },
       onLoadMessages: (data) => chatStore.hydrateMessages(data.messages),
       onClearMessages: () => chatStore.clear(),
+      onMessagesCompressed: (data) => {
+        chatStore.handleCompression({
+          remainingMessages: data.remainingMessages || [],
+          droppedCount: Number(data.droppedCount || 0),
+          summaryInserted: Boolean(data.summaryInserted)
+        });
+        chatStore.addMessage({
+          id: `sys_compression_${Date.now()}`,
+          role: 'system',
+          content: `${data.droppedCount || 0} messages compressed${data.summaryInserted ? ' (summary inserted)' : ''}.`,
+          timestamp: Date.now(),
+          isSystemMessage: true,
+        });
+      },
 
       // Generation state
       onGeneratingStart: () => {
@@ -223,7 +237,7 @@
   <div class="chat-container">
     {#if $chatStore.messages.length > 0 || $hasTask}
       <TaskHeader task={$extensionStore.currentTask} />
-      <MessagesArea messages={$chatStore.messages} />
+      <MessagesArea messages={$chatStore.messages} resetEpoch={$chatStore.messageEpoch} />
     {:else}
       <WelcomeSection />
     {/if}

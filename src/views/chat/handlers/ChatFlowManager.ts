@@ -179,19 +179,61 @@ export class ChatFlowManager {
         }
 
         let inputBudget = this.computeInputBudgetTokens(modelContextLength, compressionLevel);
-        let compression = this.tokenBudgetManager.compressMessagesForBudget(
-            context.selectedModel,
-            rawMessages,
-            tools,
-            inputBudget
-        );
+        const messageIdentityMap = new Map<ChatMessage, string>();
+        rawMessages.slice(1).forEach((chatMessage, index) => {
+            const id = context.conversationHistory[index]?.id;
+            if (id) messageIdentityMap.set(chatMessage, id);
+        });
+
+        const shouldPostponeCompression = context.isToolExecutionActive === true && estimatedInputTokens <= modelContextLength;
+        let compression = shouldPostponeCompression
+            ? {
+                messages: rawMessages,
+                inputTokens: estimatedInputTokens,
+                droppedMessages: 0,
+                wasCompressed: false,
+                summaryInserted: false
+            }
+            : this.tokenBudgetManager.compressMessagesForBudget(
+                context.selectedModel,
+                rawMessages,
+                tools,
+                inputBudget
+            );
+
+        if (shouldPostponeCompression) {
+            this.sendMessageToWebview({
+                type: 'info',
+                message: 'Compression postponed because tool execution is active.'
+            });
+        }
         if (compression.wasCompressed) {
-            this.logCompressionEvent(
+            const committed = await this.commitCompressedHistory(
+                context,
+                compression.messages,
+                messageIdentityMap,
+                {
+                    droppedCount: compression.droppedMessages,
+                    summaryInserted: compression.summaryInserted,
+                    source: 'budget'
+                }
+            );
+            if (!committed) {
+                compression = {
+                    messages: rawMessages,
+                    inputTokens: this.tokenBudgetManager.estimateInputTokens(rawMessages, tools),
+                    droppedMessages: 0,
+                    wasCompressed: false,
+                    summaryInserted: false
+                };
+            } else {
+                this.logCompressionEvent(
                 'context_compressed_before_request',
                 `model=${context.selectedModel} dropped=${compression.droppedMessages} inputTokens=${compression.inputTokens} budget=${inputBudget} level=${compressionLevel} summaryInserted=${compression.summaryInserted}`,
                 true,
                 context.currentFlowId || context.selectedModel
             );
+            }
         }
 
         if (compression.inputTokens > modelContextLength && compressionLevel !== 'aggressive') {
@@ -225,9 +267,19 @@ export class ChatFlowManager {
 
             if (overflowRescue.prunedMessages > 0) {
                 rawMessages = overflowRescue.messages;
-                context.conversationHistory = rawMessages.slice(1).map((chatMessage, index) =>
-                    fromChatMessage(chatMessage, context.conversationHistory[index]?.id)
+                const overflowCommitted = await this.commitCompressedHistory(
+                    context,
+                    rawMessages,
+                    messageIdentityMap,
+                    {
+                        droppedCount: overflowRescue.prunedMessages,
+                        summaryInserted: false,
+                        source: 'overflow_rescue'
+                    }
                 );
+                if (!overflowCommitted) {
+                    rawMessages = [rawMessages[0], ...context.conversationHistory.map(toChatMessage)];
+                }
                 compression = this.tokenBudgetManager.compressMessagesForBudget(
                     context.selectedModel,
                     rawMessages,
@@ -468,7 +520,12 @@ export class ChatFlowManager {
         this.sendMessageToWebview({ type: 'activityUpdate', label: null });
 
         if (toolCalls.length > 0) {
-            await this.toolCallDispatcher.handleToolCalls(toolCalls, messageId, context);
+            context.isToolExecutionActive = true;
+            try {
+                await this.toolCallDispatcher.handleToolCalls(toolCalls, messageId, context);
+            } finally {
+                context.isToolExecutionActive = false;
+            }
             return;
         }
 
@@ -821,6 +878,59 @@ export class ChatFlowManager {
             this.lastCompressionLogAt.set(key, now);
         }
         log.info(`${event}: ${details}`);
+    }
+
+    private async commitCompressedHistory(
+        context: ChatViewContext,
+        compressedMessages: ChatMessage[],
+        messageIdentityMap: Map<ChatMessage, string>,
+        meta: { droppedCount: number; summaryInserted: boolean; source: 'budget' | 'overflow_rescue' }
+    ): Promise<boolean> {
+        const historyWithoutSystem = compressedMessages.slice(1);
+        const repaired = this.toolCallManager.repairConversationHistory(historyWithoutSystem);
+        const normalizedHistory = repaired.repaired ? repaired.messages : historyWithoutSystem;
+        const compressedHistory = normalizedHistory.map((chatMessage) => {
+            const mappedId = messageIdentityMap.get(chatMessage);
+            return fromChatMessage(chatMessage, mappedId);
+        });
+
+        try {
+            const activeSession = await this.sessionHistoryManager.getActiveSession(SessionType.CHAT);
+            if (!activeSession) {
+                this.sendMessageToWebview({
+                    type: 'info',
+                    message: 'Compression skipped: no active session available for durable sync.'
+                });
+                return false;
+            }
+
+            const chatProvider = this.sessionHistoryManager.getChatProvider();
+            if (!chatProvider) {
+                this.sendMessageToWebview({
+                    type: 'info',
+                    message: 'Compression skipped: chat provider unavailable for durable sync.'
+                });
+                return false;
+            }
+
+            await chatProvider.updateSession(activeSession.id, { messages: compressedHistory });
+            context.conversationHistory = compressedHistory;
+            this.sendMessageToWebview({
+                type: 'messagesCompressed',
+                droppedCount: meta.droppedCount,
+                summaryInserted: meta.summaryInserted,
+                source: meta.source,
+                remainingMessages: compressedHistory
+            } as any);
+            return true;
+        } catch (error) {
+            log.error('Failed to commit compressed history atomically', error);
+            this.sendMessageToWebview({
+                type: 'error',
+                message: 'Compression could not be persisted. Keeping current history unchanged.'
+            });
+            return false;
+        }
     }
 
     dispose(): void {

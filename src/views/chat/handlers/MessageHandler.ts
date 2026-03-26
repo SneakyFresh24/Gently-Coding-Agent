@@ -128,7 +128,8 @@ export class MessageHandler {
       consecutiveMistakeCount: 0,
       recentToolCallFingerprints: [],
       doomLoopAllowedTools: new Set<string>(),
-      recentModeSwitches: []
+      recentModeSwitches: [],
+      isToolExecutionActive: false
     };
 
     this.loadStoredState();

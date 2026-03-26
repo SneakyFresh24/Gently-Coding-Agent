@@ -11,6 +11,7 @@ import { extensionStore } from './extensionStore';
 
 interface ChatStoreState {
   messages: Message[];
+  messageEpoch: number;
   inputValue: string;
   selectedFiles: string[];
   streamingMessageId: string | null;
@@ -19,6 +20,7 @@ interface ChatStoreState {
 
 const initialState: ChatStoreState = {
   messages: [],
+  messageEpoch: 0,
   inputValue: '',
   selectedFiles: [],
   streamingMessageId: null,
@@ -185,7 +187,35 @@ function createChatStore() {
 
     /** Replace all messages (e.g., session load) */
     hydrateMessages(messages: Message[]) {
-      update(s => ({ ...s, messages, streamingMessageId: null }));
+      update(s => ({
+        ...s,
+        messages,
+        messageEpoch: s.messageEpoch + 1,
+        streamingMessageId: null
+      }));
+    },
+
+    /** Reconcile messages after backend compression */
+    handleCompression(data: { remainingMessages: Message[]; droppedCount: number; summaryInserted?: boolean }) {
+      const incoming = Array.isArray(data.remainingMessages) ? data.remainingMessages : [];
+      update(s => {
+        const existingById = new Map(s.messages.map((m) => [m.id, m]));
+        const reconciled = incoming.map((msg) => {
+          const existing = existingById.get(msg.id);
+          return existing ? { ...existing, ...msg } : msg;
+        });
+        const streamingStillExists = s.streamingMessageId
+          ? reconciled.some((msg) => msg.id === s.streamingMessageId)
+          : false;
+
+        return {
+          ...s,
+          messages: reconciled,
+          messageEpoch: s.messageEpoch + 1,
+          streamingMessageId: streamingStillExists ? s.streamingMessageId : null,
+          error: null
+        };
+      });
     },
 
     /** Clear everything */

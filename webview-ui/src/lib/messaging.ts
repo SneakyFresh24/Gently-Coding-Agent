@@ -24,6 +24,7 @@ export interface MessageHandlers {
   onSystemMessage?: (data: any) => void;
   onLoadMessages?: (data: any) => void;
   onClearMessages?: (data: any) => void;
+  onMessagesCompressed?: (data: any) => void;
 
   // Generation state
   onGeneratingStart?: () => void;
@@ -114,6 +115,7 @@ const TYPE_TO_HANDLER: Record<string, keyof MessageHandlers> = {
   systemMessage: 'onSystemMessage',
   loadMessages: 'onLoadMessages',
   clearMessages: 'onClearMessages',
+  messagesCompressed: 'onMessagesCompressed',
   generatingStart: 'onGeneratingStart',
   generatingEnd: 'onGeneratingEnd',
   processingStart: 'onProcessingStart',

@@ -86,6 +86,7 @@ export interface ChatViewContext {
   doomLoopAllowedTools?: Set<string>;
   recentModeSwitches?: string[];
   promptVariantOverride?: 'default' | 'minimal' | 'detailed';
+  isToolExecutionActive?: boolean;
 }
 
 /**

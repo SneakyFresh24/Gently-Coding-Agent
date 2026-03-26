@@ -251,6 +251,7 @@ export type OutboundMessageType =
   | 'systemMessage'
   | 'loadMessages'
   | 'clearMessages'
+  | 'messagesCompressed'
   | 'sessionsUpdate'
   | 'contextUpdate'
   | 'checkpointRestored'

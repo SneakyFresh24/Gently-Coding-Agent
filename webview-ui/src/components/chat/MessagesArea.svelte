@@ -11,8 +11,10 @@
 
   let {
     messages = [],
+    resetEpoch = 0,
   }: {
     messages?: Message[];
+    resetEpoch?: number;
   } = $props();
 
   let containerRef: HTMLDivElement | undefined = $state();
@@ -70,10 +72,12 @@
   });
 
   $effect(() => {
+    const epoch = resetEpoch;
     const currentMessages = messages;
     const virtualized = isVirtualized;
     const messageCount = currentMessages.length;
     const lastContent = currentMessages[messageCount - 1]?.content;
+    void epoch;
     void messageCount;
     void lastContent;
 
@@ -81,6 +85,7 @@
       if (virtualized) {
         $virtualizerStore.measure();
       }
+      autoScroll = true;
 
       scrollToBottom();
     });
