@@ -531,8 +531,6 @@ export class ToolCallUtils {
 
     for (const toolCall of toolCalls) {
       try {
-        const toolName = toolCall.function.name;
-
         // Use JSON repair system
         const repairResult = this.repairAndParseJSON(toolCall.function.arguments);
         if (!repairResult.success) {
@@ -555,6 +553,14 @@ export class ToolCallUtils {
           toolArgs.changes.forEach((change: any) => {
             if (change.path) {
               filePaths.add(change.path);
+            }
+          });
+        }
+        if (toolArgs.file_edits && Array.isArray(toolArgs.file_edits)) {
+          toolArgs.file_edits.forEach((fileEdit: any) => {
+            const nestedPath = fileEdit?.file_path || fileEdit?.path;
+            if (typeof nestedPath === 'string' && nestedPath.trim().length > 0) {
+              filePaths.add(nestedPath);
             }
           });
         }
@@ -584,6 +590,9 @@ export class ToolCallUtils {
       case 'safe_edit_file':
         return `Editing file ${filePath || toolArgs.file_path || 'unknown'}...`;
       case 'apply_block_edit':
+        if (Array.isArray(toolArgs.file_edits) && toolArgs.file_edits.length > 0) {
+          return `Applying block edits to ${toolArgs.file_edits.length} files...`;
+        }
         return `Applying edits to ${toolArgs.file_path || 'unknown'}...`;
       case 'list_files':
         return `Listing files...`;
@@ -681,10 +690,26 @@ export class ToolCallUtils {
         break;
       case 'apply_block_edit':
         comment.text = 'Applied block edits';
-        comment.details.push({
-          type: 'file',
-          path: toolArgs.file_path
-        });
+        if (Array.isArray(toolArgs.file_edits) && toolArgs.file_edits.length > 0) {
+          toolArgs.file_edits.forEach((fileEdit: any) => {
+            const nestedPath = fileEdit?.file_path || fileEdit?.path;
+            if (nestedPath) {
+              comment.details.push({
+                type: 'file',
+                path: nestedPath
+              });
+            }
+          });
+          comment.details.push({
+            type: 'info',
+            text: `${toolArgs.file_edits.length} file(s) targeted`
+          });
+        } else {
+          comment.details.push({
+            type: 'file',
+            path: toolArgs.file_path
+          });
+        }
         if (result && result.appliedCount) {
           comment.details.push({
             type: 'info',

@@ -289,21 +289,43 @@ export class ToolManager implements IAgentService {
   private groupToolCalls(toolCalls: { id: string, name: string, params: any }[]): { id: string, name: string, params: any }[][] {
     const fileToGroup = new Map<string, { id: string, name: string, params: any }[]>();
     const independentGroups: { id: string, name: string, params: any }[][] = [];
+    const collectTargetPaths = (params: any): string[] => {
+      const paths = new Set<string>();
+      const directPath = params?.path || params?.file_path;
+      if (typeof directPath === 'string' && directPath.trim().length > 0) {
+        paths.add(path.normalize(directPath));
+      }
+      if (Array.isArray(params?.file_edits)) {
+        for (const fileEdit of params.file_edits) {
+          const nestedPath = fileEdit?.file_path || fileEdit?.path;
+          if (typeof nestedPath === 'string' && nestedPath.trim().length > 0) {
+            paths.add(path.normalize(nestedPath));
+          }
+        }
+      }
+      return Array.from(paths);
+    };
 
     for (const call of toolCalls) {
-      const filePath = call.params?.path || call.params?.file_path;
+      const targetPaths = collectTargetPaths(call.params);
       
-      // Only group if it's a file-modifying tool and has a path
+      // Only group if it's a file-modifying tool and has at least one target path
       const isFileModifying = ['write_file', 'edit_file', 'safe_edit_file', 'apply_block_edit', 'delete_file'].includes(call.name);
       
-      if (isFileModifying && filePath) {
-        const normalizedPath = path.normalize(filePath);
-        if (!fileToGroup.has(normalizedPath)) {
-          const group: { id: string, name: string, params: any }[] = [];
-          fileToGroup.set(normalizedPath, group);
+      if (isFileModifying && targetPaths.length > 0) {
+        let group = targetPaths
+          .map((p) => fileToGroup.get(p))
+          .find((candidate): candidate is { id: string, name: string, params: any }[] => Array.isArray(candidate));
+
+        if (!group) {
+          group = [];
           independentGroups.push(group);
         }
-        fileToGroup.get(normalizedPath)!.push(call);
+
+        group.push(call);
+        for (const targetPath of targetPaths) {
+          fileToGroup.set(targetPath, group);
+        }
       } else {
         // Independent tool (read, system, etc.)
         independentGroups.push([call]);

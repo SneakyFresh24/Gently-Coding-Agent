@@ -35,6 +35,7 @@ export interface ContextStats {
  */
 export class ContextManager {
   private files: Map<string, ContextFile> = new Map();
+  private filesReadInSession: Set<string> = new Set();
   private maxTokens: number = 8000; // Default context window
   private readonly SCORE_WEIGHTS = {
     USAGE_COUNT: 30,
@@ -81,6 +82,20 @@ export class ContextManager {
 
     // Optimize context after tracking
     this.optimizeContext();
+  }
+
+  /**
+   * Mark a file as explicitly read in the current session.
+   */
+  markFileRead(filePath: string): void {
+    this.filesReadInSession.add(this.normalizePath(filePath));
+  }
+
+  /**
+   * Check whether a file was explicitly read in the current session.
+   */
+  hasFileBeenRead(filePath: string): boolean {
+    return this.filesReadInSession.has(this.normalizePath(filePath));
   }
 
   /**
@@ -216,6 +231,7 @@ export class ContextManager {
    */
   clear(): void {
     this.files.clear();
+    this.filesReadInSession.clear();
   }
 
   /**
@@ -246,6 +262,7 @@ export class ContextManager {
    */
   hydrateContext(files: ContextFile[] | null, stats: ContextStats | null): void {
     this.files.clear();
+    this.filesReadInSession.clear();
     if (files && Array.isArray(files)) {
       for (const file of files) {
         this.files.set(file.path, file);
@@ -256,5 +273,8 @@ export class ContextManager {
     }
     // We do not call optimizeContext() here because we want to restore exact saved state
   }
-}
 
+  private normalizePath(filePath: string): string {
+    return String(filePath || '').replace(/\\/g, '/').toLowerCase();
+  }
+}

@@ -1,7 +1,7 @@
-# Gently 🧠 (v0.8.9)
+# Gently 🧠 (v0.9.4)
 
 > The privacy-first AI agent for VS Code with integrated semantic search, architectural guardrails, and deterministic code analysis.
-[![Version](https://img.shields.io/badge/version-0.8.9-blue)](https://marketplace.visualstudio.com/items?itemName=gently.gently)
+[![Version](https://img.shields.io/badge/version-0.9.4-blue)](https://marketplace.visualstudio.com/items?itemName=gently.gently)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![VS Code](https://img.shields.io/badge/vscode-^1.85.0-007ACC)](https://code.visualstudio.com/)
 

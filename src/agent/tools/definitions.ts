@@ -63,12 +63,13 @@ Example: {"path": "src/file.ts", "content": "..."}`,
     safe_edit_file: {
         name: 'safe_edit_file',
         category: 'file',
-        description: `Edit a file using smart matching (Line-Range, AST, Anchor, or Fuzzy). Prefer apply_block_edit for multiple hunks.
+        description: `Fallback editor for a single simple change in one existing file. Prefer apply_block_edit as the default for existing-file edits.
 
 IMPORTANT:
-1. Provide file_path FIRST
-2. Then provide new_content
-3. Keep new_content under 50KB per call`,
+1. Call read_file on the same file before editing
+2. Provide file_path FIRST
+3. Then provide new_content
+4. Keep new_content under 50KB per call`,
         parameters: {
             type: 'object',
             properties: {
@@ -80,7 +81,8 @@ IMPORTANT:
                 start_line: { type: 'number', description: 'Optional explicit start line' },
                 end_line: { type: 'number', description: 'Optional explicit end line' },
                 symbol_name: { type: 'string', description: 'Optional AST symbol (e.g. "Class.method")' },
-                preview: { type: 'boolean', description: 'If true, only return the diff' }
+                preview: { type: 'boolean', description: 'If true, only return the diff' },
+                allow_fuzzy: { type: 'boolean', description: 'Optional opt-in for fuzzy anchor fallback (default: false).' }
             },
             required: ['file_path', 'new_content']
         }
@@ -88,7 +90,16 @@ IMPORTANT:
     apply_block_edit: {
         name: 'apply_block_edit',
         category: 'file',
-        description: 'Apply multiple edits (hunks) to a file simultaneously using exact or context-based matching.',
+        description: `Primary edit tool for existing files. Use this by default.
+
+Supports:
+- v1 single-file payload: { file_path, edits[] }
+- v2 multi-file payload: { file_edits: [{ file_path, edits[] }], mode?, preview_only? }
+
+IMPORTANT:
+1. Call read_file before editing each target file
+2. Max 8 hunks per file
+3. In v2 mode, max 5 files per call`,
         parameters: {
             type: 'object',
             properties: {
@@ -109,9 +120,39 @@ IMPORTANT:
                         },
                         required: ['old_content', 'new_content', 'reason']
                     }
+                },
+                file_edits: {
+                    type: 'array',
+                    maxItems: 5,
+                    description: 'v2 payload for multiple files in one call.',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            file_path: { type: 'string', description: 'Path to one target file' },
+                            edits: {
+                                type: 'array',
+                                maxItems: 8,
+                                items: {
+                                    type: 'object',
+                                    properties: {
+                                        old_content: { type: 'string', description: 'EXACT code to replace' },
+                                        new_content: { type: 'string', description: 'New code content' },
+                                        context_before: { type: 'string', description: 'Surrounding context (optional)' },
+                                        context_after: { type: 'string', description: 'Surrounding context (optional)' },
+                                        reason: { type: 'string', description: 'Why this change is made' }
+                                    },
+                                    required: ['old_content', 'new_content', 'reason']
+                                }
+                            }
+                        },
+                        required: ['file_path', 'edits']
+                    }
                 }
             },
-            required: ['file_path', 'edits']
+            anyOf: [
+                { required: ['file_path', 'edits'] },
+                { required: ['file_edits'] }
+            ]
         }
     },
     list_files: {

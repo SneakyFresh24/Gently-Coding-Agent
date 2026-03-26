@@ -12,6 +12,7 @@ import * as path from 'path';
 import { fileExists, readFileAsync, copyFileAsync, safeWriteFile } from '../../utils/persistenceUtils';
 import { FileOperations } from '../fileOperations';
 import { ASTAnalyzer } from '../ASTAnalyzer';
+import { Mutex } from '../../core/state/Mutex';
 
 export interface HunkEdit {
     id: string;
@@ -35,6 +36,8 @@ export interface FailedHunk {
     id: string;
     reason: string;
     suggestedFix: string;
+    matchCount?: number;
+    candidateRanges?: Array<{ startLine: number; endLine: number }>;
 }
 
 export interface MultiHunkEditResult {
@@ -57,6 +60,7 @@ export interface EditRequest {
     endLine?: number;
     symbolName?: string;
     preview?: boolean;
+    allowFuzzy?: boolean;
 }
 
 export interface EditResult {
@@ -71,104 +75,115 @@ export interface EditResult {
 }
 
 export class EditorEngine {
+    private readonly fileLocks = new Map<string, Mutex>();
+
     constructor(
         private fileOps: FileOperations,
         private astAnalyzer: ASTAnalyzer
     ) { }
 
     async executeEdit(request: EditRequest): Promise<EditResult> {
-        const { filePath, anchorLine, newContent, endAnchor, lineNumberHint, symbolName, preview } = request;
+        const { filePath, anchorLine, newContent, endAnchor, lineNumberHint, symbolName, preview, allowFuzzy } = request;
 
-        try {
-            const workspaceRoot = this.fileOps.getWorkspaceRoot();
-            const absolutePath = path.isAbsolute(filePath) ? filePath : path.join(workspaceRoot, filePath);
-            const relativePath = path.relative(workspaceRoot, absolutePath).replace(/\\/g, '/');
+        return this.withFileLock(filePath, async () => {
+            try {
+                const workspaceRoot = this.fileOps.getWorkspaceRoot();
+                const absolutePath = path.isAbsolute(filePath) ? filePath : path.join(workspaceRoot, filePath);
+                const relativePath = path.relative(workspaceRoot, absolutePath).replace(/\\/g, '/');
 
-            if (!(await fileExists(absolutePath))) {
-                return { success: false, message: `File not found: ${absolutePath}` };
-            }
-
-            const originalContent = await readFileAsync(absolutePath);
-            const lines = originalContent.split('\n');
-
-            // === STRATEGY LOOP ===
-            let startIndex = -1;
-            let endIndex = -1;
-            let strategy = 'unknown';
-
-            // 1. Explicit line range
-            if (request.startLine !== undefined && request.endLine !== undefined) {
-                startIndex = request.startLine - 1;
-                endIndex = request.endLine - 1;
-                strategy = 'line-range';
-            }
-
-            // 2. AST Symbol
-            if (startIndex === -1 && symbolName) {
-                const chunks = await this.astAnalyzer.analyzeFile(relativePath, originalContent);
-                const match = chunks.find(c => c.id === symbolName || c.name === symbolName);
-                if (match) {
-                    startIndex = match.startLine - 1;
-                    endIndex = match.endLine - 1;
-                    strategy = 'ast';
+                if (!(await fileExists(absolutePath))) {
+                    return { success: false, message: `File not found: ${absolutePath}` };
                 }
-            }
 
-            // 3. Anchor-based (dein SafeEdit-Kern)
-            if (startIndex === -1 && anchorLine) {
-                startIndex = this.findAnchorLine(lines, anchorLine, lineNumberHint);
-                if (startIndex !== -1) {
-                    strategy = 'anchor';
-                    endIndex = startIndex;
-                    if (endAnchor) {
-                        endIndex = this.findAnchorLine(lines, endAnchor, undefined, startIndex + 1);
+                const originalContent = await readFileAsync(absolutePath);
+                const lines = originalContent.split('\n');
+
+                // === STRATEGY LOOP ===
+                let startIndex = -1;
+                let endIndex = -1;
+                let strategy = 'unknown';
+
+                // 1. Explicit line range
+                if (request.startLine !== undefined && request.endLine !== undefined) {
+                    startIndex = request.startLine - 1;
+                    endIndex = request.endLine - 1;
+                    strategy = 'line-range';
+                }
+
+                // 2. AST Symbol
+                if (startIndex === -1 && symbolName) {
+                    const chunks = await this.astAnalyzer.analyzeFile(relativePath, originalContent);
+                    const match = chunks.find(c => c.id === symbolName || c.name === symbolName);
+                    if (match) {
+                        startIndex = match.startLine - 1;
+                        endIndex = match.endLine - 1;
+                        strategy = 'ast';
                     }
                 }
-            }
 
-            // 4. Fuzzy fallback
-            if (startIndex === -1 && anchorLine) {
-                startIndex = this.findFuzzyAnchor(lines, anchorLine);
-                if (startIndex !== -1) {
-                    strategy = 'fuzzy';
-                    endIndex = startIndex;
+                // 3. Anchor-based
+                if (startIndex === -1 && anchorLine) {
+                    startIndex = this.findAnchorLine(lines, anchorLine, lineNumberHint);
+                    if (startIndex !== -1) {
+                        strategy = 'anchor';
+                        endIndex = startIndex;
+                        if (endAnchor) {
+                            endIndex = this.findAnchorLine(lines, endAnchor, undefined, startIndex + 1);
+                        }
+                    }
                 }
+
+                // 4. Optional fuzzy fallback
+                if (startIndex === -1 && anchorLine && allowFuzzy === true) {
+                    startIndex = this.findFuzzyAnchor(lines, anchorLine);
+                    if (startIndex !== -1) {
+                        strategy = 'fuzzy';
+                        endIndex = startIndex;
+                    }
+                }
+
+                if (startIndex === -1) {
+                    const fuzzyHint = allowFuzzy === true
+                        ? ''
+                        : ' Fuzzy matching is disabled by default (set allow_fuzzy=true to opt in).';
+                    return {
+                        success: false,
+                        message: `No match found with deterministic strategies in ${relativePath}.`,
+                        error: `Anchor/Symbol not found: ${anchorLine || symbolName}.${fuzzyHint}`
+                    };
+                }
+
+                // Preview-Modus
+                if (preview) {
+                    return { success: true, message: `Preview ready (strategy: ${strategy})`, path: relativePath };
+                }
+
+                // Backup + Edit
+                const backupPath = absolutePath + '.bak-' + Date.now();
+                await copyFileAsync(absolutePath, backupPath);
+
+                await this.fileOps.editFile({
+                    filePath: relativePath,
+                    startLine: startIndex,
+                    endLine: endIndex,
+                    newContent: newContent
+                });
+
+                const oldLines = endIndex - startIndex + 1;
+                const newLines = newContent.split('\n').length;
+
+                return {
+                    success: true,
+                    message: `✅ Edit applied (${strategy} strategy). Lines ${startIndex + 1}-${endIndex + 1} replaced.`,
+                    path: relativePath,
+                    backupPath: path.basename(backupPath),
+                    diff: `-${oldLines} / +${newLines} lines`
+                };
+
+            } catch (error: any) {
+                return { success: false, message: `Edit failed`, error: error.message };
             }
-
-            if (startIndex === -1) {
-                return { success: false, message: `No match found with any strategy in ${relativePath}`, error: `Anchor/Symbol not found: ${anchorLine || symbolName}` };
-            }
-
-            // Preview-Modus
-            if (preview) {
-                return { success: true, message: `Preview ready (strategy: ${strategy})`, path: relativePath };
-            }
-
-            // Backup + Edit
-            const backupPath = absolutePath + '.bak-' + Date.now();
-            await copyFileAsync(absolutePath, backupPath);
-
-            await this.fileOps.editFile({
-                filePath: relativePath,
-                startLine: startIndex,
-                endLine: endIndex,
-                newContent: newContent
-            });
-
-            const oldLines = endIndex - startIndex + 1;
-            const newLines = newContent.split('\n').length;
-
-            return {
-                success: true,
-                message: `✅ Edit applied (${strategy} strategy). Lines ${startIndex + 1}-${endIndex + 1} replaced.`,
-                path: relativePath,
-                backupPath: path.basename(backupPath),
-                diff: `-${oldLines} / +${newLines} lines`
-            };
-
-        } catch (error: any) {
-            return { success: false, message: `Edit failed`, error: error.message };
-        }
+        });
     }
 
     // ── Verbesserte Anchor-Suche (genau das, was dein CSS-Problem löst) ──
@@ -218,15 +233,19 @@ export class EditorEngine {
 
     private normalizeForMatching(content: string): string {
         return content
-            .replace(/\\r\\n/g, '\\n')
+            .replace(/\r\n/g, '\n')
             .replace(/[ \\t]+$/gm, '') // Trailing whitespace
             .trim();
     }
 
+    private normalizeLineForTrimMatch(line: string): string {
+        return line.replace(/\r/g, '').trim();
+    }
+
     private generateBasicDiff(oldContent: string, newContent: string): string {
         // A simple placeholder diff generator
-        const oldLines = oldContent.split('\\n');
-        const newLines = newContent.split('\\n');
+        const oldLines = oldContent.split('\n');
+        const newLines = newContent.split('\n');
         let diff = '';
         oldLines.forEach(l => diff += `- ${l}\n`);
         newLines.forEach(l => diff += `+ ${l}\n`);
@@ -234,133 +253,242 @@ export class EditorEngine {
     }
 
     async applyHunkEditsSafely(request: MultiHunkEditRequest): Promise<MultiHunkEditResult> {
-        const workspaceRoot = this.fileOps.getWorkspaceRoot();
-        const absolutePath = path.isAbsolute(request.filePath) ? request.filePath : path.join(workspaceRoot, request.filePath);
-        const relativePath = path.relative(workspaceRoot, absolutePath).replace(/\\\\/g, '/');
+        return this.withFileLock(request.filePath, async () => {
+            const workspaceRoot = this.fileOps.getWorkspaceRoot();
+            const absolutePath = path.isAbsolute(request.filePath) ? request.filePath : path.join(workspaceRoot, request.filePath);
+            const relativePath = path.relative(workspaceRoot, absolutePath).replace(/\\/g, '/');
 
-        if (!(await fileExists(absolutePath))) {
+            if (!(await fileExists(absolutePath))) {
+                return {
+                    success: false, appliedCount: 0, failedCount: request.edits.length,
+                    appliedHunks: [], failedHunks: request.edits.map(h => ({ id: h.id, reason: `File not found: ${relativePath}`, suggestedFix: 'Check the path' }))
+                };
+            }
+
+            const originalContent = await readFileAsync(absolutePath);
+            const result: MultiHunkEditResult = {
+                success: false, appliedCount: 0, failedCount: 0,
+                appliedHunks: [], failedHunks: [], previewDiffs: []
+            };
+
+            // Phase A: Validate matches in input order (forward)
+            const matches: Array<{ hunk: HunkEdit, startIndex: number, endIndex: number, exactOld: string }> = [];
+            let lastProcessedIndex = -1;
+            const contentLines = originalContent.split('\n');
+
+            for (const hunk of request.edits) {
+                const resolution = this.resolveHunkMatch(contentLines, hunk, lastProcessedIndex);
+                if (!resolution.ok) {
+                    result.failedHunks.push({
+                        id: hunk.id,
+                        reason: resolution.reason,
+                        suggestedFix: resolution.suggestedFix,
+                        matchCount: resolution.matchCount,
+                        candidateRanges: resolution.candidateRanges
+                    });
+                    result.failedCount++;
+                    continue;
+                }
+
+                matches.push({
+                    hunk,
+                    startIndex: resolution.startIndex,
+                    endIndex: resolution.endIndex,
+                    exactOld: contentLines.slice(resolution.startIndex, resolution.endIndex + 1).join('\n')
+                });
+                lastProcessedIndex = resolution.endIndex;
+            }
+
+            if (request.previewOnly) {
+                for (const match of matches) {
+                    result.previewDiffs!.push({
+                        id: match.hunk.id,
+                        filePath: relativePath,
+                        diff: this.generateBasicDiff(match.exactOld, match.hunk.newContent)
+                    });
+                }
+                result.success = result.failedCount === 0;
+                return result;
+            }
+
+            // In atomic mode, any validation failure aborts all applies.
+            if (request.mode === 'atomic' && result.failedCount > 0) {
+                result.success = false;
+                return result;
+            }
+
+            // Phase B: Apply matches in reverse order to avoid line shifts.
+            matches.sort((a, b) => b.startIndex - a.startIndex);
+            const tempContentLines = originalContent.split('\n');
+
+            if (matches.length > 0) {
+                const backupPath = absolutePath + '.bak-' + Date.now();
+                await copyFileAsync(absolutePath, backupPath);
+            }
+
+            for (const match of matches) {
+                const newSnippetLines = match.hunk.newContent.split('\n');
+                tempContentLines.splice(match.startIndex, match.endIndex - match.startIndex + 1, ...newSnippetLines);
+                result.appliedHunks.push(match.hunk.id);
+                result.appliedCount++;
+            }
+
+            if (result.appliedCount > 0) {
+                await safeWriteFile(absolutePath, tempContentLines.join('\n'));
+                result.success = result.failedCount === 0 || request.mode !== 'atomic';
+            } else {
+                result.success = false;
+            }
+
+            return result;
+        });
+    }
+
+    private resolveHunkMatch(
+        contentLines: string[],
+        hunk: HunkEdit,
+        lastProcessedIndex: number
+    ): (
+        | { ok: true; startIndex: number; endIndex: number }
+        | { ok: false; reason: string; suggestedFix: string; matchCount?: number; candidateRanges?: Array<{ startLine: number; endLine: number }> }
+    ) {
+        const oldLines = hunk.oldContent.split('\n');
+        if (oldLines.length === 0 || (oldLines.length === 1 && oldLines[0] === '')) {
             return {
-                success: false, appliedCount: 0, failedCount: request.edits.length,
-                appliedHunks: [], failedHunks: request.edits.map(h => ({ id: h.id, reason: `File not found: ${relativePath}`, suggestedFix: "Check the path" }))
+                ok: false,
+                reason: 'old_content is empty.',
+                suggestedFix: 'Provide a non-empty old_content block.'
             };
         }
 
-        const originalContent = await readFileAsync(absolutePath);
-        const fileContentStr = originalContent; // original normalized string
-        let currentContentStr = fileContentStr;
-        
-        const result: MultiHunkEditResult = {
-            success: false, appliedCount: 0, failedCount: 0,
-            appliedHunks: [], failedHunks: [], previewDiffs: []
+        const exactCandidates = this.findSequenceMatches(contentLines, oldLines, 'exact');
+        if (exactCandidates.length === 1) {
+            return this.enforceForwardOrder(exactCandidates[0], lastProcessedIndex);
+        }
+        if (exactCandidates.length > 1 && !hunk.contextBefore && !hunk.contextAfter) {
+            return this.multipleMatchFailure('Exact match is ambiguous.', exactCandidates);
+        }
+
+        const trimCandidates = this.findSequenceMatches(contentLines, oldLines, 'trim');
+        if (trimCandidates.length === 1) {
+            return this.enforceForwardOrder(trimCandidates[0], lastProcessedIndex);
+        }
+        if (trimCandidates.length > 1 && !hunk.contextBefore && !hunk.contextAfter) {
+            return this.multipleMatchFailure('Trim-normalized match is ambiguous.', trimCandidates);
+        }
+
+        const contextBaseCandidates = exactCandidates.length > 1
+            ? exactCandidates
+            : trimCandidates;
+        const contextCandidates = this.filterByContext(contentLines, contextBaseCandidates, hunk.contextBefore, hunk.contextAfter);
+        if (contextCandidates.length === 1) {
+            return this.enforceForwardOrder(contextCandidates[0], lastProcessedIndex);
+        }
+        if (contextCandidates.length > 1) {
+            return this.multipleMatchFailure('Context-anchored match is ambiguous.', contextCandidates);
+        }
+
+        return {
+            ok: false,
+            reason: 'old_content mismatch after exact/trim/context matching.',
+            suggestedFix: 'Ensure old_content matches exactly or provide context_before/context_after to disambiguate.'
         };
+    }
 
-        // Conflict Detection (Simple overlap check)
-        const hints = request.edits.map(h => ({ id: h.id, start: h.startLineHint || 0, end: h.endLineHint || Number.MAX_SAFE_INTEGER }));
-        for (let i = 0; i < hints.length; i++) {
-            for (let j = i + 1; j < hints.length; j++) {
-                if (hints[i].start > 0 && hints[j].start > 0 && Math.max(hints[i].start, hints[j].start) <= Math.min(hints[i].end, hints[j].end)) {
-                    // Possible overlap detected, could log a warning here.
+    private enforceForwardOrder(
+        candidate: { startIndex: number; endIndex: number },
+        lastProcessedIndex: number
+    ): { ok: true; startIndex: number; endIndex: number } | { ok: false; reason: string; suggestedFix: string } {
+        if (candidate.startIndex <= lastProcessedIndex) {
+            return {
+                ok: false,
+                reason: `Out-of-order hunk: candidate starts at line ${candidate.startIndex + 1}, but previous hunk ended at line ${lastProcessedIndex + 1}.`,
+                suggestedFix: 'Reorder hunks to follow file order, top-to-bottom.'
+            };
+        }
+        return { ok: true, startIndex: candidate.startIndex, endIndex: candidate.endIndex };
+    }
+
+    private multipleMatchFailure(
+        reason: string,
+        candidates: Array<{ startIndex: number; endIndex: number }>
+    ): { ok: false; reason: string; suggestedFix: string; matchCount: number; candidateRanges: Array<{ startLine: number; endLine: number }> } {
+        return {
+            ok: false,
+            reason,
+            suggestedFix: 'Provide context_before/context_after to make the match unique.',
+            matchCount: candidates.length,
+            candidateRanges: candidates.map((c) => ({ startLine: c.startIndex + 1, endLine: c.endIndex + 1 }))
+        };
+    }
+
+    private findSequenceMatches(
+        contentLines: string[],
+        searchLines: string[],
+        mode: 'exact' | 'trim'
+    ): Array<{ startIndex: number; endIndex: number }> {
+        const candidates: Array<{ startIndex: number; endIndex: number }> = [];
+        if (searchLines.length === 0 || contentLines.length < searchLines.length) {
+            return candidates;
+        }
+
+        const normalize = (line: string) => mode === 'trim' ? this.normalizeLineForTrimMatch(line) : line.replace(/\r/g, '');
+        const normalizedSearch = searchLines.map(normalize);
+
+        for (let i = 0; i <= contentLines.length - normalizedSearch.length; i++) {
+            let match = true;
+            for (let j = 0; j < normalizedSearch.length; j++) {
+                if (normalize(contentLines[i + j]) !== normalizedSearch[j]) {
+                    match = false;
+                    break;
                 }
             }
-        }
-
-        // To safely apply multiple hunks, we should process them in reverse order to avoid line shifting.
-        // We first find the match indices for all hunks.
-        const matches: Array<{ hunk: HunkEdit, startIndex: number, endIndex: number, exactOld: string }> = [];
-
-        for (const hunk of request.edits) {
-            const normOld = this.normalizeForMatching(hunk.oldContent);
-            const contentLines = currentContentStr.split('\\n');
-            const normLines = contentLines.map(l => this.normalizeForMatching(l));
-            
-            // 1. Exact Substring Search using sliding window of lines
-            const searchLines = normOld.split('\\n');
-            let found = false;
-            let bestMatchLine = -1;
-
-            // Simple exact match logic:
-            if (searchLines.length > 0 && normOld.length > 0) {
-                for (let i = 0; i <= normLines.length - searchLines.length; i++) {
-                    let match = true;
-                    // Fast path exact
-                    for (let j = 0; j < searchLines.length; j++) {
-                        if (normLines[i + j] !== searchLines[j]) {
-                            match = false; break;
-                        }
-                    }
-                    if (match) {
-                        // Score this match (closer to hint is better)
-                        if (bestMatchLine === -1 || (hunk.startLineHint && Math.abs(i - (hunk.startLineHint - 1)) < Math.abs(bestMatchLine - (hunk.startLineHint - 1)))) {
-                            bestMatchLine = i;
-                        }
-                    }
-                }
-            }
-
-            if (bestMatchLine !== -1) {
-                matches.push({
-                    hunk,
-                    startIndex: bestMatchLine,
-                    endIndex: bestMatchLine + searchLines.length - 1,
-                    exactOld: contentLines.slice(bestMatchLine, bestMatchLine + searchLines.length).join('\\n')
-                });
-            } else {
-                // Fuzzy fallback could go here
-                result.failedHunks.push({
-                    id: hunk.id,
-                    reason: "old_content mismatch after normalization",
-                    suggestedFix: "Check indentation/whitespace, or ensure the snippet exactly matches the latest file state."
-                });
-                result.failedCount++;
+            if (match) {
+                candidates.push({ startIndex: i, endIndex: i + normalizedSearch.length - 1 });
             }
         }
 
-        if (request.previewOnly) {
-            for (const match of matches) {
-                result.previewDiffs!.push({
-                    id: match.hunk.id,
-                    filePath: relativePath,
-                    diff: this.generateBasicDiff(match.exactOld, match.hunk.newContent)
-                });
+        return candidates;
+    }
+
+    private filterByContext(
+        contentLines: string[],
+        candidates: Array<{ startIndex: number; endIndex: number }>,
+        contextBefore?: string,
+        contextAfter?: string
+    ): Array<{ startIndex: number; endIndex: number }> {
+        if (!contextBefore && !contextAfter) {
+            return candidates;
+        }
+
+        const normalizedContextBefore = contextBefore ? this.normalizeForMatching(contextBefore) : '';
+        const normalizedContextAfter = contextAfter ? this.normalizeForMatching(contextAfter) : '';
+
+        return candidates.filter((candidate) => {
+            let beforeOk = true;
+            let afterOk = true;
+
+            if (normalizedContextBefore) {
+                const beforeWindow = contentLines.slice(Math.max(0, candidate.startIndex - 12), candidate.startIndex).join('\n');
+                beforeOk = this.normalizeForMatching(beforeWindow).includes(normalizedContextBefore);
             }
-            // For failed ones, perhaps no diff
-            result.success = result.failedCount === 0; // True if all "proposed" matching works
-            return result;
+
+            if (normalizedContextAfter) {
+                const afterWindow = contentLines.slice(candidate.endIndex + 1, Math.min(contentLines.length, candidate.endIndex + 13)).join('\n');
+                afterOk = this.normalizeForMatching(afterWindow).includes(normalizedContextAfter);
+            }
+
+            return beforeOk && afterOk;
+        });
+    }
+
+    private async withFileLock<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
+        const key = filePath.replace(/\\/g, '/').toLowerCase();
+        let mutex = this.fileLocks.get(key);
+        if (!mutex) {
+            mutex = new Mutex();
+            this.fileLocks.set(key, mutex);
         }
-
-        // Sort matches by startIndex descending (reverse order application)
-        matches.sort((a, b) => b.startIndex - a.startIndex);
-
-        // Backup before atomic apply
-        const backupPath = absolutePath + '.bak-' + Date.now();
-        if (matches.length > 0) {
-            await copyFileAsync(absolutePath, backupPath);
-        }
-
-        let tempContentLines = currentContentStr.split('\\n');
-        
-        // Execute replacements
-        for (const match of matches) {
-            const newSnippetLines = match.hunk.newContent.split('\\n');
-            tempContentLines.splice(match.startIndex, match.endIndex - match.startIndex + 1, ...newSnippetLines);
-            result.appliedHunks.push(match.hunk.id);
-            result.appliedCount++;
-        }
-
-        if (request.mode === 'atomic' && result.failedCount > 0) {
-            // Rollback
-            result.success = false;
-            result.appliedHunks = [];
-            result.appliedCount = 0;
-            // No file ops necessary as we haven't written yet.
-        } else if (result.appliedCount > 0) {
-            // Commit changes
-            await safeWriteFile(absolutePath, tempContentLines.join('\n'));
-            result.success = true;
-        } else {
-            result.success = false;
-        }
-
-        return result;
+        return mutex.runExclusive(fn);
     }
 }

@@ -293,8 +293,8 @@ export class AutoApproveManager {
   }
 
   private isExternalPath(params: any): boolean {
-    const rawPath = this.extractPath(params);
-    if (!rawPath) {
+    const rawPaths = this.extractPaths(params);
+    if (rawPaths.length === 0) {
       return false;
     }
 
@@ -304,21 +304,30 @@ export class AutoApproveManager {
       return true;
     }
 
-    for (const folder of workspaceFolders) {
-      const rootPath = path.normalize(folder.uri.fsPath);
-      const candidatePath = path.isAbsolute(rawPath)
-        ? path.normalize(rawPath)
-        : path.normalize(path.join(rootPath, rawPath));
+    for (const rawPath of rawPaths) {
+      let withinAnyWorkspace = false;
 
-      if (this.isWithinRoot(candidatePath, rootPath)) {
-        return false;
+      for (const folder of workspaceFolders) {
+        const rootPath = path.normalize(folder.uri.fsPath);
+        const candidatePath = path.isAbsolute(rawPath)
+          ? path.normalize(rawPath)
+          : path.normalize(path.join(rootPath, rawPath));
+
+        if (this.isWithinRoot(candidatePath, rootPath)) {
+          withinAnyWorkspace = true;
+          break;
+        }
+      }
+
+      if (!withinAnyWorkspace) {
+        return true;
       }
     }
-
-    return true;
+    return false;
   }
 
-  private extractPath(params: any): string | null {
+  private extractPaths(params: any): string[] {
+    const paths = new Set<string>();
     const candidates = [
       params?.path,
       params?.file_path,
@@ -330,11 +339,20 @@ export class AutoApproveManager {
 
     for (const candidate of candidates) {
       if (typeof candidate === 'string' && candidate.trim().length > 0) {
-        return candidate.trim();
+        paths.add(candidate.trim());
       }
     }
 
-    return null;
+    if (Array.isArray(params?.file_edits)) {
+      for (const fileEdit of params.file_edits) {
+        const nestedPath = fileEdit?.file_path || fileEdit?.path;
+        if (typeof nestedPath === 'string' && nestedPath.trim().length > 0) {
+          paths.add(nestedPath.trim());
+        }
+      }
+    }
+
+    return Array.from(paths);
   }
 
   private isWithinRoot(candidatePath: string, rootPath: string): boolean {

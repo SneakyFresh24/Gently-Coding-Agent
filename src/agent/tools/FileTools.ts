@@ -30,7 +30,8 @@ export class FileTools {
 
   private async readFile(params: any): Promise<any> {
     try {
-      const fileInfo = await this.fileOps.readFile(params.path || params.file_path);
+      const targetPath = params.path || params.file_path;
+      const fileInfo = await this.fileOps.readFile(targetPath);
       // Track access
       this.contextManager.trackFileAccess(
         fileInfo.path,
@@ -38,6 +39,7 @@ export class FileTools {
         fileInfo.language,
         fileInfo.size
       );
+      this.contextManager.markFileRead(fileInfo.path);
       return fileInfo;
     } catch (error) {
       return { success: false, message: String(error) };

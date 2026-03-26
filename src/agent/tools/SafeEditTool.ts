@@ -27,8 +27,30 @@ export class SafeEditTool {
    */
   async execute(args: any): Promise<any> {
     try {
+      const targetPath = args.file_path || args.path;
+      const workspaceRoot = this.fileOps.getWorkspaceRoot();
+      const normalizedTarget = targetPath.replace(/\\/g, '/');
+      const relativeFromRoot = normalizedTarget.startsWith(workspaceRoot.replace(/\\/g, '/'))
+        ? normalizedTarget.slice(workspaceRoot.replace(/\\/g, '/').length).replace(/^\/+/, '')
+        : normalizedTarget;
+      const absoluteFromRoot = normalizedTarget.startsWith(workspaceRoot.replace(/\\/g, '/'))
+        ? normalizedTarget
+        : `${workspaceRoot.replace(/\\/g, '/')}/${relativeFromRoot}`.replace(/\/+/g, '/');
+
+      if (
+        !this.contextManager.hasFileBeenRead(targetPath) &&
+        !this.contextManager.hasFileBeenRead(relativeFromRoot) &&
+        !this.contextManager.hasFileBeenRead(absoluteFromRoot)
+      ) {
+        return {
+          success: false,
+          error: `Read-before-edit required: You must call read_file on "${targetPath}" before safe_edit_file.`,
+          suggestedFix: `Call read_file({"path":"${targetPath}"}) first, then retry safe_edit_file.`
+        };
+      }
+
       const result = await this.editorEngine.executeEdit({
-        filePath: args.file_path || args.path,
+        filePath: targetPath,
         anchorLine: args.anchor_line,
         newContent: args.new_content,
         endAnchor: args.end_anchor,
@@ -36,7 +58,8 @@ export class SafeEditTool {
         startLine: args.start_line,
         endLine: args.end_line,
         symbolName: args.symbol_name,
-        preview: args.preview
+        preview: args.preview,
+        allowFuzzy: args.allow_fuzzy === true
       });
 
       if (result.success && result.path) {

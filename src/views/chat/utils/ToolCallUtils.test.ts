@@ -191,3 +191,31 @@ describe('ToolCallUtils.validateAndRepairToolCalls', () => {
     expect(result.warnings.some((w) => w.includes('Consider modularizing'))).toBe(true);
   });
 });
+
+describe('ToolCallUtils path + messaging helpers', () => {
+  it('extracts nested file paths from apply_block_edit v2 payloads', () => {
+    const filePaths = ToolCallUtils.extractFilePathsFromToolCalls([
+      {
+        function: {
+          name: 'apply_block_edit',
+          arguments: JSON.stringify({
+            file_edits: [
+              { file_path: 'src/a.ts', edits: [{ old_content: 'a', new_content: 'b', reason: 'x' }] },
+              { file_path: 'src/b.ts', edits: [{ old_content: 'c', new_content: 'd', reason: 'y' }] }
+            ]
+          })
+        }
+      }
+    ]);
+
+    expect(filePaths.has('src/a.ts')).toBe(true);
+    expect(filePaths.has('src/b.ts')).toBe(true);
+  });
+
+  it('returns multi-file thinking message for apply_block_edit v2 payloads', () => {
+    const message = ToolCallUtils.getThinkingMessage('apply_block_edit', {
+      file_edits: [{ file_path: 'src/a.ts' }, { file_path: 'src/b.ts' }]
+    });
+    expect(message).toContain('2 files');
+  });
+});
