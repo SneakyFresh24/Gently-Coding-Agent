@@ -148,7 +148,7 @@ export class TraditionalToolExecutor {
             invalidToolCalls.forEach(({ toolCall, index, error }) => {
                 errorMessage += `Tool ${index + 1} (${toolCall.function?.name || 'unknown'}):\n${error}\n\n`;
             });
-            const enrichedPrompt = this.buildInvalidToolRetryPrompt(invalidToolCalls) || errorMessage;
+            const enrichedPrompt = this.buildInvalidToolRetryPrompt(invalidToolCalls, context) || errorMessage;
             this.sendMessageToWebview({ type: 'error', message: 'KI hat ungültige JSON-Argumente generiert.' });
             this.updateConversationHistory({ id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`, timestamp: Date.now(), role: 'user', content: enrichedPrompt });
             await this.triggerFollowUpMessage(enrichedPrompt);
@@ -156,8 +156,10 @@ export class TraditionalToolExecutor {
     }
 
     private buildInvalidToolRetryPrompt(
-        invalidToolCalls: Array<{ toolCall: ToolCall; index: number; error: string; code?: ToolResultErrorCode; details?: Record<string, unknown> }>
+        invalidToolCalls: Array<{ toolCall: ToolCall; index: number; error: string; code?: ToolResultErrorCode; details?: Record<string, unknown> }>,
+        context: ChatViewContext
     ): string | null {
+        const retryCount = Math.max(1, Number(context?.consecutiveMistakeCount || 0) + 1);
         const truncated = invalidToolCalls.find((entry) => entry.code === ToolResultErrorCodes.TOOL_ARGS_TRUNCATED);
         if (truncated) {
             const details = truncated.details || {};
@@ -173,7 +175,8 @@ export class TraditionalToolExecutor {
                 toolName: truncated.toolCall.function?.name || 'unknown_tool',
                 recoveredPath,
                 contentPreview,
-                totalChars
+                totalChars,
+                retryCount
             });
         }
 
@@ -183,7 +186,8 @@ export class TraditionalToolExecutor {
             return buildOversizeRetryPrompt({
                 toolName: oversize.toolCall.function?.name || 'unknown_tool',
                 actualSize: Number(details.actualSize || 0),
-                path: typeof details.path === 'string' ? details.path : undefined
+                path: typeof details.path === 'string' ? details.path : undefined,
+                retryCount
             });
         }
 
@@ -194,7 +198,8 @@ export class TraditionalToolExecutor {
                 toolName: monolith.toolCall.function?.name || 'unknown_tool',
                 path: typeof details.path === 'string' ? details.path : undefined,
                 inlineViolations: Array.isArray(details.inlineViolations) ? details.inlineViolations as string[] : [],
-                suggestions: Array.isArray(details.suggestions) ? details.suggestions as string[] : []
+                suggestions: Array.isArray(details.suggestions) ? details.suggestions as string[] : [],
+                retryCount
             });
         }
 

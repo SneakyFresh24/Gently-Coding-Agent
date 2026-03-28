@@ -104,6 +104,8 @@ export class PromptManager {
         }
 
         try {
+            const config = vscode.workspace.getConfiguration('gently');
+            const familyOverridesEnabled = config.get<boolean>('promptPipeline.familyOverrides', true);
             const modeTools = mode ? mode.getToolsForMode(this.agentManager) : this.agentManager.getFormattedTools();
             const modeToolNames = (modeTools || [])
                 .map((tool: any) => tool?.function?.name || tool?.name)
@@ -122,6 +124,7 @@ export class PromptManager {
             const result = this.promptBuilder.build({
                 mode: mode?.id || context.selectedMode || 'architect',
                 model: context.selectedModel,
+                familyOverridesEnabled,
                 workspaceName,
                 retryCount,
                 memoryBankContext,
@@ -189,8 +192,13 @@ Current workspace: ${vscode.workspace.name || 'No workspace open'}`;
         }
 
         if (retryCount > 0) {
-            systemPrompt += `\n\n🔄 RETRY ATTEMPT ${retryCount}/3 - CRITICAL:\n` +
-                'Ensure that all tool_calls have VALID JSON arguments. Use double quotes, escape special characters, and close all brackets.';
+            if (retryCount === 1) {
+                systemPrompt += '\n\nRETRY LEVEL 1: The previous tool call failed. Check your parameters and try again.';
+            } else if (retryCount === 2) {
+                systemPrompt += '\n\nRETRY LEVEL 2: This is your 2nd failed attempt. You MUST use a different approach.';
+            } else {
+                systemPrompt += '\n\nRETRY LEVEL 3+: CRITICAL. STOP retrying the same approach. Use alternatives only, or report the issue to the user.';
+            }
         }
 
         systemPrompt += `\n\nTOOL ARGUMENT ORDER REMINDER:\n` +

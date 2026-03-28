@@ -155,6 +155,11 @@
           "default": "",
           "description": "Optional prompt registry id override (e.g. architect-core, code-core) for rollback/testing."
         },
+        "gently.promptPipeline.familyOverrides": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable model-family specific prompt optimizations with safe fallback to base prompts."
+        },
         "gently.pruning.strategy": {
           "type": "string",
           "default": "hybrid",
@@ -289,7 +294,7 @@
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js",
-    "test:unit": "vitest run src/agent/tools/ToolRegistry.test.ts src/commands/CommandRegistry.test.ts src/modes/tests/ModeManager.test.ts src/performance/cache.test.ts src/performance/performanceOptimizer.test.ts src/performance/sessionManagerIntegration.test.ts src/plugins/tests/PluginManager.test.ts src/session/SessionManager.test.ts src/terminal/TerminalManagerRefactored.test.ts src/utils/constants.test.ts src/utils/errorHandler.test.ts",
+    "test:unit": "vitest run src/agent/tools/ToolRegistry.test.ts src/commands/CommandRegistry.test.ts src/modes/tests/ModeManager.test.ts src/modes/tests/ModeToolConsistency.test.ts src/performance/cache.test.ts src/performance/performanceOptimizer.test.ts src/performance/sessionManagerIntegration.test.ts src/plugins/tests/PluginManager.test.ts src/session/SessionManager.test.ts src/terminal/TerminalManagerRefactored.test.ts src/utils/constants.test.ts src/utils/errorHandler.test.ts",
     "test:toolcall": "vitest run src/views/chat/toolcall/__tests__/",
     "test:toolcall:watch": "vitest watch src/views/chat/toolcall/__tests__/",
     "test:toolcall:coverage": "vitest run --coverage src/views/chat/toolcall/__tests__/",

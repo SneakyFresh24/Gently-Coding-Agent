@@ -2,6 +2,32 @@
 
 All notable changes to the "Gently" extension will be documented in this file.
 
+## [0.9.4] - 2026-03-27
+
+### Added
+- **Compression Sync Event**: Added new outbound webview event `messagesCompressed` with payload `{ remainingMessages, droppedCount, summaryInserted, source }` to keep UI and backend history in sync after context compaction.
+- **Tool-Execution Compression Guard**: Added runtime state tracking (`isToolExecutionActive`) in chat context so compression can be postponed while tools are running when safe.
+- **Mutex Timeout Coverage**: Added dedicated `Mutex` tests (`src/core/state/Mutex.test.ts`) for serialization guarantees and timeout behavior that verifies timed-out callbacks do not execute later.
+
+### Changed
+- **Session Transition Safety (Race-Safe)**:
+  - Added per-session mutex locking with lock-timeout fast-fail (3s) and user-facing busy info messages in `SessionHandler`.
+  - Standardized clear-before-load flow for session switching/new/delete/clear-all paths.
+  - Added stale-switch invalidation token to prevent outdated in-flight session loads from rendering after newer transitions.
+- **Durable Compression Commit (Storage-First Atomicity)**:
+  - Introduced atomic compression commit helper in `ChatFlowManager` that persists compressed history first, then updates runtime conversation state, then emits UI sync event.
+  - Compression commit now hard-fails safely on persistence errors (no UI compression event is emitted on failed storage writes).
+- **Frontend Message Reconciliation**:
+  - Added `messagesCompressed` handling in webview messaging/store pipeline.
+  - Compression updates now reconcile messages by stable `id` instead of blind full replace to reduce flicker and stale-stream artifacts.
+- **Virtualized Message List Reset**:
+  - Added reset epoch plumbing in chat store/messages area to invalidate virtualizer measurements and re-measure/scroll consistently on session hydrate and compression updates.
+
+### Fixed
+- **Webview Session UI Glitches**: Resolved stale/overlapping message rendering during rapid session transitions caused by non-serialized session operations and out-of-order loads.
+- **Context Compression Desync**: Fixed backend/frontend desynchronization where UI could display messages already removed from effective model context.
+- **Lock Timeout Correctness**: Prevented timeout race where queued operations could still execute after an acquisition timeout by implementing proper timed waiter removal in `Mutex`.
+
 ## [0.9.3] - 2026-03-25
 
 ### Added

@@ -31,6 +31,11 @@ describe('PromptBuilder', () => {
     expect(result.metadata.variant).toBe('default');
     expect(result.prompt).toContain('You are "Gently" in Architect mode');
     expect(result.prompt).toContain('AVAILABLE TOOLS (MINIFIED)');
+    expect(result.prompt).toContain('TOOL CALL STRATEGY');
+    expect(result.prompt).toContain('EXAMPLES:');
+    expect(result.prompt).toContain('Example 2 - Independent reads in parallel');
+    expect(result.prompt).toContain('TASK PROGRESS');
+    expect(result.prompt).toContain('"task_progress":"- [x] Analyze existing code');
     expect(result.prompt).toContain('MEMORY_BANK');
     expect(result.prompt).toMatchSnapshot();
   });
@@ -52,6 +57,7 @@ describe('PromptBuilder', () => {
     expect(result.metadata.variant).toBe('minimal');
     expect(result.prompt).not.toContain('MEMORY_BANK');
     expect(result.prompt).not.toContain('MEMORIES');
+    expect(result.prompt).not.toContain('EXAMPLES:');
     expect(result.prompt).toMatchSnapshot();
   });
 
@@ -67,7 +73,8 @@ describe('PromptBuilder', () => {
     expect(result.metadata.promptId).toBe('code-core');
     expect(result.prompt).toContain('STRICT "Code" mode');
     expect(result.prompt).toContain('NEVER create a plan');
-    expect(result.prompt).toContain('RETRY ATTEMPT 2/3');
+    expect(result.prompt).toContain('RETRY LEVEL 2');
+    expect(result.prompt).toContain('MINIMAX FAMILY OVERRIDE');
     expect(result.prompt).toContain('WICHTIG: Nach Tool-Ausführung IMMER eine klare Antwort geben');
     expect(result.prompt).toMatchSnapshot();
   });
@@ -85,5 +92,21 @@ describe('PromptBuilder', () => {
     expect(result.metadata.usedFallback).toBe(true);
     expect(result.prompt).toBe('LEGACY_PROMPT');
   });
-});
 
+  it('applies family overrides when enabled and skips when disabled', () => {
+    const withOverride = builder.build({
+      mode: 'code',
+      model: 'anthropic/claude-4.6-sonnet',
+      tools
+    });
+    expect(withOverride.prompt).toContain('CLAUDE FAMILY OVERRIDE');
+
+    const withoutOverride = builder.build({
+      mode: 'code',
+      model: 'anthropic/claude-4.6-sonnet',
+      familyOverridesEnabled: false,
+      tools
+    });
+    expect(withoutOverride.prompt).not.toContain('CLAUDE FAMILY OVERRIDE');
+  });
+});

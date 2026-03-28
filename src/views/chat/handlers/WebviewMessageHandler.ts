@@ -119,18 +119,10 @@ export class WebviewMessageHandler {
         break;
       }
 
-      case 'toggleAgentMode':
-        this.messageHandler.setSelectedMode(data.enabled ? 'agent' : 'ask');
-        break;
-
       case 'modelChanged':
         // Accept any OpenRouter model slug
         await this.messageHandler.setSelectedModel(data.model as any);
         console.log(`[WebviewMessageHandler] Model changed: ${data.model}`);
-        break;
-
-      case 'modeChanged':
-        console.log(`[WebviewMessageHandler] Mode change: ${data.modeId}`);
         break;
 
       case 'setMaxTokens':
@@ -156,18 +148,6 @@ export class WebviewMessageHandler {
 
       case 'getWorkspaceInfo':
         await this.sendWorkspaceInfo(webview);
-        break;
-
-      case 'getIndexingStats':
-        console.log('[WebviewMessageHandler] getIndexingStats requested');
-        break;
-
-      case 'refreshIndexing':
-        console.log('[WebviewMessageHandler] refreshIndexing requested');
-        break;
-
-      case 'addSourceFolder':
-        vscode.window.showInformationMessage('Add source folder feature coming soon!');
         break;
 
       case 'openMemories':

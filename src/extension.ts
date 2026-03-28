@@ -56,6 +56,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // ── Agent initialization ──────────────────────────────────────────────────
   try {
     await agentManager.initialize();
+    await agentManager.initializeValidation(openRouterService);
   } catch (err) {
     console.error('Failed to initialize agent:', err);
   }
@@ -105,6 +106,33 @@ export async function activate(context: vscode.ExtensionContext) {
   };
 
   initializeCommands(commandContext);
+
+  const applyRuntimeSettings = async (): Promise<void> => {
+    const config = vscode.workspace.getConfiguration('gently');
+    const configuredMode = config.get<boolean>('agentMode', false) ? 'code' : 'architect';
+    const configuredModel = config.get<string>('selectedModel', '');
+    const validationEnabled = config.get<boolean>('validation.enabled', true);
+    const validationStrict = config.get<boolean>('validation.strictMode', false);
+
+    await chatViewProvider.setSelectedMode(configuredMode);
+    if (configuredModel?.trim()) {
+      chatViewProvider.setSelectedModel(configuredModel.trim());
+    }
+    agentManager.applyValidationConfiguration(validationEnabled, validationStrict);
+  };
+
+  await applyRuntimeSettings();
+
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(async (event) => {
+    if (
+      event.affectsConfiguration('gently.agentMode') ||
+      event.affectsConfiguration('gently.selectedModel') ||
+      event.affectsConfiguration('gently.validation.enabled') ||
+      event.affectsConfiguration('gently.validation.strictMode')
+    ) {
+      await applyRuntimeSettings();
+    }
+  }));
 
   // ── Chat bridge ───────────────────────────────────────────────────────────
   context.subscriptions.push(

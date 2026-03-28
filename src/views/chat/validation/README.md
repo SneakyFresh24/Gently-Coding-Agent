@@ -73,22 +73,25 @@ interface ValidationResult {
 
 Das Framework definiert Validierungsschemas für alle Nachrichtentypen:
 
-### Authentifizierungsnachrichten
+### Mode-/Model-Nachrichten
 
 ```typescript
-// Login
+// Mode setzen (kanonischer Pfad)
 {
-  type: 'login',
-  email: string,    // max 254 chars, wird bereinigt
-  password: string  // max 1000 chars
+  type: 'setMode',
+  modeId: string // z.B. "architect" | "code"
 }
 
-// Signup
+// Legacy Alias (Übergangsweise)
 {
-  type: 'signup',
-  email: string,    // max 254 chars, wird bereinigt
-  password: string, // min 8 chars, max 1000 chars
-  fullName?: string // optional, max 100 chars
+  type: 'toggleAgentMode',
+  enabled: boolean
+}
+
+// Modellwechsel
+{
+  type: 'modelChanged',
+  model: string
 }
 ```
 
@@ -157,7 +160,6 @@ console.log(`Time until next: ${status.timeUntilNextMessage}ms`);
 
 Bereinigt potenziell schädliche Eingaben:
 
-- **Email-Adressen**: Normalisierung und Validierung
 - **Dateipfade**: Entfernung von Path Traversal (../../../etc/passwd)
 - **Strings**: Entfernung von Control Characters
 - **JSON**: Safe Parsing und Re-Serialization

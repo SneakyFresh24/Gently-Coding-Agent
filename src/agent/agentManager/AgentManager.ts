@@ -161,6 +161,20 @@ export class AgentManager {
     ) ?? Promise.resolve();
   }
 
+  applyValidationConfiguration(enabled: boolean, strictMode: boolean): void {
+    const wrapper = this.container.resolve<ValidationManager>('validationManager');
+    const baseManager = wrapper?.getBaseValidationManager();
+
+    if (baseManager) {
+      baseManager.updateConfig({ enabled, strictMode });
+    }
+
+    if (wrapper) {
+      this.fileOps.setValidationManager(wrapper);
+    }
+    this.fileOps.setValidationEnabled(enabled);
+  }
+
   bindOpenRouterService(openRouterService: OpenRouterService): void {
     this.container.force('openRouterService', openRouterService);
     agentLogger.info('OpenRouter service bound to AgentManager DI container');

@@ -21,6 +21,17 @@ const ARCHITECT_RULES = `CORE PRINCIPLES:
    - Provide a VERY CONCISE architectural reasoning (strictly 1-3 sentences) ONLY if it significantly helps the user understand the next step.
    - After the reasoning, proceed IMMEDIATELY to the tool calls. No long explanations.
    - NO normal text after tool calls, NO markdown besides the initial reasoning.
+7. TOOL CALL STRATEGY:
+   - Run INDEPENDENT tool calls in the SAME function_calls block.
+   - Run DEPENDENT calls SEQUENTIALLY (for example: read_file -> apply_block_edit).
+8. NEVER:
+   - Edit a file without reading it first.
+   - Split independent reads into many separate turns when one parallel batch works.
+   - Start replies with filler like "Great", "Certainly", or "Okay".
+   - Retry the exact same failed approach more than twice.
+9. TASK PROGRESS:
+   - Use task_progress for complex tasks with 3+ steps.
+   - Skip task_progress for trivial single-step actions.
 
 CRITICAL RULE: You do NOT have the ability to run terminal commands, write code, or execute project setups. You must ONLY plan and handover.`;
 
@@ -41,7 +52,50 @@ const CODE_RULES = `CORE RULES:
 - MULTI-FILE EDITS: For edits across different files, call apply_block_edit multiple times in the same function_calls block.
 - For write_file/safe_edit_file: ALWAYS place path/file_path before content/new_content.
 - Keep each content payload under 50KB; split larger writes into multiple calls.
-- NEVER create a plan. You ARE the coder.`;
+- NEVER create a plan. You ARE the coder.
+- TOOL CALL STRATEGY:
+  - Run INDEPENDENT tool calls in the SAME function_calls block.
+  - Run DEPENDENT calls SEQUENTIALLY (for example: read_file -> apply_block_edit).
+- NEVER:
+  - Edit a file without reading it first.
+  - Split independent reads into many separate turns when one parallel batch works.
+  - Start replies with filler like "Great", "Certainly", or "Okay".
+  - Retry the exact same failed approach more than twice.
+- TASK PROGRESS:
+  - Use task_progress for complex tasks with 3+ steps.
+  - Do not use task_progress for trivial single-step tasks.`;
+
+const SHARED_EXAMPLES = `EXAMPLES:
+Example 1 - Dependent sequence (read before edit):
+<example>
+<read_file>
+{"path":"src/app.ts"}
+</read_file>
+<apply_block_edit>
+{"file_path":"src/app.ts","edits":[{"old_content":"const x = 1;","new_content":"const x = 2;","reason":"Update constant value"}]}
+</apply_block_edit>
+</example>
+
+Example 2 - Independent reads in parallel:
+<example>
+<function_calls>
+  <call name="read_file">{"path":"src/a.ts"}</call>
+  <call name="read_file">{"path":"src/b.ts"}</call>
+</function_calls>
+</example>
+
+Example 3 - Error recovery after failed edit:
+<example>
+Previous edit failed twice.
+Now use smaller hunks with apply_block_edit and verify path first with list_files.
+</example>
+
+Example 4 - Task progress in apply_block_edit:
+<example>
+<apply_block_edit>
+{"file_path":"src/app.ts","edits":[{"old_content":"const x = 1;","new_content":"const x = 2;","reason":"Update value"}],"task_progress":"- [x] Analyze existing code\\n- [x] Implement value change\\n- [ ] Run tests"}
+</apply_block_edit>
+</example>`;
 
 const SHARED_RUNTIME_HINTS = `TOOL ARGUMENT ORDER REMINDER:
 Edit sequence is mandatory:
@@ -58,6 +112,7 @@ export type PromptTextBlocks = {
   identity: string;
   objective: string;
   rules: string;
+  examples: string;
   runtimeHints: string;
 };
 
@@ -66,12 +121,14 @@ const PROMPT_TEXT_BY_MODE: Record<string, PromptTextBlocks> = {
     identity: ARCHITECT_IDENTITY,
     objective: ARCHITECT_OBJECTIVE,
     rules: ARCHITECT_RULES,
+    examples: SHARED_EXAMPLES,
     runtimeHints: SHARED_RUNTIME_HINTS
   },
   code: {
     identity: CODE_IDENTITY,
     objective: CODE_OBJECTIVE,
     rules: CODE_RULES,
+    examples: SHARED_EXAMPLES,
     runtimeHints: SHARED_RUNTIME_HINTS
   }
 };
@@ -84,7 +141,7 @@ function createVariants(baseComponents: PromptVariantConfig['components']): Reco
     },
     minimal: {
       variant: 'minimal',
-      components: baseComponents.filter(component => component !== 'memory')
+      components: baseComponents.filter(component => component !== 'memory' && component !== 'examples')
     },
     detailed: {
       variant: 'detailed',
@@ -101,7 +158,7 @@ export class PromptRegistry {
       version: 'v1.0.0',
       labels: ['stable'],
       defaultVariant: 'default',
-      variants: createVariants(['identity', 'objective', 'rules', 'tooling', 'memory', 'runtime_hints', 'response_formatting'])
+      variants: createVariants(['identity', 'objective', 'rules', 'tooling', 'examples', 'memory', 'runtime_hints', 'response_formatting'])
     }],
     ['code-core', {
       id: 'code-core',
@@ -109,7 +166,7 @@ export class PromptRegistry {
       version: 'v1.0.0',
       labels: ['stable'],
       defaultVariant: 'default',
-      variants: createVariants(['identity', 'objective', 'rules', 'tooling', 'memory', 'runtime_hints', 'response_formatting'])
+      variants: createVariants(['identity', 'objective', 'rules', 'tooling', 'examples', 'memory', 'runtime_hints', 'response_formatting'])
     }]
   ]);
 

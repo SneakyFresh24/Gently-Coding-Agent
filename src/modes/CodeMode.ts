@@ -47,11 +47,8 @@ You are the Implementation Expert. You bridge the gap between architectural desi
     'find_files',
     'regex_search',
     'list_files',
-    'get_memories',
+    'recall_memories',
     'update_memory_bank',
-    'run_linter',
-    'run_type_check',
-    'execute_test',
     'create_checkpoint',
     'restore_checkpoint',
     'analyze_project_structure'

@@ -3,7 +3,7 @@
 // =====================================================
 
 import * as vscode from 'vscode';
-import { CommandHandler, CommandContext, SettingsMenuOption } from '../types/CommandTypes';
+import { CommandHandler, CommandContext } from '../types/CommandTypes';
 
 export class SettingsCommands {
   static configureApiKey(context: CommandContext): CommandHandler {
@@ -28,45 +28,9 @@ export class SettingsCommands {
     };
   }
 
-  static openSettingsMenu(context: CommandContext): CommandHandler {
-    return {
-      command: 'gently.openSettingsMenu',
-      handler: async () => {
-        const options: SettingsMenuOption[] = [
-          { label: '$(key) Change API Key', value: 'apikey' },
-          { label: '$(gear) VS Code Settings', value: 'settings' },
-          { label: '$(question) OpenRouter Docs', value: 'docs' },
-          { label: '$(github) GitHub Repository', value: 'github' },
-        ];
-
-        const selected = await vscode.window.showQuickPick(options, {
-          placeHolder: 'Gently Menu',
-        });
-
-        if (!selected) return;
-
-        switch (selected.value) {
-          case 'apikey':
-            await vscode.commands.executeCommand('gently.configureApiKey');
-            break;
-          case 'settings':
-            vscode.commands.executeCommand('workbench.action.openSettings', 'gently');
-            break;
-          case 'docs':
-            vscode.env.openExternal(vscode.Uri.parse('https://openrouter.ai/docs'));
-            break;
-          case 'github':
-            vscode.env.openExternal(vscode.Uri.parse('https://github.com/gently-ai/gently-vscode-extension'));
-            break;
-        }
-      },
-    };
-  }
-
   static getAllCommands(context: CommandContext): CommandHandler[] {
     return [
-      SettingsCommands.configureApiKey(context),
-      SettingsCommands.openSettingsMenu(context),
+      SettingsCommands.configureApiKey(context)
     ];
   }
 }

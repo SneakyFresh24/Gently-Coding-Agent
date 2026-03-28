@@ -108,8 +108,7 @@ export class ChatFlowManager {
             throw new Error('Please select a model before sending a message.');
         }
 
-        const mode = this.modeService.getCurrentMode();
-        const baseTemperature = mode?.temperature ?? 0.7;
+        const baseTemperature = this.modeService.getTemperature();
         const sampling = this.getSamplingOverrides(context.selectedModel, baseTemperature);
         const modelMaxOutputStart = Date.now();
         const modelMaxOutput = await this.openRouterService.getMaxTokens(context.selectedModel);
@@ -530,7 +529,7 @@ export class ChatFlowManager {
         }
 
         if (incompleteToolCalls.length > 0) {
-            const retryPrompt = this.buildTruncationFollowUpPrompt(incompleteToolCalls[0]);
+            const retryPrompt = this.buildTruncationFollowUpPrompt(incompleteToolCalls[0], 1);
             const retryMsg: Message = {
                 id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                 timestamp: Date.now(),
@@ -596,7 +595,7 @@ export class ChatFlowManager {
         }));
     }
 
-    private buildTruncationFollowUpPrompt(incomplete: IncompleteToolCall): string {
+    private buildTruncationFollowUpPrompt(incomplete: IncompleteToolCall, retryCount: number): string {
         const recoveredPath = typeof incomplete.recoveredFields?.path === 'string'
             ? String(incomplete.recoveredFields.path)
             : typeof incomplete.recoveredFields?.file_path === 'string'
@@ -611,7 +610,8 @@ export class ChatFlowManager {
             toolName: incomplete.name || 'unknown_tool',
             recoveredPath,
             contentPreview: recoveredContent || incomplete.rawArgumentsPreview,
-            totalChars: incomplete.charCount
+            totalChars: incomplete.charCount,
+            retryCount
         });
     }
 

@@ -9,6 +9,7 @@
   import AutoApproveBar from '../approval/AutoApproveBar.svelte';
   import ToolApprovalModal from '../approval/ToolApprovalModal.svelte';
   import ModelDropdown from '../layout/ModelDropdown.svelte';
+  import ModeToggle from '../layout/ModeToggle.svelte';
 
 
   import { extensionStore, isBusy, hasTask } from '../../stores/extensionStore';
@@ -246,6 +247,7 @@
   <footer class="chat-footer">
     <div class="footer-toolbar">
       <AutoApproveBar />
+      <ModeToggle mode={$extensionStore.mode} />
       <ModelDropdown 
         selectedModel={$settingsStore.selectedModel} 
         models={$settingsStore.availableModels} 

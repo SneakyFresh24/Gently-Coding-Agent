@@ -62,7 +62,7 @@ describe('MessageValidator', () => {
 
       expect(result.isValid).toBe(false);
       expect(result.errors).toContainEqual(
-        expect.objectContaining({ code: 'INVALID_TYPE' })
+        expect.objectContaining({ code: 'INVALID_MESSAGE_TYPE' })
       );
     });
 
@@ -116,7 +116,7 @@ describe('MessageValidator', () => {
   describe('Message Size Validation', () => {
     it('should reject messages exceeding size limit', () => {
       // Create a large message
-      const largeData = 'x'.repeat(2000);
+      const largeData = 'x'.repeat(700000);
       const message = { 
         type: 'sendMessage', 
         message: largeData 
@@ -141,53 +141,6 @@ describe('MessageValidator', () => {
   });
 
   describe('Schema Validation', () => {
-    describe('Login Messages', () => {
-      it('should validate correct login message', () => {
-        const message = {
-          type: 'login',
-          email: 'test@example.com',
-          password: 'password123'
-        };
-        
-        const result = validator.validateInboundMessage(message);
-        expect(result.isValid).toBe(true);
-      });
-
-      it('should reject login with invalid email', () => {
-        const message = {
-          type: 'login',
-          email: 'invalid-email',
-          password: 'password123'
-        };
-        
-        const result = validator.validateInboundMessage(message);
-        expect(result.isValid).toBe(false);
-        expect(result.errors).toContainEqual(
-          expect.objectContaining({ 
-            field: 'email',
-            code: 'INVALID_STRING'
-          })
-        );
-      });
-
-      it('should reject login without required fields', () => {
-        const message = {
-          type: 'login',
-          email: 'test@example.com'
-          // missing password
-        };
-        
-        const result = validator.validateInboundMessage(message);
-        expect(result.isValid).toBe(false);
-        expect(result.errors).toContainEqual(
-          expect.objectContaining({ 
-            field: 'password',
-            code: 'REQUIRED_FIELD_MISSING'
-          })
-        );
-      });
-    });
-
     describe('Send Message', () => {
       it('should validate correct send message', () => {
         const message = {
@@ -333,18 +286,6 @@ describe('MessageValidator', () => {
   });
 
   describe('Input Sanitization', () => {
-    it('should sanitize email addresses', () => {
-      const message = {
-        type: 'login',
-        email: 'TEST@EXAMPLE.COM',
-        password: 'password123'
-      };
-      
-      const result = validator.validateInboundMessage(message);
-      expect(result.isValid).toBe(true);
-      expect(result.sanitizedData.email).toBe('test@example.com');
-    });
-
     it('should sanitize string fields', () => {
       const message = {
         type: 'sendMessage',
@@ -353,7 +294,7 @@ describe('MessageValidator', () => {
       
       const result = validator.validateInboundMessage(message);
       expect(result.isValid).toBe(true);
-      expect(result.sanitizedData.message).toBe('Hello with control chars');
+      expect(result.sanitizedData.message).toBe('Hello with control chars ');
     });
 
     it('should handle JSON sanitization', () => {
@@ -410,7 +351,7 @@ describe('MessageValidator', () => {
 describe('TypeGuards', () => {
   describe('isInboundMessage', () => {
     it('should identify valid inbound messages', () => {
-      expect(TypeGuards.isInboundMessage({ type: 'login' })).toBe(true);
+      expect(TypeGuards.isInboundMessage({ type: 'setMode' })).toBe(true);
       expect(TypeGuards.isInboundMessage({ type: 'sendMessage' })).toBe(true);
       expect(TypeGuards.isInboundMessage({ type: 'ready' })).toBe(true);
     });

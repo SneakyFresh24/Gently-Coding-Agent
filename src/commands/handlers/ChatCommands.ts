@@ -34,12 +34,27 @@ export class ChatCommands {
   }
 
   /**
+   * Toggle between architect and code mode.
+   */
+  static toggleAgentMode(context: CommandContext): CommandHandler {
+    return {
+      command: 'gently.toggleAgentMode',
+      handler: async () => {
+        const currentMode = context.modeService.getCurrentMode()?.id ?? 'architect';
+        const nextMode = currentMode === 'code' ? 'architect' : 'code';
+        await context.chatViewProvider.setSelectedMode(nextMode);
+      }
+    };
+  }
+
+  /**
    * Get all chat commands
    */
   static getAllCommands(context: CommandContext): CommandHandler[] {
     return [
       ChatCommands.openChat(context),
-      ChatCommands.clearHistory(context)
+      ChatCommands.clearHistory(context),
+      ChatCommands.toggleAgentMode(context)
     ];
   }
 }

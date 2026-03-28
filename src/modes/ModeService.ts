@@ -20,7 +20,6 @@ export class ModeService {
     this.modeManager = new ModeManager();
 
     this.registerBuiltInModes();
-    this.setupCommands();
   }
 
   /**
@@ -33,87 +32,6 @@ export class ModeService {
 
     // Setze Architect Mode als Standardmodus
     this.modeManager.setMode('architect');
-  }
-
-  /**
-   * Registriert VS Code Commands für die Modi
-   */
-  private setupCommands(): void {
-    if (!this.context) {
-      return;
-    }
-
-    // Command zum Wechseln des Modus
-    const setModeCommand = vscode.commands.registerCommand(
-      'gently.setMode',
-      async (modeId: string) => {
-        try {
-          await this.modeManager.setMode(modeId);
-          const currentMode = this.modeManager.getCurrentMode();
-          if (currentMode) {
-            vscode.window.showInformationMessage(
-              `Switched to ${currentMode.displayName} mode`
-            );
-          }
-        } catch (error) {
-          vscode.window.showErrorMessage(
-            `Failed to switch mode: ${(error as Error).message}`
-          );
-        }
-      }
-    );
-
-    // Command zum Anzeigen des aktuellen Modus
-    const showModeCommand = vscode.commands.registerCommand(
-      'gently.showMode',
-      () => {
-        const currentMode = this.modeManager.getCurrentMode();
-        if (currentMode) {
-          vscode.window.showInformationMessage(
-            `Current mode: ${currentMode.displayName} (${currentMode.id})`
-          );
-        } else {
-          vscode.window.showInformationMessage('No mode is currently active');
-        }
-      }
-    );
-
-    // Command zum Anzeigen aller verfügbaren Modi
-    const listModesCommand = vscode.commands.registerCommand(
-      'gently.listModes',
-      async () => {
-        const availableModes = this.modeManager.getAvailableModes();
-        const modeItems = availableModes.map(mode => ({
-          label: mode.displayName,
-          description: mode.description,
-          id: mode.id
-        }));
-
-        const selectedMode = await vscode.window.showQuickPick(modeItems, {
-          placeHolder: 'Select a mode to switch to'
-        });
-
-        if (selectedMode) {
-          try {
-            await this.modeManager.setMode(selectedMode.id);
-            vscode.window.showInformationMessage(
-              `Switched to ${selectedMode.label} mode`
-            );
-          } catch (error) {
-            vscode.window.showErrorMessage(
-              `Failed to switch mode: ${(error as Error).message}`
-            );
-          }
-        }
-      }
-    );
-
-    // Registriere alle Commands
-    this.context.subscriptions.push(
-      setModeCommand,
-      showModeCommand,
-      listModesCommand
-    );
   }
 
   /**
@@ -228,6 +146,11 @@ export class ModeService {
    */
   getTemperature(): number {
     const currentMode = this.modeManager.getCurrentMode();
-    return currentMode ? currentMode.temperature || 0.7 : 0.7;
+    const modeTemperature = currentMode?.temperature ?? 0.7;
+    const configured = vscode.workspace.getConfiguration('gently').get<number>('temperature');
+    if (typeof configured !== 'number' || Number.isNaN(configured)) {
+      return modeTemperature;
+    }
+    return Math.min(2, Math.max(0, configured));
   }
 }

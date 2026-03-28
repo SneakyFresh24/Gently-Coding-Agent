@@ -55,7 +55,6 @@ You are the Strategist. You bridge the gap between user requirements and technic
     'find_files',
     'regex_search',
     'list_files',
-    'get_memories',
     'recall_memories',
     'read_file',
     'analyze_project_structure',

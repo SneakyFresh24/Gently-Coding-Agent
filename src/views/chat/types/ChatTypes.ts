@@ -80,7 +80,6 @@ export interface ChatViewContext {
   toolExecutionStartSent: Set<string>;
   conversationSummary?: string;
   sequenceRepairHistory?: string[];
-  sequenceRetryCount?: number;
   consecutiveMistakeCount?: number;
   recentToolCallFingerprints?: string[];
   doomLoopAllowedTools?: Set<string>;

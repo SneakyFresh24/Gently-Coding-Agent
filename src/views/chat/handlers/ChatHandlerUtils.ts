@@ -12,7 +12,7 @@ export class ChatHandlerUtils {
 
         log.info('Filtering tool messages for Architect mode');
         const allowedTools = [
-            'find_files', 'regex_search', 'list_files', 'get_memories', 'recall_memories',
+            'find_files', 'regex_search', 'list_files', 'recall_memories',
             'read_file', 'analyze_project_structure',
             'create_plan', 'handover_to_coder', 'ask_question',
             'update_memory_bank', 'query_long_term_memory'

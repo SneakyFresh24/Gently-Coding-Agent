@@ -216,8 +216,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             await this.initializeWebviewData();
             return;
           }
-          if (data.type === 'modeChanged' || data.type === 'setMode') {
+          if (data.type === 'setMode') {
             await this.setSelectedMode(data.modeId);
+            return;
+          }
+          if (data.type === 'toggleAgentMode') {
+            await this.setSelectedMode(data.enabled ? 'code' : 'architect');
             return;
           }
           if (data.type === 'commandApprovalResponse') {
@@ -287,6 +291,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     await this.sendContextUpdate();
+    const mode = this.modeService.getCurrentMode();
+    if (mode) {
+      const isAgentMode = ChatViewProvider.AGENT_LIKE_MODES.includes(mode.id);
+      this.sendMessageToWebview({
+        type: 'modeChanged',
+        modeId: mode.id,
+        modeName: mode.displayName,
+        modeDescription: mode.description,
+        agentMode: isAgentMode
+      });
+    }
     await this.sessionHandler.handleGetSessions();
   }
 
@@ -333,17 +348,25 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   public getContext(): ChatViewContext { return this.messageHandler.getContext(); }
 
   public setAgentMode(enabled: boolean): void {
-    this.messageHandler.setSelectedMode(enabled ? 'agent' : 'ask');
+    this.messageHandler.setSelectedMode(enabled ? 'code' : 'architect');
     this.context?.globalState.update('gently.agentMode', enabled);
+    const config = vscode.workspace.getConfiguration('gently');
+    if (config.get<boolean>('agentMode', false) !== enabled) {
+      void config.update('agentMode', enabled, vscode.ConfigurationTarget.Global);
+    }
   }
 
   public setSelectedModel(model: string): void {
     void this.messageHandler.setSelectedModel(model);
     this.context?.globalState.update('gently.selectedModel', model);
+    const config = vscode.workspace.getConfiguration('gently');
+    if (config.get<string>('selectedModel', '') !== model) {
+      void config.update('selectedModel', model, vscode.ConfigurationTarget.Global);
+    }
   }
 
   /** Modes that behave like an agent (have tools, can execute) */
-  private static readonly AGENT_LIKE_MODES = ['agent', 'code', 'debug'];
+  private static readonly AGENT_LIKE_MODES = ['code'];
 
   public async setSelectedMode(modeId: string): Promise<void> {
     this.messageHandler.setSelectedMode(modeId);
@@ -356,6 +379,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const isAgentMode = ChatViewProvider.AGENT_LIKE_MODES.includes(mode.id);
         this.messageHandler.setSelectedMode(mode.id);
         this.context?.globalState.update('gently.agentMode', isAgentMode);
+        const config = vscode.workspace.getConfiguration('gently');
+        if (config.get<boolean>('agentMode', false) !== isAgentMode) {
+          void config.update('agentMode', isAgentMode, vscode.ConfigurationTarget.Global);
+        }
         console.log(`[ChatViewProvider] setSelectedMode: ${modeId} → resolved to ${mode.id} (agentLike=${isAgentMode})`);
         this._view?.webview.postMessage({
           type: 'modeChanged', modeId: mode.id, modeName: mode.displayName,

@@ -303,12 +303,6 @@ const MessageSchemas: Record<string, any> = {
       model: { type: 'string', maxLength: 200 }
     }
   },
-  'modeChanged': {
-    required: ['modeId'],
-    fields: {
-      modeId: { type: 'string', maxLength: 50 }
-    }
-  },
   'setMode': {
     required: ['modeId'],
     fields: {
@@ -388,18 +382,6 @@ const MessageSchemas: Record<string, any> = {
     fields: {}
   },
   'getWorkspaceInfo': {
-    required: [],
-    fields: {}
-  },
-  'getIndexingStats': {
-    required: [],
-    fields: {}
-  },
-  'refreshIndexing': {
-    required: [],
-    fields: {}
-  },
-  'addSourceFolder': {
     required: [],
     fields: {}
   },
@@ -566,24 +548,7 @@ const MessageSchemas: Record<string, any> = {
     }
   },
 
-  'login': {
-    required: ['email', 'password'],
-    fields: {
-      email: { type: 'string', maxLength: 255, sanitizer: 'email' },
-      password: { type: 'string', maxLength: 100 }
-    }
-  },
-  'signup': {
-    required: ['email', 'password'],
-    fields: {
-      email: { type: 'string', maxLength: 255, sanitizer: 'email' },
-      password: { type: 'string', maxLength: 100 }
-    }
-  },
-  'logout': {
-    required: [],
-    fields: {}
-  }
+  // BYOK mode: no auth message types.
 };
 
 // =====================================================

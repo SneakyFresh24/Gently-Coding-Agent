@@ -41,32 +41,6 @@ export interface ClearHistoryMessage {
 }
 
 /**
- * User login request
- */
-export interface LoginMessage {
-  type: 'login';
-  email: string;
-  password: string;
-}
-
-/**
- * User signup request
- */
-export interface SignupMessage {
-  type: 'signup';
-  email: string;
-  password: string;
-  fullName?: string;
-}
-
-/**
- * User logout request
- */
-export interface LogoutMessage {
-  type: 'logout';
-}
-
-/**
  * Set OpenRouter API key
  */
 export interface SetApiKeyMessage {
@@ -120,14 +94,6 @@ export interface ModelChangedMessage {
 }
 
 /**
- * Chat mode changed
- */
-export interface ModeChangedMessage {
-  type: 'modeChanged';
-  modeId: string;
-}
-
-/**
  * Chat mode set (alias for modeChanged)
  */
 export interface SetModeMessage {
@@ -169,27 +135,6 @@ export interface StopMessageMessage {
  */
 export interface GetWorkspaceInfoMessage {
   type: 'getWorkspaceInfo';
-}
-
-/**
- * Get indexing statistics
- */
-export interface GetIndexingStatsMessage {
-  type: 'getIndexingStats';
-}
-
-/**
- * Refresh code indexing
- */
-export interface RefreshIndexingMessage {
-  type: 'refreshIndexing';
-}
-
-/**
- * Add source folder to context
- */
-export interface AddSourceFolderMessage {
-  type: 'addSourceFolder';
 }
 
 /**
@@ -547,66 +492,6 @@ export interface GetTokenUsageMessage {
 // =====================================================
 // OUTBOUND MESSAGES (Extension → Webview)
 // =====================================================
-
-/**
- * Login failed
- */
-export interface LoginErrorMessage {
-  type: 'loginError';
-  message: string;
-}
-
-/**
- * Login successful
- */
-export interface LoginSuccessMessage {
-  type: 'loginSuccess';
-}
-
-/**
- * Signup failed
- */
-export interface SignupErrorMessage {
-  type: 'signupError';
-  message: string;
-}
-
-/**
- * Signup successful
- */
-export interface SignupSuccessMessage {
-  type: 'signupSuccess';
-  message: string;
-}
-
-/**
- * Logout successful
- */
-export interface LogoutSuccessMessage {
-  type: 'logoutSuccess';
-  message: string;
-}
-
-/**
- * Logout failed
- */
-export interface LogoutErrorMessage {
-  type: 'logoutError';
-  message: string;
-}
-
-/**
- * Current authentication status
- */
-export interface AuthStatusMessage {
-  type: 'authStatus';
-  isAuthenticated: boolean;
-  user?: { email: string } | null;
-  agentMode?: boolean;
-  selectedModel?: string;
-  selectedMode?: string;
-  currentMode?: Record<string, unknown>;
-}
 
 /**
  * Auto-approve settings updated
@@ -1253,9 +1138,6 @@ export type InboundWebviewMessage =
   | ReadyMessage
   | SendMessageMessage
   | ClearHistoryMessage
-  | LoginMessage
-  | SignupMessage
-  | LogoutMessage
   | SetMaxTokensMessage
   | SetApiKeyMessage
   | DeleteApiKeyMessage
@@ -1263,16 +1145,12 @@ export type InboundWebviewMessage =
   | FetchModelsMessage
   | ToggleAgentModeMessage
   | ModelChangedMessage
-  | ModeChangedMessage
   | SetModeMessage
   | RequestContextUpdateMessage
   | AddFilesToContextMessage
   | TogglePinFileMessage
   | StopMessageMessage
   | GetWorkspaceInfoMessage
-  | GetIndexingStatsMessage
-  | RefreshIndexingMessage
-  | AddSourceFolderMessage
   | OpenMemoriesMessage
   | OpenFileMessage
   | SearchFilesMessage
@@ -1320,13 +1198,6 @@ export type InboundWebviewMessage =
  * All outbound messages (Extension → Webview)
  */
 export type OutboundWebviewMessage =
-  | LoginErrorMessage
-  | LoginSuccessMessage
-  | SignupErrorMessage
-  | SignupSuccessMessage
-  | LogoutSuccessMessage
-  | LogoutErrorMessage
-  | AuthStatusMessage
   | ApiKeyStatusMessage
   | ActiveModelChangedMessage
   | RetryingWithReducedTokensMessage

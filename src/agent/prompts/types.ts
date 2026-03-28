@@ -5,6 +5,7 @@ export type PromptComponentId =
   | 'objective'
   | 'rules'
   | 'tooling'
+  | 'examples'
   | 'memory'
   | 'runtime_hints'
   | 'response_formatting';
@@ -41,6 +42,7 @@ export interface PromptBuilderTool {
 export interface PromptContext {
   mode: string;
   model?: string | null;
+  familyOverridesEnabled?: boolean;
   workspaceName?: string;
   retryCount?: number;
   memoryBankContext?: string;
@@ -61,4 +63,3 @@ export interface PromptBuildResult {
     usedFallback: boolean;
   };
 }
-

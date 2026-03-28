@@ -34,20 +34,3 @@ export interface FileReference {
   displayName: string;
   size?: number;
 }
-
-export interface SettingsMenuOption {
-  label: string;
-  value: string;
-}
-
-export interface FileSearchResult {
-  filePath: string;
-  score: number;
-  reason: string;
-}
-
-export interface FileSearchQuickPickItem extends vscode.QuickPickItem {
-  label: string;
-  description?: string;
-  detail?: string;
-}

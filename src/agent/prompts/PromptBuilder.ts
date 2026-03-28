@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { RESPONSE_FORMATTING_PROMPT } from './responseFormatting';
 import { PromptRegistry } from './PromptRegistry';
 import { TemplateEngine } from './TemplateEngine';
+import { applyFamilyOverrides, getFamilyOverrideSpec } from './families';
 import {
   PromptBuildResult,
   PromptBuilderTool,
@@ -14,6 +15,17 @@ type BuildOptions = {
   strictTemplates?: boolean;
   legacyFallbackPrompt?: string;
 };
+
+function buildProgressivePromptRetryHint(retryCount: number): string {
+  if (retryCount <= 0) return '';
+  if (retryCount === 1) {
+    return 'RETRY LEVEL 1: The previous tool call failed. Check your parameters and try again.';
+  }
+  if (retryCount === 2) {
+    return 'RETRY LEVEL 2: This is your 2nd failed attempt. You MUST use a different approach.';
+  }
+  return 'RETRY LEVEL 3+: CRITICAL. STOP retrying the same approach. Use alternatives only, or report the issue to the user.';
+}
 
 export class PromptBuilder {
   constructor(
@@ -36,11 +48,13 @@ export class PromptBuilder {
       ? context.promptConfig.components
       : variant.components;
 
-    const blocks = this.registry.getTextBlocks(context.mode);
+    const baseBlocks = this.registry.getTextBlocks(context.mode);
+    const familyOverridesEnabled = context.familyOverridesEnabled !== false;
+    const blocks = this.resolveTextBlocks(baseBlocks, context.model, familyOverridesEnabled);
     const toolBlock = this.renderTools(context.tools || []);
     const providerSafety = this.renderProviderSafetyClause(context.model || '');
     const retryHint = context.retryCount && context.retryCount > 0
-      ? `\n\nRETRY ATTEMPT ${context.retryCount}/3 - CRITICAL:\nEnsure that all tool_calls have VALID JSON arguments. Use double quotes, escape special characters, and close all brackets.`
+      ? `\n\n${buildProgressivePromptRetryHint(context.retryCount)}`
       : '';
     const summaryBlock = context.conversationSummary
       ? `\n\n--- PREVIOUS CONVERSATION SUMMARY ---\n${context.conversationSummary}\n-----------------------------------`
@@ -51,6 +65,7 @@ export class PromptBuilder {
       objective: blocks.objective,
       rules: blocks.rules,
       tooling: toolBlock,
+      examples: blocks.examples,
       memory_bank: context.memoryBankContext || '',
       memories_prompt: context.memoriesPrompt || '',
       runtime_hints: `${blocks.runtimeHints}${providerSafety}${retryHint}${summaryBlock}`,
@@ -75,6 +90,23 @@ export class PromptBuilder {
         usedFallback: false
       }
     };
+  }
+
+  private resolveTextBlocks(
+    baseBlocks: ReturnType<PromptRegistry['getTextBlocks']>,
+    model: string | null | undefined,
+    familyOverridesEnabled: boolean
+  ) {
+    if (!familyOverridesEnabled) {
+      return baseBlocks;
+    }
+    try {
+      const overrideSpec = getFamilyOverrideSpec(model);
+      return applyFamilyOverrides(baseBlocks, overrideSpec);
+    } catch {
+      // Fallback to base prompt blocks if override resolution fails.
+      return baseBlocks;
+    }
   }
 
   private buildFallback(context: PromptContext, fallbackPrompt: string): PromptBuildResult {
@@ -107,6 +139,8 @@ export class PromptBuilder {
         return this.templateEngine.render('{{rules}}', values, { mode });
       case 'tooling':
         return this.templateEngine.render('AVAILABLE TOOLS (MINIFIED):\n{{tooling}}', values, { mode });
+      case 'examples':
+        return this.templateEngine.render('{{examples}}', values, { mode });
       case 'memory':
         if (variant.variant === 'minimal') {
           return '';

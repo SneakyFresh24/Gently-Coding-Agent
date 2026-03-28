@@ -117,14 +117,13 @@ export class MessageHandler {
     this.context = {
       agentMode: false,
       selectedModel: null,
-      selectedMode: 'ask',
+      selectedMode: 'architect',
       conversationHistory: [],
       shouldStopStream: false,
       shouldAbortTools: false,
       messageCheckpoints: new Map(),
       toolExecutionStartSent: new Set(),
       sequenceRepairHistory: [],
-      sequenceRetryCount: 0,
       consecutiveMistakeCount: 0,
       recentToolCallFingerprints: [],
       doomLoopAllowedTools: new Set<string>(),
@@ -153,15 +152,19 @@ export class MessageHandler {
   }
 
   private loadStoredState(): void {
-    this.context.agentMode = this.extensionContext.globalState.get('gently.agentMode', false);
+    const config = vscode.workspace.getConfiguration('gently');
+    const configuredAgentMode = config.get<boolean>('agentMode', false);
+    const configuredModel = config.get<string>('selectedModel', '');
     const storedModel = this.extensionContext.globalState.get<string | null>('gently.selectedModel', null);
-    this.context.selectedModel = this.normalizeModelId(storedModel);
-    this.context.selectedMode = this.extensionContext.globalState.get('gently.selectedMode', 'ask');
+
+    this.context.agentMode = configuredAgentMode;
+    this.context.selectedMode = configuredAgentMode ? 'code' : 'architect';
+    this.context.selectedModel = this.normalizeModelId(configuredModel) ?? this.normalizeModelId(storedModel);
   }
 
   setSelectedMode(modeId: string): void {
     this.context.selectedMode = modeId;
-    this.context.agentMode = modeId === 'agent';
+    this.context.agentMode = modeId === 'code';
     this.extensionContext.globalState.update('gently.selectedMode', modeId);
     this.extensionContext.globalState.update('gently.agentMode', this.context.agentMode);
   }
@@ -170,6 +173,11 @@ export class MessageHandler {
     const normalizedModel = this.normalizeModelId(model);
     this.context.selectedModel = normalizedModel;
     await this.extensionContext.globalState.update('gently.selectedModel', normalizedModel);
+    const configured = vscode.workspace.getConfiguration('gently').get<string>('selectedModel', '');
+    const normalized = normalizedModel ?? '';
+    if (configured !== normalized) {
+      await vscode.workspace.getConfiguration('gently').update('selectedModel', normalized, vscode.ConfigurationTarget.Global);
+    }
     await this.persistSelectedModelToActiveSession(normalizedModel);
     this.sendMessageToWebview({ type: 'modelChanged', model: normalizedModel || '' } as any);
     this.sendMessageToWebview({ type: 'refreshSessions' } as any);
@@ -208,6 +216,11 @@ export class MessageHandler {
     const normalizedModel = this.normalizeModelId(sessionModel);
     this.context.selectedModel = normalizedModel;
     await this.extensionContext.globalState.update('gently.selectedModel', normalizedModel);
+    const configured = vscode.workspace.getConfiguration('gently').get<string>('selectedModel', '');
+    const normalized = normalizedModel ?? '';
+    if (configured !== normalized) {
+      await vscode.workspace.getConfiguration('gently').update('selectedModel', normalized, vscode.ConfigurationTarget.Global);
+    }
     this.sendMessageToWebview({ type: 'modelChanged', model: normalizedModel || '' } as any);
   }
 
