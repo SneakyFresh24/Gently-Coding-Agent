@@ -2,6 +2,42 @@
 
 All notable changes to the "Gently" extension will be documented in this file.
 
+## [0.9.7] - 2026-03-28
+
+### Added
+- **Mode Tool Consistency Test**: Added `src/modes/tests/ModeToolConsistency.test.ts` to enforce that all mode `availableTools` are registered in tool definitions.
+- **Chat Toolbar Mode Toggle**: Added a dedicated mode toggle UI in the chat footer (`ModeToggle.svelte`) next to Auto-Approve and Model selection.
+- **Runtime Config Sync Hook**: Added `onDidChangeConfiguration` handling in `extension.ts` for live updates of:
+  - `gently.agentMode`
+  - `gently.selectedModel`
+  - `gently.validation.enabled`
+  - `gently.validation.strictMode`
+
+### Changed
+- **Canonical Mode Switching Path**:
+  - Standardized on `setMode(modeId)` as canonical inbound mode contract.
+  - Kept `toggleAgentMode` as compatibility alias mapped to `architect <-> code`.
+- **Command Wiring Cleanup**:
+  - Registered and wired `gently.toggleAgentMode` end-to-end.
+  - Removed legacy/unused internal command handlers not wired into active flows.
+- **Settings Now Runtime-Effective**:
+  - `gently.temperature` is now applied as a real override in `ModeService.getTemperature()` (with clamp/fallback).
+  - `gently.selectedModel` and `gently.agentMode` are synchronized with runtime mode/model state.
+- **Validation Wiring**:
+  - Validation initialization is now executed during activation.
+  - `gently.validation.enabled` and `gently.validation.strictMode` now flow into the real validation pipeline via `AgentManager.applyValidationConfiguration(...)`.
+- **Mode Tool Lists Synchronized**:
+  - Replaced legacy `get_memories` references with `recall_memories`.
+  - Removed non-existent tool names from mode tool lists (`run_linter`, `run_type_check`, `execute_test`).
+- **Webview Contract Cleanup (BYOK)**:
+  - Removed unused auth message types (`login`, `signup`, `logout` and related outbound auth events).
+  - Removed unimplemented/stub inbound message paths (`getIndexingStats`, `refreshIndexing`, `addSourceFolder`).
+  - Removed inbound `modeChanged` handling; mode updates are now driven by `setMode` (plus alias mapping).
+
+### Fixed
+- **Mode UX Drift**: Fixed mode-toggle drift between backend/runtime and webview by sending current mode state during webview initialization.
+- **Validation Settings No-Op**: Fixed previously inert validation settings by wiring them to active validation/file operation behavior.
+
 ## [0.9.4] - 2026-03-27
 
 ### Added

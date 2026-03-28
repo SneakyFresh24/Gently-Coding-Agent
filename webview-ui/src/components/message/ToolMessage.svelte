@@ -124,6 +124,13 @@
     }
 
     if (name === 'create_plan') {
+      if (parsed?.success === false) {
+        const errorMsg = String(parsed?.error || parsed?.message || '').trim();
+        return errorMsg
+          ? `❌ create_plan failed: ${truncateText(errorMsg.split('\n')[0], 200)}`
+          : '❌ create_plan failed';
+      }
+
       const steps = Array.isArray(parsed?.plan?.steps)
         ? parsed.plan.steps
         : (Array.isArray(parsed?.steps) ? parsed.steps : []);
