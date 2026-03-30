@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { telemetry } from '../services/Telemetry';
 
 /**
  * Centralized logging utility for the Gently extension
@@ -19,16 +20,28 @@ export class Logger {
   }
 
   private log(level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG', message: string, ...args: any[]): void {
-    const timestamp = new Date().toISOString();
-    const formattedArgs = args.length > 0 ? ` | ${args.map(a => JSON.stringify(a)).join(' ')}` : '';
-    const output = `[${timestamp}] [${level}] ${message}${formattedArgs}`;
-    this.outputChannel.appendLine(output);
-    
-    // Also log to console for development
+    const traceContext = telemetry.getActiveTraceContext();
+    const entry = {
+      timestamp: new Date().toISOString(),
+      level,
+      context: 'Logger',
+      event: 'log',
+      message,
+      ...(args.length > 0 ? { metadata: { args } } : {}),
+      ...(traceContext.traceId ? { traceId: traceContext.traceId } : {}),
+      ...(traceContext.spanId ? { spanId: traceContext.spanId } : {})
+    };
+    const serialized = JSON.stringify(entry);
+    this.outputChannel.appendLine(serialized);
+
     if (level === 'ERROR') {
-      console.error(output);
+      console.error(serialized);
+    } else if (level === 'WARN') {
+      console.warn(serialized);
+    } else if (level === 'DEBUG') {
+      console.debug(serialized);
     } else {
-      console.log(output);
+      console.log(serialized);
     }
   }
 

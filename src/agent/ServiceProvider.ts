@@ -47,6 +47,7 @@ import { CONTEXT_LIMITS } from '../utils';
 import { ApprovalManager, AutoApproveManager } from '../approval/ApprovalManager';
 import { HookManager } from '../hooks/HookManager';
 import { TokenTracker } from '../utils/TokenTracker';
+import { CircuitBreakerRegistry } from '../core/resilience/CircuitBreakerRegistry';
 
 /**
  * Configure all services in the container
@@ -77,6 +78,7 @@ export function configureServices(container: Container, context: vscode.Extensio
     container.register('autoApproveManager', (c) => new AutoApproveManager(context));
     container.register('hookManager', (c) => new HookManager(workspaceRoot));
     container.register('tokenTracker', (c) => new TokenTracker(context));
+    container.register('circuitBreakerRegistry', () => CircuitBreakerRegistry.getInstance());
 
     // 2. Base Services
     container.register('fileOps', () => new FileOperations());
@@ -181,7 +183,8 @@ export function configureServices(container: Container, context: vscode.Extensio
             c.resolve('webSearchTools'),
             c.resolve('questionTools'),
             c.resolve('autoApproveManager'),
-            c.resolve('hookManager')
+            c.resolve('hookManager'),
+            c.resolve('circuitBreakerRegistry')
         );
 
         const termManager = c.resolve<any>('terminalManager');

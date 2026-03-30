@@ -29,6 +29,7 @@ import {
 } from '../../utils/Logger';
 import { ensureDir } from '../../utils/persistenceUtils';
 import * as path from 'path';
+import { HookManager } from '../../hooks/HookManager';
 
 export interface AgentContext {
   workspaceRoot: string;
@@ -407,6 +408,10 @@ export class AgentManager {
 
   getToolManager(): ToolManager {
     return this.container.resolve('toolManager');
+  }
+
+  getHookManager(): HookManager {
+    return this.container.resolve('hookManager');
   }
 
   getPlanningManager(): PlanningManager {

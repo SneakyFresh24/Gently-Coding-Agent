@@ -45,6 +45,7 @@ export interface ChatRequest {
         geminiSchemaSanitizationEnabled?: boolean;
         webpFallbackEnabled?: boolean;
     };
+    disableInternalRetries?: boolean;
 }
 
 export interface Tool {
@@ -227,7 +228,7 @@ export class OpenRouterService {
 
     async *streamChatMessage(request: ChatRequest): AsyncGenerator<StreamChunk, void, unknown> {
         let lastError: any;
-        const maxRetries = 3;
+        const maxRetries = request.disableInternalRetries ? 0 : 3;
         const delay = 1000;
 
         for (let attempt = 0; attempt <= maxRetries; attempt++) {

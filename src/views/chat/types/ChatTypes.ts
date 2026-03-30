@@ -83,6 +83,7 @@ export interface ChatViewContext {
   consecutiveMistakeCount?: number;
   recentToolCallFingerprints?: string[];
   doomLoopAllowedTools?: Set<string>;
+  loopDetectorState?: { lastSignature?: string; count: number };
   recentModeSwitches?: string[];
   promptVariantOverride?: 'default' | 'minimal' | 'detailed';
   isToolExecutionActive?: boolean;

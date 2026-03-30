@@ -249,6 +249,17 @@ export class ConversationPruner {
         const config = this.getPruningConfig();
         const threshold = config.strategy === 'legacy' ? LEGACY_MAX_HISTORY_LENGTH : config.maxHistoryLength;
         if (context.conversationHistory.length <= threshold) return;
+        await this.agentManager.getHookManager().executePreCompact({
+            strategy: config.strategy,
+            historyLength: context.conversationHistory.length,
+            threshold
+        });
+        await this.agentManager.getHookManager().executeNotification({
+            channel: 'compaction',
+            severity: 'info',
+            message: `Compaction started (${config.strategy})`,
+            metadata: { historyLength: context.conversationHistory.length, threshold }
+        });
 
         if (config.strategy === 'legacy') {
             await this.pruneConversationHistoryLegacy(context);
@@ -276,6 +287,12 @@ export class ConversationPruner {
                 `Hybrid pruning remains above maxHistoryLength (${finalMessages.length}/${config.maxHistoryLength}) due to protected/pinned/system messages.`
             );
         }
+        await this.agentManager.getHookManager().executeNotification({
+            channel: 'compaction',
+            severity: 'info',
+            message: 'Compaction completed',
+            metadata: { beforeCount, afterCount: finalMessages.length, strategy: config.strategy }
+        });
     }
 
     private async pruneConversationHistoryLegacy(context: ChatViewContext): Promise<void> {

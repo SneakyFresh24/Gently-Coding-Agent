@@ -11,12 +11,13 @@ import { ToolCall } from '../../../services/OpenRouterService';
 import { PlanStep } from '../../../agent/planning/types';
 import { ToolResultErrorCodes, ToolResultErrorCode } from '../toolcall/ToolResultErrorCodes';
 import { buildMonolithRetryPrompt, buildOversizeRetryPrompt, buildTruncatedRetryPrompt } from '../toolcall/ToolRetryPrompts';
+import { LoopDetector, isStrategicSwitch } from '../../../core/resilience/LoopDetector';
+import { NotificationPayload } from '../../../hooks/types';
 
 import { PlanningManager } from '../../../agent/agentManager/PlanningManager';
 
 const log = new LogService('ExecutionDispatchers');
 const MAX_TOOL_RESULT_SIZE = 100_000;
-const DOOM_LOOP_THRESHOLD = 3;
 const DOOM_LOOP_HISTORY_LIMIT = 30;
 const MODE_SWITCH_LOOP_THRESHOLD = 3;
 const MODE_SWITCH_HISTORY_LIMIT = 20;
@@ -42,6 +43,7 @@ export class TraditionalToolExecutor {
     private toolArgsOversizeRejectedCount = 0;
     private partialRecoverySuccessCount = 0;
     private largestToolArgSeen = 0;
+    private readonly loopDetector = new LoopDetector(3, 5);
 
     constructor(
         private readonly agentManager: AgentManager,
@@ -253,14 +255,39 @@ export class TraditionalToolExecutor {
             const parsed = ToolCallUtils.repairAndParseJSON(toolCall.function.arguments).repaired;
             const toolName = toolCall.function.name;
             const fingerprint = this.buildToolFingerprint(toolName, parsed);
-            const shouldPrompt = await this.shouldPromptDoomLoop(context, toolName, fingerprint);
+            const loopState = this.getLoopState(context);
+            const loopResult = this.loopDetector.check(loopState, fingerprint);
 
-            if (shouldPrompt) {
+            if (loopResult.hardEscalation && !context.doomLoopAllowedTools?.has(toolName)) {
+                const errorMessage = `LOOP_HARD_ESCALATION: blocked repeated ${toolName} execution (count=${loopResult.count}).`;
+                blockedResults.push({
+                    toolCall,
+                    result: { error: errorMessage },
+                    success: false
+                });
+                await this.emitNotification({
+                    channel: 'loop_escalation',
+                    severity: 'error',
+                    action: 'abort',
+                    message: errorMessage,
+                    metadata: { toolName, fingerprint, count: loopResult.count }
+                });
+                continue;
+            }
+
+            if (loopResult.softWarning && !context.doomLoopAllowedTools?.has(toolName)) {
+                await this.emitNotification({
+                    channel: 'loop_escalation',
+                    severity: 'warning',
+                    action: 'retry',
+                    message: `Loop soft warning for ${toolName} (count=${loopResult.count})`,
+                    metadata: { toolName, fingerprint, count: loopResult.count }
+                });
                 const decision = await this.askDoomLoopPermission(toolName);
                 if (decision === 'stop') {
                     blockedResults.push({
                         toolCall,
-                        result: { error: `Execution blocked due to repeated identical ${toolName} calls (doom-loop protection).` },
+                        result: { error: `Execution blocked by user after soft loop warning for ${toolName}.` },
                         success: false
                     });
                     continue;
@@ -351,8 +378,8 @@ export class TraditionalToolExecutor {
         const history = Array.isArray(context.recentToolCallFingerprints)
             ? context.recentToolCallFingerprints
             : [];
-        const lastTwo = history.slice(-(DOOM_LOOP_THRESHOLD - 1));
-        return lastTwo.length === (DOOM_LOOP_THRESHOLD - 1) && lastTwo.every((item) => item === fingerprint);
+        const lastTwo = history.slice(-2);
+        return lastTwo.length === 2 && lastTwo.every((item) => item === fingerprint);
     }
 
     private async askDoomLoopPermission(toolName: string): Promise<'continue' | 'always' | 'stop'> {
@@ -390,8 +417,13 @@ export class TraditionalToolExecutor {
                 log.warn(`Duplicate mode switch detected, skipping mode="${result.requestedMode}"`);
             } else {
                 try {
+                    const previousMode = context.selectedMode;
                     await this.performModeSwitch(result.requestedMode);
                     this.recordModeSwitch(context, result.requestedMode);
+                    if (isStrategicSwitch(previousMode, result.requestedMode)) {
+                        this.loopDetector.reset(this.getLoopState(context));
+                    }
+                    context.selectedMode = result.requestedMode;
                 } catch (error) {
                     log.warn(`Mode switch failed, continuing in current mode: ${error instanceof Error ? error.message : String(error)}`);
                     continuationPrompt = `Mode switch failed. Continue in current mode. ${continuationPrompt}`;
@@ -414,6 +446,17 @@ export class TraditionalToolExecutor {
         history.push(modeId);
         while (history.length > MODE_SWITCH_HISTORY_LIMIT) history.shift();
         context.recentModeSwitches = history;
+    }
+
+    private getLoopState(context: ChatViewContext): { lastSignature?: string; count: number } {
+        if (!context.loopDetectorState) {
+            context.loopDetectorState = { count: 0 };
+        }
+        return context.loopDetectorState;
+    }
+
+    private async emitNotification(payload: NotificationPayload): Promise<void> {
+        await this.agentManager.getHookManager().executeNotification(payload);
     }
 }
 

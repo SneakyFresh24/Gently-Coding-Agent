@@ -11,6 +11,7 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
 import { IValidationManager } from './validation/IValidationManager';
 
 export interface FileInfo {
@@ -84,6 +85,12 @@ export class FileOperations {
    */
   getWorkspaceRoot(): string {
     return this.workspaceRoot;
+  }
+
+  getWorkspaceRoots(): string[] {
+    const roots = vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath) || [];
+    if (roots.length > 0) return roots;
+    return this.workspaceRoot ? [this.workspaceRoot] : [];
   }
 
   /**
@@ -473,10 +480,79 @@ export class FileOperations {
    * Resolve relative path to absolute
    */
   private resolveAbsolutePath(filePath: string): string {
-    if (path.isAbsolute(filePath)) {
-      return filePath;
+    const roots = this.getWorkspaceRoots();
+    if (!roots.length) {
+      throw new Error('Path security error: no workspace root available');
     }
-    return path.join(this.workspaceRoot, filePath);
+
+    const raw = path.isAbsolute(filePath)
+      ? path.normalize(filePath)
+      : path.resolve(roots[0], filePath);
+
+    const canonicalRoots = roots
+      .map((root) => this.safeRealpath(root) || path.resolve(root))
+      .filter((root) => root.length > 0);
+
+    const canonicalTarget = this.resolveCanonicalPath(raw);
+    const allowed = canonicalRoots.some((root) => this.isWithinRoot(canonicalTarget, root));
+    if (!allowed) {
+      throw new Error(`Path outside workspace boundaries: ${filePath}`);
+    }
+    return canonicalTarget;
+  }
+
+  private resolveCanonicalPath(targetPath: string): string {
+    const normalizedTarget = path.resolve(targetPath);
+    const canonicalTarget = this.safeRealpath(normalizedTarget);
+    if (canonicalTarget) return canonicalTarget;
+
+    let cursor = path.dirname(normalizedTarget);
+    let depth = 0;
+    while (depth < 128) {
+      const canonicalParent = this.safeRealpath(cursor);
+      if (canonicalParent) {
+        const relativeFromExisting = path.relative(cursor, normalizedTarget);
+        return path.resolve(canonicalParent, relativeFromExisting);
+      }
+      const next = path.dirname(cursor);
+      if (next === cursor) {
+        throw new Error(`Path resolution failed (unresolvable or circular symlink): ${targetPath}`);
+      }
+      cursor = next;
+      depth += 1;
+    }
+    throw new Error(`Path resolution failed (depth exceeded): ${targetPath}`);
+  }
+
+  private safeRealpath(targetPath: string): string | undefined {
+    try {
+      if ((fs.realpathSync as any).native) {
+        return (fs.realpathSync as any).native(targetPath);
+      }
+      return fs.realpathSync(targetPath);
+    } catch (error: any) {
+      const code = error?.code;
+      if (code === 'ENOENT') {
+        return undefined;
+      }
+      if (code === 'ELOOP') {
+        throw new Error(`Path resolution failed (circular symlink): ${targetPath}`);
+      }
+      throw error;
+    }
+  }
+
+  private isWithinRoot(candidatePath: string, rootPath: string): boolean {
+    const normalizedCandidate = path.resolve(candidatePath);
+    const normalizedRoot = path.resolve(rootPath);
+
+    if (process.platform === 'win32') {
+      const candidateLower = normalizedCandidate.toLowerCase();
+      const rootLower = normalizedRoot.toLowerCase();
+      return candidateLower === rootLower || candidateLower.startsWith(`${rootLower}${path.sep}`);
+    }
+
+    return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}${path.sep}`);
   }
 
   /**

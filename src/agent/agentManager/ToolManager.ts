@@ -18,11 +18,18 @@ import {
   QuestionTools,
   ToolName
 } from '../tools';
+import { ToolParamValidator } from '../tools/ToolParamValidator';
 import { IAgentService } from './index';
 import { TerminalManager } from '../../terminal/TerminalManager';
 import { PlanningManager } from './PlanningManager';
 import { AutoApproveManager } from '../../approval/ApprovalManager';
 import { HookManager } from '../../hooks/HookManager';
+import { NotificationPayload } from '../../hooks/types';
+import { telemetry } from '../../services/Telemetry';
+import { LogService } from '../../services/LogService';
+import { CircuitBreakerRegistry } from '../../core/resilience/CircuitBreakerRegistry';
+
+const log = new LogService('ToolManager');
 
 export class ToolManager implements IAgentService {
   // Core tool components
@@ -44,12 +51,14 @@ export class ToolManager implements IAgentService {
   private planningManager: PlanningManager;
   private autoApproveManager: AutoApproveManager;
   private hookManager: HookManager;
+  private circuitBreakers: CircuitBreakerRegistry;
 
   // Configuration
   private debug: boolean = false;
   private eventCallback?: (event: any) => void;
   private modeProvider?: () => string | undefined;
   private lastToolName: string | null = null;
+  private readonly toolParamValidator = new ToolParamValidator();
 
   constructor(
     toolRegistry: ToolRegistry,
@@ -66,7 +75,8 @@ export class ToolManager implements IAgentService {
     webSearchTools: WebSearchTools,
     questionTools: QuestionTools,
     autoApproveManager: AutoApproveManager,
-    hookManager: HookManager
+    hookManager: HookManager,
+    circuitBreakers: CircuitBreakerRegistry
   ) {
     this.toolRegistry = toolRegistry;
     this.fileTools = fileTools;
@@ -83,6 +93,7 @@ export class ToolManager implements IAgentService {
     this.questionTools = questionTools;
     this.autoApproveManager = autoApproveManager;
     this.hookManager = hookManager;
+    this.circuitBreakers = circuitBreakers;
   }
 
   async initialize(): Promise<void> {
@@ -349,85 +360,150 @@ export class ToolManager implements IAgentService {
     }
 
     try {
-      const tool = this.toolRegistry.get(toolName);
-      if (!tool) {
-        throw new Error(`Tool not found: ${toolName}`);
-      }
+      return await telemetry.withSpan(
+        'tool.execute',
+        { 'tool.name': toolName, mode: currentMode || 'unknown' },
+        async (toolSpan) => {
+          const tool = this.toolRegistry.get(toolName);
+          if (!tool) {
+            throw new Error(`Tool not found: ${toolName}`);
+          }
 
-      // Handle task_progress if present
-      if (params && params.task_progress && this.eventCallback) {
-        this.eventCallback({
-          type: 'taskProgress',
-          label: params.task_progress
-        });
-        const { task_progress, ...rest } = params;
-        params = rest;
-      }
+          // Handle task_progress if present
+          if (params && params.task_progress && this.eventCallback) {
+            this.eventCallback({
+              type: 'taskProgress',
+              label: params.task_progress
+            });
+          }
+          params = this.toolParamValidator.sanitizeInternalFields(params);
 
-      // 1. PRE-HOOKS
-      const preHookResult = await this.hookManager.executePreHooks(toolName, params);
-      if (preHookResult.blocked) {
-        throw new Error(`Tool execution blocked by hook: ${preHookResult.reason || 'Unknown reason'}`);
-      }
-      params = preHookResult.modifiedParams;
+          // 1. PRE-HOOKS
+          const preHookResult = await this.hookManager.executePreHooks(toolName, params);
+          if (preHookResult.blocked) {
+            throw new Error(`Tool execution blocked by hook: ${preHookResult.reason || 'Unknown reason'}`);
+          }
+          params = this.toolParamValidator.sanitizeInternalFields(preHookResult.modifiedParams);
 
-      // 2. APPROVAL CHECK
-      const autoApproved = await this.autoApproveManager.shouldAutoApprove(toolName, params);
-      if (!autoApproved) {
-        const approved = await this.requestApproval(toolName, params);
-        if (!approved) {
-          throw new Error('Tool execution rejected by user');
+          // 2. VALIDATION CHECK
+          const validationResult = await telemetry.withSpan(
+            'tool.validation',
+            { 'tool.name': toolName },
+            async (validationSpan) => {
+              const result = this.toolParamValidator.validate(toolName, params);
+              validationSpan.setAttributes({
+                'validation.outcome': result.valid ? 'ok' : 'failed',
+                'validation.error_count': result.errors.length
+              });
+              if (!result.valid) {
+                validationSpan.setStatusError('tool_validation_failed');
+              }
+              return result;
+            }
+          );
+
+          if (!validationResult.valid) {
+            const first = validationResult.errors[0];
+            log.event(
+              'WARN',
+              'tool.validation.failed',
+              `Tool validation failed for ${toolName}`,
+              { tool: toolName, errors: validationResult.errors }
+            );
+            toolSpan.setStatusError('tool_validation_failed');
+            throw new Error(JSON.stringify(first));
+          }
+
+          // 2.5 CIRCUIT BREAKER CHECK
+          const gate = this.circuitBreakers.canExecute('tool.execute', toolName);
+          if (!gate.decision.allowed) {
+            const payload: NotificationPayload = {
+              channel: 'circuit_breaker',
+              severity: 'warning',
+              action: 'wait',
+              retryAfter: gate.decision.retryAfterMs,
+              message: `Circuit breaker open for ${gate.key}`,
+              metadata: { toolName, circuitKey: gate.key, state: gate.decision.state }
+            };
+            await this.hookManager.executeNotification(payload);
+            log.event('WARN', 'circuit.reject', `Circuit breaker rejected ${toolName}`, payload.metadata);
+            throw new Error(`CIRCUIT_OPEN_REJECT: Tool "${toolName}" temporarily blocked. Retry after ${gate.decision.retryAfterMs || 0}ms.`);
+          }
+
+          // 3. APPROVAL CHECK
+          const autoApproved = await this.autoApproveManager.shouldAutoApprove(toolName, params);
+          if (!autoApproved) {
+            const approved = await this.requestApproval(toolName, params);
+            if (!approved) {
+              throw new Error('Tool execution rejected by user');
+            }
+          }
+
+          if (this.debug) {
+            console.log(`[ToolManager] Executing ${toolName}`, params);
+          }
+
+          // 4. EXECUTION
+          const executionStart = Date.now();
+          const isWriteTool = toolName === 'write_file';
+          const writePath = params?.path || params?.file_path;
+          const contentLength = typeof params?.content === 'string' ? params.content.length : 0;
+          if (isWriteTool && this.eventCallback) {
+            this.eventCallback({
+              type: 'write_started',
+              path: writePath,
+              bytes: contentLength,
+              timestamp: Date.now()
+            });
+          }
+          const result = await tool.execute(params);
+          this.circuitBreakers.recordSuccess('tool.execute', toolName);
+          if (isWriteTool && this.eventCallback) {
+            this.eventCallback({
+              type: 'write_finished',
+              path: writePath,
+              bytes: contentLength,
+              success: result?.success !== false,
+              durationMs: Date.now() - executionStart,
+              timestamp: Date.now()
+            });
+          }
+          if (isWriteTool) {
+            log.event('INFO', 'tool.write_file.completed', 'write_file completed', {
+              duration_ms: Date.now() - executionStart,
+              tool: toolName,
+              file_path: writePath,
+              bytes: contentLength
+            });
+          }
+
+          // 5. POST-HOOKS
+          await this.hookManager.executePostHooks(toolName, params, result);
+
+          // Reset or update lastToolName
+          if (toolName !== 'handover_to_coder') {
+            this.lastToolName = toolName;
+          }
+
+          return result;
         }
-      }
-
-      if (this.debug) {
-        console.log(`[ToolManager] Executing ${toolName}`, params);
-      }
-
-      // 3. EXECUTION
-      const executionStart = Date.now();
-      const isWriteTool = toolName === 'write_file';
-      const writePath = params?.path || params?.file_path;
-      const contentLength = typeof params?.content === 'string' ? params.content.length : 0;
-      if (isWriteTool && this.eventCallback) {
-        this.eventCallback({
-          type: 'write_started',
-          path: writePath,
-          bytes: contentLength,
-          timestamp: Date.now()
-        });
-      }
-      const result = await tool.execute(params);
-      if (isWriteTool && this.eventCallback) {
-        this.eventCallback({
-          type: 'write_finished',
-          path: writePath,
-          bytes: contentLength,
-          success: result?.success !== false,
-          durationMs: Date.now() - executionStart,
-          timestamp: Date.now()
-        });
-      }
-      if (isWriteTool) {
-        console.log(JSON.stringify({
-          'perf.phase': 'write_file',
-          duration_ms: Date.now() - executionStart,
-          tool: toolName,
-          file_path: writePath,
-          bytes: contentLength
-        }));
-      }
-
-      // 4. POST-HOOKS
-      await this.hookManager.executePostHooks(toolName, params, result);
-
-      // Reset or update lastToolName
-      if (toolName !== 'handover_to_coder') {
-          this.lastToolName = toolName;
-      }
-
-      return result;
+      );
     } catch (error) {
+      const recoverable = this.isRecoverableToolError(error);
+      const breaker = this.circuitBreakers.recordFailure('tool.execute', recoverable, toolName);
+      if (breaker.tripped) {
+        await this.hookManager.executeNotification({
+          channel: 'circuit_breaker',
+          severity: 'error',
+          action: 'wait',
+          message: `Circuit breaker opened for ${breaker.key}`,
+          metadata: { toolName, circuitKey: breaker.key }
+        });
+        log.event('ERROR', 'circuit.opened', `Circuit breaker opened for ${toolName}`, {
+          toolName,
+          circuitKey: breaker.key
+        });
+      }
       if (toolName === 'write_file' && this.eventCallback) {
         this.eventCallback({
           type: 'write_finished',
@@ -439,9 +515,22 @@ export class ToolManager implements IAgentService {
           timestamp: Date.now()
         });
       }
-      console.error(`[ToolManager] Error executing tool ${toolName}:`, error);
+      log.error(`Error executing tool ${toolName}:`, error);
       throw error;
     }
+  }
+
+  private isRecoverableToolError(error: unknown): boolean {
+    const message = String((error as any)?.message || error || '').toLowerCase();
+    if (!message) return true;
+    return (
+      message.includes('timeout') ||
+      message.includes('network') ||
+      message.includes('temporarily') ||
+      message.includes('rate') ||
+      message.includes('busy') ||
+      message.includes('econnreset')
+    );
   }
 
   /**
@@ -753,40 +842,10 @@ export class ToolManager implements IAgentService {
    * Validate tool parameters
    */
   validateToolParams(toolName: string, params: any): { valid: boolean; errors: string[] } {
-    const tool = this.toolRegistry.get(toolName);
-    if (!tool) {
-      return { valid: false, errors: [`Tool not found: ${toolName}`] };
-    }
-
-    const errors: string[] = [];
-
-    // Basic parameter validation
-    if (!tool.parameters || !tool.parameters.properties) {
-      return { valid: true, errors: [] };
-    }
-
-    const required = tool.parameters.required || [];
-    const properties = tool.parameters.properties;
-
-    // Check required parameters
-    for (const param of required) {
-      if (!(param in params)) {
-        errors.push(`Missing required parameter: ${param}`);
-      }
-    }
-
-    // Check parameter types
-    for (const [param, value] of Object.entries(params)) {
-      if (properties[param] && properties[param].type) {
-        const expectedType = properties[param].type;
-        const actualType = Array.isArray(value) ? 'array' : typeof value;
-
-        if (expectedType !== actualType) {
-          errors.push(`Parameter ${param} should be ${expectedType}, got ${actualType}`);
-        }
-      }
-    }
-
-    return { valid: errors.length === 0, errors };
+    const result = this.toolParamValidator.validate(toolName, params);
+    return {
+      valid: result.valid,
+      errors: result.errors.map((error) => `${error.field}: ${error.message}`)
+    };
   }
 }

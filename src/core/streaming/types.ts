@@ -34,6 +34,8 @@ export interface UsageInfo {
     cache_write_input_tokens?: number;
 }
 
+export type StreamRecoveryState = 'STREAMING' | 'DISCONNECTED' | 'RECONNECTING' | 'FAILED';
+
 export type StreamChunk = 
     | { type: 'text'; text: string }
     | { type: 'tool_call_start'; toolCallId: string; toolName: string; index: number }

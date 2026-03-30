@@ -42,7 +42,7 @@ export class MessageHandler {
     const planning = this.agentManager.getPlanningManager();
     const messageHandler = planning?.getMessageHandler();
     
-    const streaming = new StreamingService(openRouterService, sendMessageToWebview, messageHandler);
+    const streaming = new StreamingService(openRouterService, sendMessageToWebview, messageHandler, this.agentManager.getHookManager());
     const refParser = new ReferenceParser(fileRef);
     const pruner = new ConversationPruner(openRouterService, agentManager);
 
@@ -127,6 +127,7 @@ export class MessageHandler {
       consecutiveMistakeCount: 0,
       recentToolCallFingerprints: [],
       doomLoopAllowedTools: new Set<string>(),
+      loopDetectorState: { count: 0 },
       recentModeSwitches: [],
       isToolExecutionActive: false
     };

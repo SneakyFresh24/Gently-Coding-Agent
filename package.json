@@ -2,7 +2,7 @@
   "name": "gently",
   "displayName": "Gently - AI Coding Agent",
   "description": "AI-powered coding assistant — Bring Your Own Key via OpenRouter",
-  "version": "0.9.7",
+  "version": "0.9.8",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -278,6 +278,67 @@
           "type": "boolean",
           "default": false,
           "description": "Enable strict validation mode"
+        },
+        "gently.resilience.circuit.failureThreshold": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Failure count before a circuit breaker opens."
+        },
+        "gently.resilience.circuit.cooldownMs": {
+          "type": "number",
+          "default": 300000,
+          "minimum": 1000,
+          "maximum": 3600000,
+          "description": "Cooldown in milliseconds before attempting HALF_OPEN execution."
+        },
+        "gently.resilience.circuit.halfOpenMaxTrials": {
+          "type": "number",
+          "default": 1,
+          "minimum": 1,
+          "maximum": 10,
+          "description": "How many trial executions are allowed while a circuit is HALF_OPEN."
+        },
+        "gently.resilience.circuit.perToolEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable per-tool circuit breakers for selected critical tools."
+        },
+        "gently.resilience.circuit.perToolTargets": {
+          "type": "array",
+          "default": [
+            "write_file",
+            "run_command"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "Tool names that should use isolated per-tool circuit breakers when perToolEnabled is true."
+        },
+        "gently.hooks.timeoutMs": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 500,
+          "maximum": 60000,
+          "description": "Maximum hook execution time in milliseconds before timeout."
+        },
+        "gently.hooks.maxMemoryMB": {
+          "type": "number",
+          "default": 50,
+          "minimum": 8,
+          "maximum": 1024,
+          "description": "Maximum allowed additional memory usage for hook execution in MB."
+        },
+        "gently.hooks.catchErrors": {
+          "type": "boolean",
+          "default": true,
+          "description": "Catch hook errors and continue core execution flow."
+        },
+        "gently.hooks.logFailures": {
+          "type": "boolean",
+          "default": true,
+          "description": "Log hook failures as structured warning events."
         }
       }
     }
