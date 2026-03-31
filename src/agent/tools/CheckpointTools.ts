@@ -17,6 +17,7 @@ export class CheckpointTools {
     registry.register('create_checkpoint', this.createCheckpoint.bind(this));
     registry.register('restore_checkpoint', this.restoreCheckpoint.bind(this));
     registry.register('list_checkpoints', this.listCheckpoints.bind(this));
+    registry.register('show_checkpoint_diff', this.showCheckpointDiff.bind(this));
   }
 
   private async createCheckpoint(params: any): Promise<any> {
@@ -43,7 +44,9 @@ export class CheckpointTools {
 
   private async restoreCheckpoint(params: any): Promise<any> {
     try {
-      const result = await this.checkpointManager.restoreCheckpoint(params.checkpointId);
+      const result = await this.checkpointManager.restoreCheckpoint(params.checkpointId, {
+        mode: params.mode || 'files'
+      });
       return result;
     } catch (error) {
       console.error('[CheckpointTools] Error restoring checkpoint:', error);
@@ -56,7 +59,7 @@ export class CheckpointTools {
 
   private async listCheckpoints(): Promise<any> {
     try {
-      const checkpoints = this.checkpointManager.getAllCheckpoints();
+      const checkpoints = await this.checkpointManager.getAllCheckpoints();
       return {
         success: true,
         checkpoints: checkpoints.map(cp => ({
@@ -64,7 +67,9 @@ export class CheckpointTools {
           messageId: cp.messageId,
           description: cp.description,
           timestamp: cp.timestamp,
-          filesChanged: cp.metadata.filesChanged
+          filesChanged: cp.metadata.filesChanged,
+          commitHash: cp.commitHash,
+          checkpointNumber: cp.checkpointNumber
         }))
       };
     } catch (error) {
@@ -72,6 +77,22 @@ export class CheckpointTools {
       return {
         success: false,
         message: `Error listing checkpoints: ${error instanceof Error ? error.message : String(error)}`
+      };
+    }
+  }
+
+  private async showCheckpointDiff(params: any): Promise<any> {
+    try {
+      const diff = await this.checkpointManager.getDiffSet(params.fromCheckpointId, params.toCheckpointId);
+      return {
+        success: true,
+        ...diff
+      };
+    } catch (error) {
+      console.error('[CheckpointTools] Error getting checkpoint diff:', error);
+      return {
+        success: false,
+        message: `Error getting checkpoint diff: ${error instanceof Error ? error.message : String(error)}`
       };
     }
   }

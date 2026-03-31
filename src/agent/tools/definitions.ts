@@ -595,7 +595,12 @@ IMPORTANT:
         parameters: {
             type: 'object',
             properties: {
-                checkpointId: { type: 'string', description: 'ID of the checkpoint to restore' }
+                checkpointId: { type: 'string', description: 'ID of the checkpoint to restore' },
+                mode: {
+                    type: 'string',
+                    enum: ['files', 'task', 'files&task'],
+                    description: 'Restore mode: files only, task history only, or both'
+                }
             },
             required: ['checkpointId']
         }
@@ -605,6 +610,19 @@ IMPORTANT:
         category: 'checkpoint',
         description: 'List all available checkpoints',
         parameters: { type: 'object', properties: {} }
+    },
+    show_checkpoint_diff: {
+        name: 'show_checkpoint_diff',
+        category: 'checkpoint',
+        description: 'Get structured multi-file diff between two checkpoints (or checkpoint vs working directory).',
+        parameters: {
+            type: 'object',
+            properties: {
+                fromCheckpointId: { type: 'string', description: 'Base checkpoint ID/commit hash' },
+                toCheckpointId: { type: 'string', description: 'Optional target checkpoint ID/commit hash. If omitted, compares against working directory.' }
+            },
+            required: ['fromCheckpointId']
+        }
     },
 
     // --- Execution Tools ---

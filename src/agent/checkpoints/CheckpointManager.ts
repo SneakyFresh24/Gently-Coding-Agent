@@ -1,43 +1,45 @@
-/**
- * CheckpointManager - Message-Based Checkpoint System
- * 
- * Inspired by Augment Code's checkpoint feature
- */
-
 import * as vscode from 'vscode';
-import * as fs from 'fs/promises';
-import * as path from 'path';
-import { MessageCheckpoint, FileSnapshot, CheckpointMetadata, RestoreResult, CheckpointStats, SerializedCheckpoint } from './types';
-import { GitDiffService } from '../GitDiffService';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-
-const execAsync = promisify(exec);
+import { ShadowCheckpointStore } from './ShadowCheckpointStore';
+import {
+  CheckpointDiffResult,
+  CheckpointRecord,
+  CheckpointStats,
+  RestoreOptions,
+  RestoreResult,
+  SerializedCheckpoint
+} from './types';
+import { HistoryManager, SessionType } from '../../services/HistoryManager';
 
 export class CheckpointManager {
-  private checkpoints: Map<string, MessageCheckpoint> = new Map();
-  private readonly maxCheckpoints = 50;
   private readonly storageKey = 'gently.checkpoints';
-  private sessionCounters: Map<string, number> = new Map();
+  private readonly migrationFlagKey = 'gently.checkpoints.migrated.v1';
   private currentSessionId: string | null = null;
+  private sessionCounters: Map<string, number> = new Map();
   private readonly sessionCountersKey = 'gently.sessionCheckpointCounters';
+  private sessionManager?: HistoryManager;
+  private readonly shadowStore: ShadowCheckpointStore;
 
-  constructor(
-    private context: vscode.ExtensionContext,
-    private gitDiffService: GitDiffService
-  ) {
-    this.loadCheckpoints();
+  constructor(private readonly context: vscode.ExtensionContext) {
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) {
+      throw new Error('No workspace folder open');
+    }
+    this.shadowStore = new ShadowCheckpointStore(context, workspaceRoot);
     this.loadSessionCounters();
   }
 
-  setCurrentSession(sessionId: string) {
+  setSessionManager(sessionManager: HistoryManager): void {
+    this.sessionManager = sessionManager;
+  }
+
+  setCurrentSession(sessionId: string): void {
     this.currentSessionId = sessionId;
     if (!this.sessionCounters.has(sessionId)) this.sessionCounters.set(sessionId, 0);
   }
 
-  resetSessionCounter(sessionId: string) {
+  async resetSessionCounter(sessionId: string): Promise<void> {
     this.sessionCounters.set(sessionId, 0);
-    this.saveSessionCounters();
+    await this.saveSessionCounters();
   }
 
   async createCheckpoint(
@@ -45,86 +47,28 @@ export class CheckpointManager {
     description: string,
     filePaths: string[],
     sessionId?: string
-  ): Promise<MessageCheckpoint> {
-    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (!workspaceRoot) throw new Error('No workspace folder open');
-
+  ): Promise<CheckpointRecord> {
+    await this.ensureLegacyMigrated();
     const effectiveSessionId = sessionId || this.currentSessionId || 'default-session';
-
-    if (!this.sessionCounters.has(effectiveSessionId)) {
-      this.sessionCounters.set(effectiveSessionId, 0);
-    }
-
-    const files = new Map<string, FileSnapshot>();
-    let totalSize = 0;
-
-    for (const filePath of filePaths) {
-      const absolutePath = path.isAbsolute(filePath)
-        ? filePath
-        : path.join(workspaceRoot, filePath);
-
-      try {
-        const exists = await this.fileExists(absolutePath);
-        let content: string | undefined;
-        let diff: string | undefined;
-        let isGitTracked = false;
-
-        if (exists) {
-          isGitTracked = await this.gitDiffService.isTracked(filePath).catch(() => false);
-
-          if (isGitTracked) {
-            try {
-              diff = await this.gitDiffService.getFileDiffContent(filePath);
-            } catch {
-              // Fallback to full content
-              content = await fs.readFile(absolutePath, 'utf-8');
-              isGitTracked = false;
-            }
-          } else {
-            content = await fs.readFile(absolutePath, 'utf-8');
-          }
-        }
-
-        files.set(filePath, { path: filePath, content, diff, exists, isGitTracked });
-
-        totalSize += Buffer.byteLength(content || diff || '', 'utf-8');
-      } catch (error) {
-        console.error(`[Checkpoint] Snapshot failed for ${filePath}:`, error);
-        files.set(filePath, { path: filePath, exists: false, isGitTracked: false });
-      }
-    }
-
-    // Session counter
     const currentCounter = this.sessionCounters.get(effectiveSessionId) || 0;
     const checkpointNumber = currentCounter + 1;
     this.sessionCounters.set(effectiveSessionId, checkpointNumber);
-
-    const checkpoint: MessageCheckpoint = {
-      id: this.generateId(),
-      messageId,
-      checkpointNumber,
-      timestamp: Date.now(),
-      description,
-      files,
-      metadata: { filesChanged: files.size, totalSize }
-    };
-
-    this.checkpoints.set(checkpoint.id, checkpoint);
-    await this.saveCheckpoints();
     await this.saveSessionCounters();
-    await this.cleanupOldCheckpoints();
 
-    console.log(`✅ Checkpoint ${checkpointNumber} created: ${checkpoint.id} (${files.size} files)`);
-    return checkpoint;
+    return this.shadowStore.createCheckpoint({
+      messageId,
+      sessionId: effectiveSessionId,
+      checkpointNumber,
+      description,
+      metadata: {
+        filesChanged: Array.isArray(filePaths) ? filePaths.length : 0,
+        totalSize: 0
+      }
+    });
   }
 
-  /**
-   * Erstellt einen Checkpoint spezifisch nach einem Plan-Schritt
-   */
-  async createCheckpointAfterStep(planId: string, stepId: string, stepResult: any): Promise<MessageCheckpoint> {
-    const description = `Snapshot nach Ausführung von Plan ${planId}, Schritt ${stepId}`;
-
-    // Extrahiere geänderte Dateien aus dem Resultat (falls vorhanden)
+  async createCheckpointAfterStep(planId: string, stepId: string, stepResult: any): Promise<CheckpointRecord> {
+    const description = `Snapshot after plan ${planId} step ${stepId}`;
     let changedFiles: string[] = [];
     if (stepResult && typeof stepResult === 'object') {
       if (Array.isArray(stepResult.changedFiles)) {
@@ -133,244 +77,107 @@ export class CheckpointManager {
         changedFiles = [stepResult.path];
       }
     }
-
-    // Falls keine Dateien erkannt wurden, nehmen wir den gesamten Workspace (oder lassen es leer, createCheckpoint braucht eine Liste)
-    // In der Praxis sind Checkpoints meist dateibasiert.
-
-    console.log(`[Checkpoint] Creating auto-checkpoint for plan ${planId}, step ${stepId}`);
-
-    return await this.createCheckpoint(
-      `plan-${planId}-step-${stepId}`,
-      description,
-      changedFiles
-    );
+    return this.createCheckpoint(`plan-${planId}-step-${stepId}`, description, changedFiles);
   }
 
-  async restoreCheckpoint(checkpointId: string): Promise<RestoreResult> {
-    const checkpoint = this.checkpoints.get(checkpointId);
-    if (!checkpoint) return { success: false, filesRestored: [], errors: ['Checkpoint not found'] };
-
-    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (!workspaceRoot) return { success: false, filesRestored: [], errors: ['No workspace open'] };
-
-    const filesRestored: string[] = [];
-    const errors: string[] = [];
-
-    for (const [filePath, snapshot] of checkpoint.files) {
-      const absolutePath = path.isAbsolute(filePath) ? filePath : path.join(workspaceRoot, filePath);
-
-      try {
-        await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-
-        if (snapshot.content !== undefined) {
-          await fs.writeFile(absolutePath, snapshot.content, 'utf-8');
-        } else if (snapshot.diff) {
-          // Try Git restore first
-          try {
-            await this.gitDiffService.applyDiff(filePath, snapshot.diff);
-          } catch {
-            // Fallback: full content wurde schon im Snapshot gespeichert (siehe createCheckpoint)
-            if (snapshot.content) await fs.writeFile(absolutePath, snapshot.content, 'utf-8');
-          }
-        } else if (!snapshot.exists) {
-          if (await this.fileExists(absolutePath)) await fs.unlink(absolutePath);
-        }
-
-        filesRestored.push(filePath);
-      } catch (error) {
-        errors.push(`Failed to restore ${filePath}: ${error}`);
+  async restoreCheckpoint(checkpointId: string, options: RestoreOptions = {}): Promise<RestoreResult> {
+    await this.ensureLegacyMigrated();
+    const result = await this.shadowStore.restoreCheckpoint(checkpointId, options);
+    if ((options.mode === 'task' || options.mode === 'files&task') && !options.pruneHistory && result.success) {
+      const sessionPruned = await this.pruneActiveSessionByMessageId(checkpointId);
+      if (sessionPruned > 0) {
+        result.messagesPruned = (result.messagesPruned || 0) + sessionPruned;
       }
     }
-
-    console.log(`✅ Checkpoint restored: ${checkpointId} (${filesRestored.length} files)`);
-    return { success: errors.length === 0, filesRestored, errors: errors.length ? errors : undefined };
+    return result;
   }
 
-  /**
-   * Holt einen Checkpoint für eine Message-ID
-   */
-  getCheckpointForMessage(messageId: string): MessageCheckpoint | undefined {
-    return Array.from(this.checkpoints.values()).find(
-      cp => cp.messageId === messageId
-    );
+  async getDiffSet(fromCheckpointId: string, toCheckpointId?: string): Promise<CheckpointDiffResult> {
+    await this.ensureLegacyMigrated();
+    return this.shadowStore.getDiffSet(fromCheckpointId, toCheckpointId);
   }
 
-  /**
-   * Holt alle Checkpoints für eine Message-ID
-   */
-  getCheckpointsForMessage(messageId: string): MessageCheckpoint[] {
-    return Array.from(this.checkpoints.values())
-      .filter(cp => cp.messageId === messageId)
-      .sort((a, b) => b.checkpointNumber - a.checkpointNumber);
+  async getCheckpointForMessage(messageId: string): Promise<CheckpointRecord | undefined> {
+    const checkpoints = await this.getCheckpointsForMessage(messageId);
+    return checkpoints[0];
   }
 
-  /**
-   * Holt alle Checkpoints
-   */
-  getAllCheckpoints(): MessageCheckpoint[] {
-    return Array.from(this.checkpoints.values()).sort(
-      (a, b) => b.timestamp - a.timestamp
-    );
+  async getCheckpointsForMessage(messageId: string): Promise<CheckpointRecord[]> {
+    const checkpoints = await this.getAllCheckpoints();
+    return checkpoints.filter((cp) => cp.messageId === messageId);
   }
 
-  /**
-   * Löscht einen Checkpoint
-   */
-  async deleteCheckpoint(checkpointId: string): Promise<boolean> {
-    const deleted = this.checkpoints.delete(checkpointId);
-    if (deleted) {
-      await this.saveCheckpoints();
-    }
-    return deleted;
+  async getAllCheckpoints(): Promise<CheckpointRecord[]> {
+    await this.ensureLegacyMigrated();
+    return this.shadowStore.listCheckpoints();
   }
 
-  /**
-   * Holt Checkpoint-Statistiken
-   */
-  getStats(): CheckpointStats {
-    const checkpoints = this.getAllCheckpoints();
+  async deleteCheckpoint(_checkpointId: string): Promise<boolean> {
+    // Commit history is append-only in shadow git.
+    return false;
+  }
+
+  async getStats(): Promise<CheckpointStats> {
+    const checkpoints = await this.getAllCheckpoints();
     const totalSize = checkpoints.reduce((sum, cp) => sum + cp.metadata.totalSize, 0);
-    const allFiles = new Set<string>();
-
-    checkpoints.forEach(cp => {
-      cp.files.forEach((_, path) => allFiles.add(path));
-    });
-
     return {
       totalCheckpoints: checkpoints.length,
-      totalFilesTracked: allFiles.size,
+      totalFilesTracked: checkpoints.reduce((sum, cp) => sum + cp.metadata.filesChanged, 0),
       totalSize,
-      oldestCheckpoint: checkpoints.length > 0
-        ? new Date(checkpoints[checkpoints.length - 1].timestamp)
-        : undefined,
-      newestCheckpoint: checkpoints.length > 0
-        ? new Date(checkpoints[0].timestamp)
-        : undefined
+      oldestCheckpoint: checkpoints.length > 0 ? new Date(checkpoints[checkpoints.length - 1].timestamp) : undefined,
+      newestCheckpoint: checkpoints.length > 0 ? new Date(checkpoints[0].timestamp) : undefined
     };
   }
 
-  /**
-   * Lädt Checkpoints aus dem Storage
-   */
-  private async loadCheckpoints(): Promise<void> {
-    try {
-      const stored = this.context.globalState.get<SerializedCheckpoint[]>(this.storageKey, []);
-
-      this.checkpoints = new Map(
-        stored.map(scp => {
-          const files = new Map<string, FileSnapshot>(scp.files);
-          const checkpoint: MessageCheckpoint = {
-            ...scp,
-            files
-          };
-          return [scp.id, checkpoint];
-        })
-      );
-
-      console.log(`📦 Loaded ${this.checkpoints.size} checkpoints`);
-    } catch (error) {
-      console.error('Failed to load checkpoints:', error);
-      this.checkpoints = new Map();
-    }
+  async clearAll(): Promise<void> {
+    await this.context.globalState.update(this.migrationFlagKey, false);
   }
 
-  /**
-   * Speichert Checkpoints im Storage
-   */
-  private async saveCheckpoints(): Promise<void> {
-    try {
-      const toStore: SerializedCheckpoint[] = Array.from(this.checkpoints.values()).map(cp => {
-        const { files, ...rest } = cp;
-        return {
-          ...rest,
-          files: Array.from(files.entries())
-        };
-      });
-
-      await this.context.globalState.update(this.storageKey, toStore);
-    } catch (error) {
-      console.error('Failed to save checkpoints:', error);
-    }
+  dispose(): void {
+    this.sessionCounters.clear();
   }
 
-  /**
-   * Lädt Session-Counter aus dem Storage
-   */
+  private async pruneActiveSessionByMessageId(checkpointId: string): Promise<number> {
+    if (!this.sessionManager) return 0;
+    const checkpoint = await this.shadowStore.getCheckpoint(checkpointId);
+    if (!checkpoint) return 0;
+
+    const active = await this.sessionManager.getActiveSession(SessionType.CHAT);
+    if (!active) return 0;
+    const messages = Array.isArray(active.messages) ? active.messages : [];
+    const idx = messages.findIndex((m: any) => m?.id === checkpoint.messageId);
+    if (idx < 0) return 0;
+
+    const retained = messages.slice(0, idx + 1);
+    const pruned = Math.max(0, messages.length - retained.length);
+    if (pruned > 0) {
+      await this.sessionManager.updateSession(active.id, { messages: retained });
+    }
+    return pruned;
+  }
+
+  private async ensureLegacyMigrated(): Promise<void> {
+    const alreadyMigrated = this.context.globalState.get<boolean>(this.migrationFlagKey, false);
+    if (alreadyMigrated) return;
+    const legacy = this.context.globalState.get<SerializedCheckpoint[]>(this.storageKey, []);
+    if (Array.isArray(legacy) && legacy.length > 0) {
+      await this.shadowStore.migrateLegacyCheckpoints(legacy);
+      await this.context.globalState.update(this.storageKey, []);
+    }
+    await this.context.globalState.update(this.migrationFlagKey, true);
+  }
+
   private async loadSessionCounters(): Promise<void> {
     try {
       const stored = this.context.globalState.get<Record<string, number>>(this.sessionCountersKey, {});
       this.sessionCounters = new Map(Object.entries(stored));
-      console.log(`📊 Loaded ${this.sessionCounters.size} session counters`);
-    } catch (error) {
-      console.error('Failed to load session counters:', error);
+    } catch {
       this.sessionCounters = new Map();
     }
   }
 
-  /**
-   * Speichert Session-Counter im Storage
-   */
   private async saveSessionCounters(): Promise<void> {
-    try {
-      const toStore = Object.fromEntries(this.sessionCounters);
-      await this.context.globalState.update(this.sessionCountersKey, toStore);
-    } catch (error) {
-      console.error('Failed to save session counters:', error);
-    }
-  }
-
-  /**
-   * Cleanup alte Checkpoints (behalte nur die letzten N)
-   */
-  private async cleanupOldCheckpoints(): Promise<void> {
-    const checkpoints = this.getAllCheckpoints();
-
-    if (checkpoints.length > this.maxCheckpoints) {
-      const toDelete = checkpoints.slice(this.maxCheckpoints);
-
-      for (const cp of toDelete) {
-        this.checkpoints.delete(cp.id);
-      }
-
-      await this.saveCheckpoints();
-      console.log(`🧹 Cleaned up ${toDelete.length} old checkpoints`);
-    }
-  }
-
-  /**
-   * Checks if a file exists
-   */
-  private async fileExists(filePath: string): Promise<boolean> {
-    try {
-      await fs.access(filePath);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Generiert eine eindeutige ID
-   */
-  private generateId(): string {
-    return `cp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  }
-
-  /**
-   * Löscht alle Checkpoints (für Testing)
-   */
-  async clearAll(): Promise<void> {
-    this.checkpoints.clear();
-    await this.saveCheckpoints();
-    console.log('🗑️ All checkpoints cleared');
-  }
-
-  /**
-   * Ressourcen freigeben
-   */
-  dispose() {
-    this.checkpoints.clear();
-    this.sessionCounters.clear();
+    const toStore = Object.fromEntries(this.sessionCounters);
+    await this.context.globalState.update(this.sessionCountersKey, toStore);
   }
 }
-

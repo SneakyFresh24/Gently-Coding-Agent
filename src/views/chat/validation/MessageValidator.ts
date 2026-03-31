@@ -403,7 +403,8 @@ const MessageSchemas: Record<string, any> = {
     required: ['checkpointId', 'messageId'],
     fields: {
       checkpointId: { type: 'string', maxLength: 100 },
-      messageId: { type: 'string', maxLength: 100 }
+      messageId: { type: 'string', maxLength: 100 },
+      mode: { type: 'string', enum: ['files', 'task', 'files&task'], optional: true }
     }
   },
   'systemMessageCreated': {
@@ -538,6 +539,13 @@ const MessageSchemas: Record<string, any> = {
     required: ['messageId'],
     fields: {
       messageId: { type: 'string', maxLength: 100 }
+    }
+  },
+  'getCheckpointDiff': {
+    required: ['fromCheckpointId'],
+    fields: {
+      fromCheckpointId: { type: 'string', maxLength: 200 },
+      toCheckpointId: { type: 'string', maxLength: 200, optional: true }
     }
   },
 

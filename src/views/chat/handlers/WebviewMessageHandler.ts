@@ -175,7 +175,24 @@ export class WebviewMessageHandler {
         try {
           const agentManager = (this.systemHandler as any).agentManager;
           if (agentManager) {
-            const result = await agentManager.restoreCheckpoint(data.checkpointId);
+            this.sendMessageToWebview({
+              type: 'checkpointRestorePlanned',
+              checkpointId: data.checkpointId,
+              messageId: data.messageId,
+              mode: data.mode || 'files'
+            });
+            const mode = data.mode || 'files';
+            const context = this.messageHandler.getContext();
+            const result = await agentManager.restoreCheckpoint(data.checkpointId, {
+              mode,
+              messageHistory: context?.conversationHistory,
+              pruneHistory: async (startIndex: number) => {
+                if (!context || !Array.isArray(context.conversationHistory)) return 0;
+                const originalLength = context.conversationHistory.length;
+                context.conversationHistory = context.conversationHistory.slice(0, startIndex);
+                return Math.max(0, originalLength - context.conversationHistory.length);
+              }
+            });
             if (result.success) {
               vscode.window.showInformationMessage(`✅ Checkpoint erfolgreich wiederhergestellt: ${result.filesRestored.length} Dateien.`);
               this.sendMessageToWebview({
@@ -183,7 +200,9 @@ export class WebviewMessageHandler {
                 checkpointId: data.checkpointId,
                 messageId: data.messageId,
                 checkpointNumber: result.checkpointNumber || 0,
-                filesRestored: result.filesRestored
+                filesRestored: result.filesRestored,
+                mode,
+                messagesPruned: result.messagesPruned
               });
             } else {
               vscode.window.showErrorMessage(`❌ Fehler beim Wiederherstellen: ${result.errors?.join(', ')}`);
@@ -200,7 +219,7 @@ export class WebviewMessageHandler {
         try {
           const agentManager = (this.systemHandler as any).agentManager;
           if (agentManager && data.messageId) {
-            const checkpoints = agentManager.getCheckpointManager().getCheckpointsForMessage(data.messageId);
+            const checkpoints = await agentManager.getCheckpointManager().getCheckpointsForMessage(data.messageId);
             this.sendMessageToWebview({
               type: 'checkpoints',
               messageId: data.messageId,
@@ -208,12 +227,35 @@ export class WebviewMessageHandler {
                 id: cp.id,
                 checkpointNumber: cp.checkpointNumber,
                 description: cp.description,
-                timestamp: cp.timestamp
+                timestamp: cp.timestamp,
+                commitHash: cp.commitHash,
+                filesChanged: cp.metadata?.filesChanged
               }))
             });
           }
         } catch (error) {
           console.error('[WebviewMessageHandler] Error fetching checkpoints:', error);
+        }
+        break;
+      }
+
+      case 'getCheckpointDiff': {
+        try {
+          const agentManager = (this.systemHandler as any).agentManager;
+          if (agentManager && data.fromCheckpointId) {
+            const diff = await agentManager.getCheckpointManager().getDiffSet(data.fromCheckpointId, data.toCheckpointId);
+            this.sendMessageToWebview({
+              type: 'checkpointDiffReady',
+              fromCheckpointId: data.fromCheckpointId,
+              toCheckpointId: data.toCheckpointId,
+              files: diff.files
+            });
+          }
+        } catch (error: any) {
+          this.sendMessageToWebview({
+            type: 'error',
+            message: `Failed to load checkpoint diff: ${error?.message || String(error)}`
+          });
         }
         break;
       }

@@ -48,9 +48,11 @@ export interface MessageHandlers {
 
   // Checkpoints
   onCheckpointRestored?: (data: any) => void;
+  onCheckpointRestorePlanned?: (data: any) => void;
   onCheckpointRestoreError?: (data: any) => void;
   onCheckpoints?: (data: any) => void;
   onCheckpointCreated?: (data: any) => void;
+  onCheckpointDiffReady?: (data: any) => void;
 
   // Plans
   onPlanCreated?: (data: any) => void;
@@ -129,9 +131,11 @@ const TYPE_TO_HANDLER: Record<string, keyof MessageHandlers> = {
   autoApproveSettingsUpdate: 'onAutoApproveSettingsUpdate',
   toolApprovalRequest: 'onToolApprovalRequest',
   checkpointRestored: 'onCheckpointRestored',
+  checkpointRestorePlanned: 'onCheckpointRestorePlanned',
   checkpointRestoreError: 'onCheckpointRestoreError',
   checkpoints: 'onCheckpoints',
   checkpointCreated: 'onCheckpointCreated',
+  checkpointDiffReady: 'onCheckpointDiffReady',
   planCreated: 'onPlanCreated',
   planUpdated: 'onPlanUpdated',
   planLoaded: 'onPlanLoaded',

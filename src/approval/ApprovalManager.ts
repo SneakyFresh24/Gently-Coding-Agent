@@ -123,6 +123,7 @@ export class AutoApproveManager {
     'analyze_project_structure',
     'get_context',
     'list_checkpoints',
+    'show_checkpoint_diff',
     'check_dev_server',
     'check_memory_conflicts',
     'check_pattern_suggestions',

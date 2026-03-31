@@ -148,6 +148,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         containerObj.force('sessionManager', historyManager);
         containerObj.force('agentSessions', historyManager);
       }
+      this.agentManager.getCheckpointManager().setSessionManager(historyManager);
     } catch (e) {
       console.error('[ChatViewProvider] Failed to inject HistoryManager into DI container', e);
     }
@@ -431,18 +432,36 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.terminalManager?.toggleQuickPattern(name, enabled);
   }
 
-  public async handleRevertCheckpoint(checkpointId: string, messageId: string): Promise<void> {
+  public async handleRevertCheckpoint(checkpointId: string, messageId: string, mode: 'files' | 'task' | 'files&task' = 'files'): Promise<void> {
     try {
-      const checkpoint = this.agentManager.getCheckpointManager().getCheckpointForMessage(messageId);
+      const checkpoint = await this.agentManager.getCheckpointManager().getCheckpointForMessage(messageId);
       const checkpointNumber = checkpoint?.checkpointNumber || 0;
-      const result = await this.agentManager.restoreCheckpoint(checkpointId);
+      const result = await this.agentManager.restoreCheckpoint(checkpointId, {
+        mode,
+        messageHistory: this.getContext().conversationHistory,
+        pruneHistory: async (startIndex: number) => {
+          const history = this.getContext().conversationHistory;
+          const pruned = Math.max(0, history.length - startIndex);
+          this.getContext().conversationHistory = history.slice(0, startIndex);
+          return pruned;
+        }
+      });
 
       if (result.success) {
         const filesCount = result.filesRestored.length;
-        const msg = `Checkpoint ${checkpointNumber} restored • ${filesCount} ${filesCount === 1 ? 'file' : 'files'}`;
+        const modeLabel = mode === 'files&task' ? 'files+task' : mode;
+        const msg = `Checkpoint ${checkpointNumber} restored (${modeLabel}) • ${filesCount} ${filesCount === 1 ? 'file' : 'files'}`;
         vscode.window.showInformationMessage(`✅ ${msg}`);
         this._view?.webview.postMessage({ type: 'systemMessage', content: msg });
-        this._view?.webview.postMessage({ type: 'checkpointRestored', checkpointId, messageId, checkpointNumber, filesRestored: result.filesRestored });
+        this._view?.webview.postMessage({
+          type: 'checkpointRestored',
+          checkpointId,
+          messageId,
+          checkpointNumber,
+          filesRestored: result.filesRestored,
+          mode,
+          messagesPruned: result.messagesPruned
+        });
       } else {
         const err = result.errors?.join(', ') || 'Unknown error';
         vscode.window.showErrorMessage(`Failed to revert checkpoint: ${err}`);

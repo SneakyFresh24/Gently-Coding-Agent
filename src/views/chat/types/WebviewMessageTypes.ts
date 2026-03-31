@@ -182,6 +182,13 @@ export interface RevertCheckpointMessage {
   type: 'revertCheckpoint';
   checkpointId: string;
   messageId: string;
+  mode?: 'files' | 'task' | 'files&task';
+}
+
+export interface GetCheckpointDiffMessage {
+  type: 'getCheckpointDiff';
+  fromCheckpointId: string;
+  toCheckpointId?: string;
 }
 
 /**
@@ -800,6 +807,15 @@ export interface CheckpointRestoredMessage {
   messageId: string;
   checkpointNumber: number;
   filesRestored: string[];
+  mode?: 'files' | 'task' | 'files&task';
+  messagesPruned?: number;
+}
+
+export interface CheckpointRestorePlannedMessage {
+  type: 'checkpointRestorePlanned';
+  checkpointId: string;
+  messageId: string;
+  mode: 'files' | 'task' | 'files&task';
 }
 
 /**
@@ -813,6 +829,28 @@ export interface CheckpointsMessage {
     checkpointNumber: number;
     description: string;
     timestamp: number;
+    commitHash?: string;
+    filesChanged?: number;
+  }>;
+}
+
+export interface CheckpointDiffReadyMessage {
+  type: 'checkpointDiffReady';
+  fromCheckpointId: string;
+  toCheckpointId?: string;
+  files: Array<{
+    relativePath: string;
+    absolutePath: string;
+    status: 'A' | 'M' | 'D' | 'R';
+    hunks: Array<{
+      oldStart: number;
+      oldLines: number;
+      newStart: number;
+      newLines: number;
+      content: string;
+    }>;
+    beforeContent?: string;
+    afterContent?: string;
   }>;
 }
 
@@ -1157,6 +1195,7 @@ export type InboundWebviewMessage =
   | OpenFilePickerMessage
   | RequestFilePreviewMessage
   | RevertCheckpointMessage
+  | GetCheckpointDiffMessage
   | GetCheckpointsMessage
   | SystemMessageCreatedMessage
   | CommandApprovalCreatedMessage
@@ -1228,7 +1267,9 @@ export type OutboundWebviewMessage =
   | UserMessageEndMessage
   | MessageSavedMessage
   | CheckpointRestoredMessage
+  | CheckpointRestorePlannedMessage
   | CheckpointsMessage
+  | CheckpointDiffReadyMessage
   | CheckpointRestoreErrorMessage
   | ModeChangedResponseMessage
   | CommandKilledMessage
@@ -1258,8 +1299,10 @@ export type OutboundWebviewMessage =
   | ProcessingEndMessage
   | AssistantThinkingMessage
   | { type: 'planLoaded'; plan: any; planId: string }
-  | { type: 'checkpointRestored'; checkpointId: string; messageId: string; checkpointNumber: number; filesRestored: string[] }
+  | { type: 'checkpointRestored'; checkpointId: string; messageId: string; checkpointNumber: number; filesRestored: string[]; mode?: 'files' | 'task' | 'files&task'; messagesPruned?: number }
+  | { type: 'checkpointRestorePlanned'; checkpointId: string; messageId: string; mode: 'files' | 'task' | 'files&task' }
   | { type: 'checkpoints'; messageId: string; checkpoints: any[] }
+  | { type: 'checkpointDiffReady'; fromCheckpointId: string; toCheckpointId?: string; files: any[] }
   | { type: 'activityUpdate'; label: string | null }
   | AutoApproveSettingsUpdateMessage
   | ToolApprovalRequestMessage

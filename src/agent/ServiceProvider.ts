@@ -109,7 +109,7 @@ export function configureServices(container: Container, context: vscode.Extensio
     container.register('fileReferenceManager', (c) => new FileReferenceManager(c.resolve('fileOps'), c.resolve('indexer')));
     container.register('incrementalIndexer', (c) => new IncrementalIndexer(c.resolve('indexer')));
     container.register('gitDiffService', (c) => new GitDiffService(c.resolve('workspaceRoot')));
-    container.register('checkpointManager', (c) => new CheckpointManager(c.resolve('context'), c.resolve('gitDiffService')));
+    container.register('checkpointManager', (c) => new CheckpointManager(c.resolve('context')));
     container.register('astAnalyzer', (c) => new ASTAnalyzer(c.resolve('context'), c.resolve('fileOps')));
     container.register('editorEngine', (c) => new EditorEngine(
         c.resolve('fileOps'),

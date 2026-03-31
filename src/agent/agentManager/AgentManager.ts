@@ -13,6 +13,7 @@ import { TerminalManager } from '../../terminal/TerminalManager';
 import { OpenRouterService } from '../../services/OpenRouterService';
 import { GitDiffService } from '../GitDiffService';
 import { CheckpointManager } from '../checkpoints/CheckpointManager';
+import { RestoreOptions } from '../checkpoints/types';
 import {
   FileOperationManager,
   ToolManager,
@@ -285,8 +286,8 @@ export class AgentManager {
     return await this.container.resolve<CheckpointManager>('checkpointManager').createCheckpoint(messageId, description, filePaths, sessionId);
   }
 
-  async restoreCheckpoint(id: string): Promise<any> {
-    return await this.container.resolve<CheckpointManager>('checkpointManager').restoreCheckpoint(id);
+  async restoreCheckpoint(id: string, options?: RestoreOptions): Promise<any> {
+    return await this.container.resolve<CheckpointManager>('checkpointManager').restoreCheckpoint(id, options);
   }
 
   setValidationMessageCallback(callback: (msg: string) => void): void {

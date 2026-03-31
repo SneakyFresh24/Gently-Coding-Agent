@@ -260,22 +260,30 @@ export class TraditionalToolExecutor {
 
             if (loopResult.hardEscalation && !context.doomLoopAllowedTools?.has(toolName)) {
                 const errorMessage = `LOOP_HARD_ESCALATION: blocked repeated ${toolName} execution (count=${loopResult.count}).`;
+                const metadata = { toolName, fingerprint, count: loopResult.count, action: 'abort' };
                 blockedResults.push({
                     toolCall,
                     result: { error: errorMessage },
                     success: false
                 });
+                log.event('ERROR', 'loop.hard_block', errorMessage, metadata);
                 await this.emitNotification({
                     channel: 'loop_escalation',
                     severity: 'error',
                     action: 'abort',
                     message: errorMessage,
-                    metadata: { toolName, fingerprint, count: loopResult.count }
+                    metadata
                 });
                 continue;
             }
 
             if (loopResult.softWarning && !context.doomLoopAllowedTools?.has(toolName)) {
+                log.event('WARN', 'loop.soft_warning', `Loop soft warning for ${toolName}`, {
+                    toolName,
+                    fingerprint,
+                    count: loopResult.count,
+                    action: 'retry'
+                });
                 await this.emitNotification({
                     channel: 'loop_escalation',
                     severity: 'warning',

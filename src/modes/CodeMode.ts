@@ -51,6 +51,7 @@ You are the Implementation Expert. You bridge the gap between architectural desi
     'update_memory_bank',
     'create_checkpoint',
     'restore_checkpoint',
+    'show_checkpoint_diff',
     'analyze_project_structure'
   ];
 

@@ -8,6 +8,7 @@
   import InputSection from './InputSection.svelte';
   import AutoApproveBar from '../approval/AutoApproveBar.svelte';
   import ToolApprovalModal from '../approval/ToolApprovalModal.svelte';
+  import Modal from '../ui/Modal.svelte';
   import ModelDropdown from '../layout/ModelDropdown.svelte';
   import ModeToggle from '../layout/ModeToggle.svelte';
 
@@ -20,6 +21,10 @@
 
 
   let { isHidden = false } = $props();
+  let checkpointDiffModalOpen = $state(false);
+  let checkpointDiffFiles = $state<any[]>([]);
+  let checkpointDiffFrom = $state('');
+  let checkpointDiffTo = $state<string | undefined>(undefined);
 
   function inferPhase(label: string | null | undefined): 'idle' | 'sending' | 'thinking' | 'tooling' {
     const normalized = (label || '').toLowerCase();
@@ -224,6 +229,48 @@
       onRefreshSessions: () => {
         historyStore.fetchHistory();
       },
+      onCheckpointRestored: (data) => {
+        const prunedInfo = typeof data.messagesPruned === 'number' ? `, pruned ${data.messagesPruned} messages` : '';
+        chatStore.addMessage({
+          id: `sys_checkpoint_restored_${Date.now()}`,
+          role: 'system',
+          content: `Checkpoint restored (${data.mode || 'files'}): ${data.filesRestored?.length || 0} files${prunedInfo}.`,
+          timestamp: Date.now(),
+          isSystemMessage: true
+        });
+      },
+      onCheckpointRestorePlanned: (data) => {
+        chatStore.addMessage({
+          id: `sys_checkpoint_restore_planned_${Date.now()}`,
+          role: 'system',
+          content: `Restoring checkpoint (${data.mode || 'files'})...`,
+          timestamp: Date.now(),
+          isSystemMessage: true
+        });
+      },
+      onCheckpointRestoreError: (data) => {
+        chatStore.addMessage({
+          id: `sys_checkpoint_restore_error_${Date.now()}`,
+          role: 'system',
+          content: `Checkpoint restore failed: ${data.error || 'Unknown error'}`,
+          timestamp: Date.now(),
+          isSystemMessage: true
+        });
+      },
+      onCheckpointDiffReady: (data) => {
+        const fileCount = Array.isArray(data.files) ? data.files.length : 0;
+        checkpointDiffFiles = Array.isArray(data.files) ? data.files : [];
+        checkpointDiffFrom = data.fromCheckpointId || '';
+        checkpointDiffTo = data.toCheckpointId;
+        checkpointDiffModalOpen = true;
+        chatStore.addMessage({
+          id: `sys_checkpoint_diff_${Date.now()}`,
+          role: 'system',
+          content: `Checkpoint diff ready: ${fileCount} changed files.`,
+          timestamp: Date.now(),
+          isSystemMessage: true
+        });
+      },
 
       // Unhandled
 
@@ -272,6 +319,40 @@
 </ChatLayout>
 
 <ToolApprovalModal />
+<Modal
+  isOpen={checkpointDiffModalOpen}
+  title="Checkpoint Diff"
+  onClose={() => {
+    checkpointDiffModalOpen = false;
+  }}
+>
+  <div class="checkpoint-diff-meta">
+    <div><strong>From:</strong> {checkpointDiffFrom || 'unknown'}</div>
+    <div><strong>To:</strong> {checkpointDiffTo || 'working tree'}</div>
+    <div><strong>Files:</strong> {checkpointDiffFiles.length}</div>
+  </div>
+  <div class="checkpoint-diff-files">
+    {#if checkpointDiffFiles.length === 0}
+      <div class="checkpoint-diff-empty">No changed files.</div>
+    {:else}
+      {#each checkpointDiffFiles as file}
+        <div class="checkpoint-diff-file">
+          <div class="checkpoint-diff-file-header">
+            <span class="checkpoint-diff-status">{file.status}</span>
+            <span class="checkpoint-diff-path">{file.relativePath}</span>
+          </div>
+          {#if Array.isArray(file.hunks) && file.hunks.length > 0}
+            {#each file.hunks as hunk}
+              <pre class="checkpoint-diff-hunk">{hunk.content}</pre>
+            {/each}
+          {:else}
+            <div class="checkpoint-diff-empty">No hunks available.</div>
+          {/if}
+        </div>
+      {/each}
+    {/if}
+  </div>
+</Modal>
 
 
 <style>
@@ -295,5 +376,61 @@
     padding: 4px 8px;
     border-bottom: 1px solid var(--vscode-panel-border);
     background: var(--vscode-editor-background);
+  }
+
+  .checkpoint-diff-meta {
+    display: grid;
+    gap: 6px;
+    font-size: 12px;
+    margin-bottom: 12px;
+  }
+
+  .checkpoint-diff-files {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .checkpoint-diff-file {
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  .checkpoint-diff-file-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: var(--vscode-editor-inactiveSelectionBackground);
+    font-family: var(--vscode-editor-font-family);
+    font-size: 12px;
+  }
+
+  .checkpoint-diff-status {
+    font-weight: 700;
+    min-width: 18px;
+  }
+
+  .checkpoint-diff-path {
+    word-break: break-all;
+  }
+
+  .checkpoint-diff-hunk {
+    margin: 0;
+    padding: 10px;
+    border-top: 1px solid var(--vscode-panel-border);
+    background: var(--vscode-textCodeBlock-background);
+    font-family: var(--vscode-editor-font-family);
+    font-size: 11px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .checkpoint-diff-empty {
+    padding: 10px;
+    font-size: 12px;
+    opacity: 0.8;
   }
 </style>

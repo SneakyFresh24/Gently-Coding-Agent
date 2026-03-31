@@ -133,6 +133,18 @@ export class StreamingService {
                     });
                     throw new Error(`CIRCUIT_OPEN_REJECT: Streaming temporarily blocked. Retry after ${streamGate.decision.retryAfterMs || 0}ms.`);
                 }
+                if (streamGate.transition === 'half_open') {
+                    await this.emitRecoveryNotification({
+                        channel: 'circuit_breaker',
+                        severity: 'warning',
+                        action: 'retry',
+                        message: `LLM stream circuit breaker half-open`,
+                        metadata: { circuitKey: streamGate.key }
+                    });
+                    log.event('WARN', 'circuit.half_open', 'LLM stream circuit breaker half-open', {
+                        circuitKey: streamGate.key
+                    });
+                }
 
                 await telemetry.withSpan(
                     'stream.session',
@@ -237,18 +249,32 @@ export class StreamingService {
 
                                 recoveryState = 'STREAMING';
                                 streamSpan.setAttributes({ 'stream.state': recoveryState, 'stream.reconnect_attempts': reconnectAttempt });
-                                this.circuitBreakers.recordSuccess('llm.stream');
+                                const successUpdate = this.circuitBreakers.recordSuccess('llm.stream');
+                                if (successUpdate.transition === 'closed') {
+                                    await this.emitRecoveryNotification({
+                                        channel: 'circuit_breaker',
+                                        severity: 'info',
+                                        message: 'LLM stream circuit breaker closed',
+                                        metadata: { circuitKey: successUpdate.key }
+                                    });
+                                    log.event('INFO', 'circuit.closed', 'LLM stream circuit breaker closed', {
+                                        circuitKey: successUpdate.key
+                                    });
+                                }
                                 return;
                             } catch (error) {
                                 const isRecoverable = this.isRecoverableStreamingError(error);
                                 const breakerUpdate = this.circuitBreakers.recordFailure('llm.stream', isRecoverable);
-                                if (breakerUpdate.tripped) {
+                                if (breakerUpdate.transition === 'opened') {
                                     await this.emitRecoveryNotification({
                                         channel: 'circuit_breaker',
                                         severity: 'error',
                                         action: 'wait',
                                         message: `LLM stream circuit breaker opened`,
                                         metadata: { circuitKey: breakerUpdate.key }
+                                    });
+                                    log.event('ERROR', 'circuit.opened', 'LLM stream circuit breaker opened', {
+                                        circuitKey: breakerUpdate.key
                                     });
                                 }
                                 if (!isRecoverable || reconnectAttempt >= maxReconnects || isStreamDivergenceError(error)) {

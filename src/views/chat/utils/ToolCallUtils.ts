@@ -637,6 +637,8 @@ export class ToolCallUtils {
         return `Stelle Checkpoint wieder her...`;
       case 'list_checkpoints':
         return `Liste Checkpoints auf...`;
+      case 'show_checkpoint_diff':
+        return `Erzeuge Checkpoint-Diff...`;
       // Planning
       case 'create_plan':
         return `Erstelle Plan...`;
@@ -790,7 +792,8 @@ export class ToolCallUtils {
       'check_dev_server',
       'recall_memories',
       'check_pattern_suggestions',
-      'list_checkpoints'
+      'list_checkpoints',
+      'show_checkpoint_diff'
     ];
 
     return safeTools.includes(toolName);
@@ -827,7 +830,7 @@ export class ToolCallUtils {
     if (['read_file', 'write_file', 'edit_file', 'safe_edit_file', 'apply_block_edit', 'apply_changes', 'list_files'].includes(toolName)) {
       return 'file';
     }
-    if (['find_files', 'regex_search', 'search_codebase', 'get_context', 'analyze_project_structure'].includes(toolName)) {
+    if (['find_files', 'regex_search', 'search_codebase', 'get_context', 'analyze_project_structure', 'show_checkpoint_diff'].includes(toolName)) {
       return 'search';
     }
     if (['remember', 'recall_memories', 'update_memory', 'deprecate_memory', 'record_correction'].includes(toolName)) {

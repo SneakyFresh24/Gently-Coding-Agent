@@ -429,6 +429,17 @@ export class ToolManager implements IAgentService {
             log.event('WARN', 'circuit.reject', `Circuit breaker rejected ${toolName}`, payload.metadata);
             throw new Error(`CIRCUIT_OPEN_REJECT: Tool "${toolName}" temporarily blocked. Retry after ${gate.decision.retryAfterMs || 0}ms.`);
           }
+          if (gate.transition === 'half_open') {
+            const payload: NotificationPayload = {
+              channel: 'circuit_breaker',
+              severity: 'warning',
+              action: 'retry',
+              message: `Circuit breaker half-open for ${gate.key}`,
+              metadata: { toolName, circuitKey: gate.key, state: gate.decision.state }
+            };
+            await this.hookManager.executeNotification(payload);
+            log.event('WARN', 'circuit.half_open', `Circuit breaker half-open for ${toolName}`, payload.metadata);
+          }
 
           // 3. APPROVAL CHECK
           const autoApproved = await this.autoApproveManager.shouldAutoApprove(toolName, params);
@@ -457,7 +468,17 @@ export class ToolManager implements IAgentService {
             });
           }
           const result = await tool.execute(params);
-          this.circuitBreakers.recordSuccess('tool.execute', toolName);
+          const successUpdate = this.circuitBreakers.recordSuccess('tool.execute', toolName);
+          if (successUpdate.transition === 'closed') {
+            const payload: NotificationPayload = {
+              channel: 'circuit_breaker',
+              severity: 'info',
+              message: `Circuit breaker closed for ${successUpdate.key}`,
+              metadata: { toolName, circuitKey: successUpdate.key }
+            };
+            await this.hookManager.executeNotification(payload);
+            log.event('INFO', 'circuit.closed', `Circuit breaker closed for ${toolName}`, payload.metadata);
+          }
           if (isWriteTool && this.eventCallback) {
             this.eventCallback({
               type: 'write_finished',
@@ -491,7 +512,7 @@ export class ToolManager implements IAgentService {
     } catch (error) {
       const recoverable = this.isRecoverableToolError(error);
       const breaker = this.circuitBreakers.recordFailure('tool.execute', recoverable, toolName);
-      if (breaker.tripped) {
+      if (breaker.transition === 'opened') {
         await this.hookManager.executeNotification({
           channel: 'circuit_breaker',
           severity: 'error',

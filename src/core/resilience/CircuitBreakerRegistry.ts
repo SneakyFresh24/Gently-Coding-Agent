@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { CircuitBreaker, CircuitDecision } from './CircuitBreaker';
 
 export type CircuitDomain = 'llm.stream' | 'tool.execute';
+export type CircuitTransition = 'opened' | 'half_open' | 'closed';
 
 export class CircuitBreakerRegistry {
   private breakers = new Map<string, CircuitBreaker>();
@@ -24,19 +25,27 @@ export class CircuitBreakerRegistry {
     return `${domain}:${toolName}`;
   }
 
-  canExecute(domain: CircuitDomain, toolName?: string): { key: string; decision: CircuitDecision } {
+  canExecute(domain: CircuitDomain, toolName?: string): { key: string; decision: CircuitDecision; transition?: CircuitTransition } {
     const key = this.resolveKey(domain, toolName);
     const breaker = this.getOrCreate(key);
-    return { key, decision: breaker.canExecute() };
+    const before = breaker.getState();
+    const decision = breaker.canExecute();
+    const after = breaker.getState();
+    const transition = before !== 'HALF_OPEN' && after === 'HALF_OPEN' ? 'half_open' : undefined;
+    return { key, decision, transition };
   }
 
-  recordSuccess(domain: CircuitDomain, toolName?: string): { key: string } {
+  recordSuccess(domain: CircuitDomain, toolName?: string): { key: string; transition?: CircuitTransition } {
     const key = this.resolveKey(domain, toolName);
-    this.getOrCreate(key).recordSuccess();
-    return { key };
+    const breaker = this.getOrCreate(key);
+    const before = breaker.getState();
+    breaker.recordSuccess();
+    const after = breaker.getState();
+    const transition = before !== 'CLOSED' && after === 'CLOSED' ? 'closed' : undefined;
+    return { key, transition };
   }
 
-  recordFailure(domain: CircuitDomain, recoverable: boolean, toolName?: string): { key: string; tripped: boolean } {
+  recordFailure(domain: CircuitDomain, recoverable: boolean, toolName?: string): { key: string; tripped: boolean; transition?: CircuitTransition } {
     const key = this.resolveKey(domain, toolName);
     const breaker = this.getOrCreate(key);
     const before = breaker.getState();
@@ -44,7 +53,9 @@ export class CircuitBreakerRegistry {
       breaker.recordFailure();
     }
     const after = breaker.getState();
-    return { key, tripped: before !== 'OPEN' && after === 'OPEN' };
+    const tripped = before !== 'OPEN' && after === 'OPEN';
+    const transition = tripped ? 'opened' : undefined;
+    return { key, tripped, transition };
   }
 
   getState(domain: CircuitDomain, toolName?: string): { key: string; state: string } {

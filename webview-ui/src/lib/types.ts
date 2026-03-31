@@ -18,6 +18,7 @@ export interface Checkpoint {
   id: string;
   checkpointNumber: number;
   filesTracked: number;
+  commitHash?: string;
 }
 
 export interface ToolExecution {
@@ -193,6 +194,7 @@ export type InboundMessageType =
   | 'openFilePicker'
   | 'requestFilePreview'
   | 'revertCheckpoint'
+  | 'getCheckpointDiff'
   | 'getCheckpoints'
   | 'systemMessageCreated'
   | 'commandApprovalCreated'
@@ -251,8 +253,10 @@ export type OutboundMessageType =
   | 'sessionsUpdate'
   | 'contextUpdate'
   | 'checkpointRestored'
+  | 'checkpointRestorePlanned'
   | 'checkpointRestoreError'
   | 'checkpoints'
+  | 'checkpointDiffReady'
   | 'toolExecutionStart'
   | 'commandKilled'
   | 'approvalRequest'
