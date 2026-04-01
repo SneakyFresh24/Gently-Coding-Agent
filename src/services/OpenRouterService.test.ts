@@ -30,12 +30,20 @@ describe('OpenRouterService.isToolCallSequenceError', () => {
     expect(service.isToolCallSequenceError(error)).toBe(true);
   });
 
-  it('detects context-window-exceeds-limit as sequence issue pattern', () => {
+  it('does not classify context-window overflow as sequence issue by default', () => {
     const error = new OpenRouterHttpError({
       status: 400,
       message: 'context window exceeds limit while resolving tool call'
     });
-    expect(service.isToolCallSequenceError(error)).toBe(true);
+    expect(service.isToolCallSequenceError(error)).toBe(false);
+  });
+
+  it('can classify context-window overflow as sequence issue in legacy mode', () => {
+    const error = new OpenRouterHttpError({
+      status: 400,
+      message: 'context window exceeds limit while resolving tool call'
+    });
+    expect(service.isToolCallSequenceError(error, { includeContextOverflowPattern: true })).toBe(true);
   });
 });
 
@@ -80,7 +88,7 @@ describe('OpenRouterService model policy integration', () => {
     });
 
     const payload = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(payload.messages[1]).toEqual({ role: 'assistant', content: 'Done.' });
+    expect(payload.messages[1]).toMatchObject({ role: 'assistant', content: 'Done.' });
     expect(payload.messages[2].role).toBe('user');
   });
 

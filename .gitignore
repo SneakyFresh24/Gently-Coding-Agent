@@ -59,6 +59,11 @@ coverage/
 .gently/
 .venv/
 runs/
+CLINE/
+cline/
+CLAUDE CODE/
+claude code/
+claude-code/
 
 # SWE-Bench / Benchmark local artifacts
 .env.swebench.local

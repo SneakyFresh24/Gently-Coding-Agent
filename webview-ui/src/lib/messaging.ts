@@ -13,6 +13,7 @@ export interface MessageHandlers {
   onRetryingWithReducedTokens?: (data: any) => void;
   onRetryingRateLimit?: (data: any) => void;
   onRetryStatus?: (data: any) => void;
+  onResilienceStatus?: (data: any) => void;
   onModeChanged?: (data: any) => void;
   onError?: (data: any) => void;
   onInfo?: (data: any) => void;
@@ -108,6 +109,7 @@ const TYPE_TO_HANDLER: Record<string, keyof MessageHandlers> = {
   retryingWithReducedTokens: 'onRetryingWithReducedTokens',
   retryingRateLimit: 'onRetryingRateLimit',
   retryStatus: 'onRetryStatus',
+  resilienceStatus: 'onResilienceStatus',
   modeChanged: 'onModeChanged',
   error: 'onError',
   info: 'onInfo',

@@ -2,6 +2,47 @@
 
 All notable changes to the "Gently" extension will be documented in this file.
 
+## [0.9.82] - 2026-04-01
+
+### Added
+- **Resilience Status Contract (V1)**: Added structured outbound webview message `resilienceStatus` with stable fields (`code`, `category`, `severity`, `retryable`, `attempt`, `maxAttempts`, `nextDelayMs`, `model`, `flowId`, `userMessage`, `action`).
+- **P1 Resilience Flags**:
+  - `gently.resilience.errorContractV1` (default `true`)
+  - `gently.resilience.retryOrchestratorV1` (default `true`)
+  - `gently.resilience.telemetryV1` (default `true`)
+- **Rollback Runbook**: Added `docs/resilience-p1-rollback-runbook.md` with phased rollback/restore guidance for incident response.
+- **Chat Flow Regression Coverage**: Added focused tests for `ChatFlowManager` resilience paths (preflight context guard, empty-response retries/exhaustion, stop handling, rate-limit retries, guardrail block, kill-switch behavior).
+
+### Changed
+- **Retry Orchestration (P1)**: Consolidated retry behavior in `ChatFlowManager` into a deterministic flow with strict priority handling:
+  - `guardrail -> stop -> context -> sequence -> empty -> rate_limit -> terminal`.
+- **Context Budget Guardrails (P0/P1)**:
+  - `computeMaxOutputTokens` now clamps to `>= 0` (no artificial `256` floor when budget is exhausted).
+  - Added hard preflight context safety checks with deterministic recovery chain:
+    - aggressive recompress
+    - tool-output prune
+    - output-token reduction
+  - Recovery attempts are bounded and only continue when state actually changes.
+- **Error Classification Separation**:
+  - Separated context-length detection from tool-sequence detection.
+  - Context overflow patterns are no longer treated as sequence errors by default (legacy opt-in only).
+- **UI Resilience Messaging**:
+  - Webview now consumes `resilienceStatus` for consistent retry/system messaging and activity updates.
+  - Legacy retry/error messaging remains as compatibility fallback.
+- **Telemetry/Event Consistency**:
+  - Added structured resilience telemetry events:
+    - `RESILIENCE_ATTEMPT_START`
+    - `RESILIENCE_RETRY_SCHEDULED`
+    - `RESILIENCE_RECOVERY_APPLIED`
+    - `RESILIENCE_TERMINAL_FAILURE`
+    - `RESILIENCE_STOPPED_BY_USER`
+
+### Fixed
+- **Silent Empty Responses**: Stream completions with no assistant text and no tool calls now fail fast via explicit empty-response detection and bounded retries, then surface a clear terminal error.
+- **Wrong Retry Loop Routing**: Prevented context-overflow failures from entering sequence-repair retry loops.
+- **Stop/Retry Flow Safety**: Added stricter stop checks to prevent unintended retries after user stop.
+- **Repository Scope Hygiene**: Excluded `CLINE` and `CLAUDE CODE` paths (including common casing/name variants) from TypeScript configs and git tracking to avoid accidental build/test scope pollution.
+
 ## [0.9.7] - 2026-03-28
 
 ### Added

@@ -622,6 +622,8 @@ export interface MessagesCompressedMessage {
 export interface ErrorMessage {
   type: 'error';
   message: string;
+  code?: string;
+  action?: 'retry' | 'switch_model' | 'new_chat' | 'check_privacy_settings' | 'none';
 }
 
 /**
@@ -630,6 +632,53 @@ export interface ErrorMessage {
 export interface InfoMessage {
   type: 'info';
   message: string;
+}
+
+export type ResilienceStatusCode =
+  | 'CTX_BUDGET_UNSAFE'
+  | 'CTX_RECOVERY_EXHAUSTED'
+  | 'EMPTY_RESPONSE_DETECTED'
+  | 'EMPTY_RESPONSE_RETRY_EXHAUSTED'
+  | 'RATE_LIMIT_RETRY'
+  | 'RATE_LIMIT_RETRY_EXHAUSTED'
+  | 'SEQUENCE_REPAIR_RETRY'
+  | 'SEQUENCE_REPAIR_EXHAUSTED'
+  | 'GUARDRAIL_PRIVACY_BLOCK'
+  | 'REQUEST_STOPPED';
+
+export type ResilienceStatusCategory =
+  | 'context'
+  | 'empty_response'
+  | 'rate_limit'
+  | 'sequence'
+  | 'guardrail'
+  | 'request';
+
+export type ResilienceStatusSeverity = 'info' | 'warning' | 'error';
+
+export type ResilienceStatusAction =
+  | 'retry'
+  | 'switch_model'
+  | 'new_chat'
+  | 'check_privacy_settings'
+  | 'none';
+
+/**
+ * Structured resilience/retry status for deterministic UI and telemetry handling.
+ */
+export interface ResilienceStatusMessage {
+  type: 'resilienceStatus';
+  code: ResilienceStatusCode;
+  category: ResilienceStatusCategory;
+  severity: ResilienceStatusSeverity;
+  retryable: boolean;
+  attempt: number;
+  maxAttempts: number;
+  nextDelayMs?: number;
+  model: string;
+  flowId: string | null;
+  userMessage: string;
+  action: ResilienceStatusAction;
 }
 
 /**
@@ -1247,6 +1296,7 @@ export type OutboundWebviewMessage =
   | LoadMessagesMessage
   | ClearMessagesMessage
   | MessagesCompressedMessage
+  | ResilienceStatusMessage
   | ErrorMessage
   | InfoMessage
   | AddFileReferenceMessage

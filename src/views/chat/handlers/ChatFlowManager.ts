@@ -9,16 +9,66 @@ import { ToolCallDispatcher } from './ExecutionDispatchers';
 import { LogService } from '../../../services/LogService';
 import { ModeService } from '../../../modes/ModeService';
 import { ChatMessage, ModelPricing, OpenRouterService } from '../../../services/OpenRouterService';
-import { OutboundWebviewMessage } from '../types/WebviewMessageTypes';
+import {
+    OutboundWebviewMessage,
+    ResilienceStatusAction,
+    ResilienceStatusCategory,
+    ResilienceStatusCode,
+    ResilienceStatusSeverity
+} from '../types/WebviewMessageTypes';
 import { UsageInfo } from '../../../core/streaming/types';
 import { IncompleteToolCall } from '../../../core/streaming/types';
 import { SessionType } from '../../../services/HistoryManager';
-import { TokenBudgetManager } from './TokenBudgetManager';
+import { CompressionResult, TokenBudgetManager } from './TokenBudgetManager';
 import { ConversationRepairResult } from '../toolcall';
 import { buildTruncatedRetryPrompt } from '../toolcall/ToolRetryPrompts';
 import { getModelPolicyResult, getReasoningConfig, ReasoningConfig, ReasoningEffort } from '../../../utils/modelPolicy';
 
 const log = new LogService('ChatFlowManager');
+
+export class EmptyAssistantResponseError extends Error {
+    constructor(message: string = 'No assistant message was received.') {
+        super(message);
+        this.name = 'EmptyAssistantResponseError';
+    }
+}
+
+interface ResilienceSettings {
+    strictResponseGuards: boolean;
+    contextRecoveryV2: boolean;
+    killSwitch: boolean;
+    errorContractV1: boolean;
+    retryOrchestratorV1: boolean;
+    telemetryV1: boolean;
+}
+
+interface RetryOrchestratorState {
+    rateLimitRetries: number;
+    sequenceRetries: number;
+    emptyResponseRetries: number;
+    contextLengthRetriedLegacy: boolean;
+    contextRecoveryAttempts: number;
+    attempt: number;
+}
+
+interface ContextRecoveryState {
+    attemptedAggressiveRecompress: boolean;
+    attemptedToolOutputPrune: boolean;
+    maxTokenReductionAttempts: number;
+}
+
+interface ContextRecoveryResult {
+    progressed: boolean;
+    changed: boolean;
+    reason: 'aggressive_recompress' | 'tool_output_prune' | 'max_tokens_reduce' | 'exhausted';
+    rawMessages: ChatMessage[];
+    compression: CompressionResult;
+    messages: ChatMessage[];
+    maxTokens: number;
+    compressionLevel: 'none' | 'proactive' | 'aggressive';
+    inputBudget: number;
+    signature: string;
+}
 
 export class ChatFlowManager {
     private readonly tokenBudgetManager = new TokenBudgetManager();
@@ -31,6 +81,11 @@ export class ChatFlowManager {
     private readonly sequenceRepairHistoryLimit = 10;
     private readonly toolOutputPruneProtectTokens = 40_000;
     private readonly toolOutputPruneProtectedTurns = 2;
+    private readonly minOutputTokenBudget = 256;
+    private readonly outputSafetyReserveTokens = 1024;
+    private readonly contextRecoveryMaxAttempts = 4;
+    private readonly emptyResponseMaxRetries = 2;
+    private readonly rateLimitMaxRetries = 2;
     private readonly modelWarningByFlow = new Set<string>();
     private readonly knownSequenceIssueModels = new Set<string>([
         'minimax/minimax-m2.7',
@@ -107,6 +162,15 @@ export class ChatFlowManager {
         if (!context.selectedModel) {
             throw new Error('Please select a model before sending a message.');
         }
+        if (!context.currentFlowId) {
+            context.currentFlowId = `flow-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+        }
+        const resilienceSettings = this.getResilienceSettings();
+        const strictResponseGuardsEnabled = resilienceSettings.strictResponseGuards && !resilienceSettings.killSwitch;
+        const contextRecoveryV2Enabled = resilienceSettings.contextRecoveryV2 && !resilienceSettings.killSwitch;
+        const errorContractV1Enabled = resilienceSettings.errorContractV1 && !resilienceSettings.killSwitch;
+        const retryOrchestratorV1Enabled = resilienceSettings.retryOrchestratorV1 && !resilienceSettings.killSwitch;
+        const telemetryV1Enabled = resilienceSettings.telemetryV1 && !resilienceSettings.killSwitch;
 
         const baseTemperature = this.modeService.getTemperature();
         const sampling = this.getSamplingOverrides(context.selectedModel, baseTemperature);
@@ -313,20 +377,175 @@ export class ChatFlowManager {
         let messages = compression.messages;
 
         let maxTokens = this.computeMaxOutputTokens(compression.inputTokens, modelContextLength, modelMaxOutput, configuredMaxTokens);
+        const retryState: RetryOrchestratorState = {
+            rateLimitRetries: 0,
+            sequenceRetries: 0,
+            emptyResponseRetries: 0,
+            contextLengthRetriedLegacy: false,
+            contextRecoveryAttempts: 0,
+            attempt: 0
+        };
+        const contextRecoveryState: ContextRecoveryState = {
+            attemptedAggressiveRecompress: false,
+            attemptedToolOutputPrune: false,
+            maxTokenReductionAttempts: 0
+        };
+
+        if (
+            strictResponseGuardsEnabled &&
+            contextRecoveryV2Enabled &&
+            !this.hasSufficientOutputBudget(compression.inputTokens, modelContextLength, this.minOutputTokenBudget)
+        ) {
+            this.logResilienceEvent(
+                'CTX_PREFLIGHT_BLOCK',
+                `model=${context.selectedModel} inputTokens=${compression.inputTokens} contextLimit=${modelContextLength} maxTokens=${maxTokens}`
+            );
+            while (
+                retryState.contextRecoveryAttempts < this.contextRecoveryMaxAttempts &&
+                !context.shouldStopStream &&
+                !this.hasSufficientOutputBudget(compression.inputTokens, modelContextLength, this.minOutputTokenBudget)
+            ) {
+                const recovery = this.runContextRecoveryStep({
+                    context,
+                    systemPrompt,
+                    tools,
+                    modelContextLength,
+                    modelMaxOutput,
+                    configuredMaxTokens,
+                    rawMessages,
+                    compression,
+                    messages,
+                    maxTokens,
+                    compressionLevel,
+                    inputBudget,
+                    state: contextRecoveryState
+                });
+
+                if (!recovery.progressed) break;
+                retryState.contextRecoveryAttempts += 1;
+                this.logResilienceEvent(
+                    'CTX_RECOVERY_STEP',
+                    `phase=preflight step=${recovery.reason} changed=${recovery.changed} attempt=${retryState.contextRecoveryAttempts}/${this.contextRecoveryMaxAttempts} inputTokens=${recovery.compression.inputTokens} maxTokens=${recovery.maxTokens}`
+                );
+                if (recovery.changed) {
+                    this.emitResilienceTelemetryEvent(
+                        telemetryV1Enabled,
+                        'RESILIENCE_RECOVERY_APPLIED',
+                        context,
+                        'CTX_BUDGET_UNSAFE',
+                        {
+                            phase: 'preflight',
+                            step: recovery.reason,
+                            attempt: retryState.contextRecoveryAttempts,
+                            maxAttempts: this.contextRecoveryMaxAttempts,
+                            inputTokens: recovery.compression.inputTokens,
+                            maxTokens: recovery.maxTokens
+                        }
+                    );
+                }
+
+                if (!recovery.changed) {
+                    continue;
+                }
+
+                rawMessages = recovery.rawMessages;
+                compression = recovery.compression;
+                messages = recovery.messages;
+                maxTokens = recovery.maxTokens;
+                compressionLevel = recovery.compressionLevel;
+                inputBudget = recovery.inputBudget;
+            }
+
+            if (!this.hasSufficientOutputBudget(compression.inputTokens, modelContextLength, this.minOutputTokenBudget)) {
+                this.emitResilienceStatus(
+                    errorContractV1Enabled,
+                    context,
+                    {
+                        code: 'CTX_BUDGET_UNSAFE',
+                        category: 'context',
+                        severity: 'error',
+                        retryable: false,
+                        attempt: retryState.contextRecoveryAttempts,
+                        maxAttempts: this.contextRecoveryMaxAttempts,
+                        userMessage: 'Kontext-Budget reicht aktuell nicht fuer eine sichere Antwort. Bitte Verlauf kuerzen oder neuen Chat starten.',
+                        action: 'new_chat'
+                    }
+                );
+                this.emitResilienceTelemetryEvent(
+                    telemetryV1Enabled,
+                    'RESILIENCE_TERMINAL_FAILURE',
+                    context,
+                    'CTX_BUDGET_UNSAFE',
+                    {
+                        phase: 'preflight',
+                        attempt: retryState.contextRecoveryAttempts,
+                        maxAttempts: this.contextRecoveryMaxAttempts,
+                        inputTokens: compression.inputTokens,
+                        modelContextLength
+                    }
+                );
+                this.sendMessageToWebview({
+                    type: 'error',
+                    message: 'Kontext-Budget reicht aktuell nicht fuer eine sichere Antwort. Bitte Verlauf kuerzen oder neuen Chat starten.',
+                    code: 'CTX_BUDGET_UNSAFE',
+                    action: 'new_chat'
+                });
+                this.sendMessageToWebview({ type: 'activityUpdate', label: null });
+                this.sendMessageToWebview({ type: 'processingEnd' });
+                this.sendMessageToWebview({ type: 'generatingEnd' });
+                return;
+            }
+        }
 
         // Always send generatingStart to ensure the UI indicator is active,
         // even for follow-up responses (e.g. after tool execution)
         this.sendMessageToWebview({ type: 'generatingStart' });
 
         context.shouldStopStream = false;
-        let rateLimitRetryCount = 0;
-        let contextLengthRetried = false;
-        let sequenceRetryCount = 0;
         let assistantMessage = '';
         let toolCalls: any[] = [];
         let incompleteToolCalls: IncompleteToolCall[] = [];
         let usage: UsageInfo | undefined;
         while (true) {
+            if (context.shouldStopStream) {
+                this.emitResilienceStatus(
+                    errorContractV1Enabled,
+                    context,
+                    {
+                        code: 'REQUEST_STOPPED',
+                        category: 'request',
+                        severity: 'info',
+                        retryable: false,
+                        attempt: retryState.attempt,
+                        maxAttempts: retryState.attempt,
+                        userMessage: 'Request stopped.',
+                        action: 'none'
+                    }
+                );
+                this.emitResilienceTelemetryEvent(
+                    telemetryV1Enabled,
+                    'RESILIENCE_STOPPED_BY_USER',
+                    context,
+                    'REQUEST_STOPPED',
+                    { attempt: retryState.attempt, maxTokens }
+                );
+                this.sendMessageToWebview({ type: 'activityUpdate', label: null });
+                this.sendMessageToWebview({ type: 'processingEnd' });
+                this.sendMessageToWebview({ type: 'generatingEnd' });
+                return;
+            }
+            retryState.attempt += 1;
+            this.emitResilienceTelemetryEvent(
+                telemetryV1Enabled,
+                'RESILIENCE_ATTEMPT_START',
+                context,
+                'REQUEST_STOPPED',
+                {
+                    attempt: retryState.attempt,
+                    model: context.selectedModel,
+                    maxTokens
+                }
+            );
             try {
                 const result = await this.streamingService.streamResponse(messages, {
                     temperature: sampling.temperature,
@@ -344,33 +563,663 @@ export class ChatFlowManager {
                 toolCalls = result.toolCalls;
                 incompleteToolCalls = result.incompleteToolCalls || [];
                 usage = result.usage;
+                if (context.shouldStopStream) {
+                    this.emitResilienceStatus(
+                        errorContractV1Enabled,
+                        context,
+                        {
+                            code: 'REQUEST_STOPPED',
+                            category: 'request',
+                            severity: 'info',
+                            retryable: false,
+                            attempt: retryState.attempt,
+                            maxAttempts: retryState.attempt,
+                            userMessage: 'Request stopped.',
+                            action: 'none'
+                        }
+                    );
+                    this.emitResilienceTelemetryEvent(
+                        telemetryV1Enabled,
+                        'RESILIENCE_STOPPED_BY_USER',
+                        context,
+                        'REQUEST_STOPPED',
+                        { attempt: retryState.attempt, maxTokens }
+                    );
+                    this.sendMessageToWebview({ type: 'processingEnd' });
+                    this.sendMessageToWebview({ type: 'generatingEnd' });
+                    this.sendMessageToWebview({ type: 'activityUpdate', label: null });
+                    return;
+                }
+                if (
+                    strictResponseGuardsEnabled &&
+                    !context.shouldStopStream &&
+                    assistantMessage.trim().length === 0 &&
+                    toolCalls.length === 0 &&
+                    incompleteToolCalls.length === 0
+                ) {
+                    this.logResilienceEvent(
+                        'EMPTY_RESPONSE_DETECTED',
+                        `model=${context.selectedModel} retry=${retryState.emptyResponseRetries}/${this.emptyResponseMaxRetries}`
+                    );
+                    throw new EmptyAssistantResponseError();
+                }
                 break;
             } catch (error) {
-                if (this.openRouterService.isRateLimitError(error)) {
-                    const maxRateLimitRetries = 2;
-                    const retryAttempt = rateLimitRetryCount + 1;
-                    const retryDelayMs = this.getRateLimitDelayMs(error.retryAfterMs, retryAttempt);
+                const isGuardrailPrivacyError = this.openRouterService.isGuardrailPrivacyError(error);
+                const isStopRequested = context.shouldStopStream || this.isStoppedByUserError(error);
+                const isContextLengthError = this.openRouterService.isContextLengthError(error);
+                const isSequenceError = this.openRouterService.isToolCallSequenceError(error, {
+                    includeContextOverflowPattern: resilienceSettings.killSwitch
+                });
+                const isEmptyResponseError = strictResponseGuardsEnabled && error instanceof EmptyAssistantResponseError;
+                const isRateLimitError = this.openRouterService.isRateLimitError(error);
 
-                    if (!context.shouldStopStream && retryAttempt <= maxRateLimitRetries) {
-                        log.warn(`Rate limit detected. Retrying attempt ${retryAttempt}/${maxRateLimitRetries} in ${retryDelayMs}ms (model=${context.selectedModel})`);
+                // Priority 1: guardrail/privacy block
+                if (isGuardrailPrivacyError) {
+                    log.error(`Guardrail privacy mismatch: status=404 model=${context.selectedModel} max_tokens=${maxTokens}`, error);
+                    this.emitResilienceStatus(
+                        errorContractV1Enabled,
+                        context,
+                        {
+                            code: 'GUARDRAIL_PRIVACY_BLOCK',
+                            category: 'guardrail',
+                            severity: 'error',
+                            retryable: false,
+                            attempt: retryState.attempt,
+                            maxAttempts: retryState.attempt,
+                            userMessage: 'OpenRouter blocked this request due to privacy/guardrail settings.',
+                            action: 'check_privacy_settings'
+                        }
+                    );
+                    this.emitResilienceTelemetryEvent(
+                        telemetryV1Enabled,
+                        'RESILIENCE_TERMINAL_FAILURE',
+                        context,
+                        'GUARDRAIL_PRIVACY_BLOCK',
+                        { attempt: retryState.attempt, maxTokens }
+                    );
+                    if (this.handleGuardrailPrivacyError) {
+                        await this.handleGuardrailPrivacyError();
+                    }
+                    throw new Error('OpenRouter blocked this request due to privacy/guardrail settings. To use free models, enable "free endpoints that may publish prompts" in https://openrouter.ai/settings/privacy');
+                }
+
+                // Priority 2: stop request
+                if (isStopRequested) {
+                    this.emitResilienceStatus(
+                        errorContractV1Enabled,
+                        context,
+                        {
+                            code: 'REQUEST_STOPPED',
+                            category: 'request',
+                            severity: 'info',
+                            retryable: false,
+                            attempt: retryState.attempt,
+                            maxAttempts: retryState.attempt,
+                            userMessage: 'Request stopped.',
+                            action: 'none'
+                        }
+                    );
+                    this.emitResilienceTelemetryEvent(
+                        telemetryV1Enabled,
+                        'RESILIENCE_STOPPED_BY_USER',
+                        context,
+                        'REQUEST_STOPPED',
+                        { attempt: retryState.attempt, maxTokens }
+                    );
+                    this.sendMessageToWebview({ type: 'activityUpdate', label: null });
+                    this.sendMessageToWebview({ type: 'processingEnd' });
+                    this.sendMessageToWebview({ type: 'generatingEnd' });
+                    return;
+                }
+
+                if (
+                    isContextLengthError &&
+                    contextRecoveryV2Enabled &&
+                    !context.shouldStopStream
+                ) {
+                    let recovered = false;
+
+                    while (
+                        retryState.contextRecoveryAttempts < this.contextRecoveryMaxAttempts &&
+                        !context.shouldStopStream
+                    ) {
+                        const recovery = this.runContextRecoveryStep({
+                            context,
+                            systemPrompt,
+                            tools,
+                            modelContextLength,
+                            modelMaxOutput,
+                            configuredMaxTokens,
+                            rawMessages,
+                            compression,
+                            messages,
+                            maxTokens,
+                            compressionLevel,
+                            inputBudget,
+                            state: contextRecoveryState
+                        });
+
+                        if (!recovery.progressed) break;
+                        retryState.contextRecoveryAttempts += 1;
+                        this.logResilienceEvent(
+                            'CTX_RECOVERY_STEP',
+                            `phase=runtime step=${recovery.reason} changed=${recovery.changed} attempt=${retryState.contextRecoveryAttempts}/${this.contextRecoveryMaxAttempts} inputTokens=${recovery.compression.inputTokens} maxTokens=${recovery.maxTokens}`
+                        );
+                        if (recovery.changed) {
+                            this.emitResilienceTelemetryEvent(
+                                telemetryV1Enabled,
+                                'RESILIENCE_RECOVERY_APPLIED',
+                                context,
+                                'CTX_BUDGET_UNSAFE',
+                                {
+                                    phase: 'runtime',
+                                    step: recovery.reason,
+                                    attempt: retryState.contextRecoveryAttempts,
+                                    maxAttempts: this.contextRecoveryMaxAttempts,
+                                    inputTokens: recovery.compression.inputTokens,
+                                    maxTokens: recovery.maxTokens
+                                }
+                            );
+                        }
+
+                        if (!recovery.changed) {
+                            continue;
+                        }
+
+                        rawMessages = recovery.rawMessages;
+                        compression = recovery.compression;
+                        messages = recovery.messages;
+                        maxTokens = recovery.maxTokens;
+                        compressionLevel = recovery.compressionLevel;
+                        inputBudget = recovery.inputBudget;
+                        recovered = true;
+                        break;
+                    }
+
+                    if (recovered) {
+                        this.emitResilienceStatus(
+                            errorContractV1Enabled,
+                            context,
+                            {
+                                code: 'CTX_BUDGET_UNSAFE',
+                                category: 'context',
+                                severity: 'warning',
+                                retryable: true,
+                                attempt: retryState.contextRecoveryAttempts,
+                                maxAttempts: this.contextRecoveryMaxAttempts,
+                                userMessage: 'Context was adjusted. Retrying with recovered budget.',
+                                action: 'retry'
+                            }
+                        );
+                        this.emitResilienceTelemetryEvent(
+                            telemetryV1Enabled,
+                            'RESILIENCE_RETRY_SCHEDULED',
+                            context,
+                            'CTX_BUDGET_UNSAFE',
+                            {
+                                attempt: retryState.contextRecoveryAttempts,
+                                maxAttempts: this.contextRecoveryMaxAttempts,
+                                nextDelayMs: 0
+                            }
+                        );
+                        this.sendMessageToWebview({ type: 'generatingStart' });
+                        continue;
+                    }
+
+                    if (context.shouldStopStream) {
+                        this.emitResilienceStatus(
+                            errorContractV1Enabled,
+                            context,
+                            {
+                                code: 'REQUEST_STOPPED',
+                                category: 'request',
+                                severity: 'info',
+                                retryable: false,
+                                attempt: retryState.attempt,
+                                maxAttempts: retryState.attempt,
+                                userMessage: 'Request stopped.',
+                                action: 'none'
+                            }
+                        );
+                        this.emitResilienceTelemetryEvent(
+                            telemetryV1Enabled,
+                            'RESILIENCE_STOPPED_BY_USER',
+                            context,
+                            'REQUEST_STOPPED',
+                            { attempt: retryState.attempt, maxTokens }
+                        );
+                        this.sendMessageToWebview({ type: 'activityUpdate', label: null });
+                        this.sendMessageToWebview({ type: 'processingEnd' });
+                        this.sendMessageToWebview({ type: 'generatingEnd' });
+                        return;
+                    }
+
+                    this.emitResilienceStatus(
+                        errorContractV1Enabled,
+                        context,
+                        {
+                            code: 'CTX_RECOVERY_EXHAUSTED',
+                            category: 'context',
+                            severity: 'error',
+                            retryable: false,
+                            attempt: retryState.contextRecoveryAttempts,
+                            maxAttempts: this.contextRecoveryMaxAttempts,
+                            userMessage: 'Context window exceeded and automatic recovery was exhausted. Please start a new chat or reduce history.',
+                            action: 'new_chat'
+                        }
+                    );
+                    this.emitResilienceTelemetryEvent(
+                        telemetryV1Enabled,
+                        'RESILIENCE_TERMINAL_FAILURE',
+                        context,
+                        'CTX_RECOVERY_EXHAUSTED',
+                        {
+                            attempt: retryState.contextRecoveryAttempts,
+                            maxAttempts: this.contextRecoveryMaxAttempts,
+                            maxTokens
+                        }
+                    );
+                    throw new Error('Context window exceeded and automatic recovery was exhausted. Please start a new chat or reduce history.');
+                }
+
+                if (
+                    isContextLengthError &&
+                    !contextRecoveryV2Enabled &&
+                    !retryState.contextLengthRetriedLegacy &&
+                    !context.shouldStopStream
+                ) {
+                    const reduced = Math.max(256, Math.floor(maxTokens * 0.75));
+                    if (reduced < maxTokens) {
+                        log.info(`Retry planned with reduced max_tokens ${maxTokens} -> ${reduced} (model=${context.selectedModel})`);
+                        log.warn(`Context-length exceeded. Retrying once with reduced max_tokens ${maxTokens} -> ${reduced} (model=${context.selectedModel})`);
+                        this.sendMessageToWebview({ type: 'retryingWithReducedTokens', originalMax: maxTokens, newMax: reduced, reason: 'context_length' } as any);
+                        this.emitResilienceStatus(
+                            errorContractV1Enabled,
+                            context,
+                            {
+                                code: 'CTX_BUDGET_UNSAFE',
+                                category: 'context',
+                                severity: 'warning',
+                                retryable: true,
+                                attempt: 1,
+                                maxAttempts: 1,
+                                userMessage: 'Context limit reached. Retrying with reduced output tokens.',
+                                action: 'retry'
+                            }
+                        );
+                        this.emitResilienceTelemetryEvent(
+                            telemetryV1Enabled,
+                            'RESILIENCE_RETRY_SCHEDULED',
+                            context,
+                            'CTX_BUDGET_UNSAFE',
+                            {
+                                attempt: 1,
+                                maxAttempts: 1,
+                                nextDelayMs: 0,
+                                originalMax: maxTokens,
+                                newMax: reduced
+                            }
+                        );
+                        this.sendMessageToWebview({ type: 'activityUpdate', label: 'Retrying with reduced output tokens...' });
+                        this.sendMessageToWebview({ type: 'generatingStart' });
+                        maxTokens = reduced;
+                        retryState.contextLengthRetriedLegacy = true;
+                        continue;
+                    }
+                }
+
+                if (
+                    isSequenceError &&
+                    !context.shouldStopStream &&
+                    retryState.sequenceRetries < this.sequenceRetryMaxAttempts
+                ) {
+                    const retryAttempt = retryState.sequenceRetries + 1;
+                    const retryDelayMs = this.sequenceBackoffBaseMs * Math.pow(2, retryAttempt - 1);
+                    const repairResult = this.repairConversationSequence(context, context.selectedModel, `retry_attempt_${retryAttempt}`, true);
+                    const repairProducedStateChange = repairResult.repaired || repairResult.fixes.length > 0 || !retryOrchestratorV1Enabled;
+
+                    if (repairResult.fixes.length > 0) {
+                        repairWarnings.push(...repairResult.fixes);
+                    }
+                    if (!repairProducedStateChange) {
+                        log.warn(`sequence_retry_skipped_no_change: model=${context.selectedModel} attempt=${retryAttempt}`);
+                    } else {
+                        this.sendMessageToWebview({
+                            type: 'retryStatus',
+                            attempt: retryAttempt,
+                            maxAttempts: this.sequenceRetryMaxAttempts,
+                            delayMs: retryDelayMs,
+                            reason: 'tool_call_sequence',
+                            model: context.selectedModel,
+                            fixes: repairResult.fixes
+                        } as any);
+                        this.emitResilienceStatus(
+                            errorContractV1Enabled,
+                            context,
+                            {
+                                code: 'SEQUENCE_REPAIR_RETRY',
+                                category: 'sequence',
+                                severity: 'warning',
+                                retryable: true,
+                                attempt: retryAttempt,
+                                maxAttempts: this.sequenceRetryMaxAttempts,
+                                nextDelayMs: retryDelayMs,
+                                userMessage: `Repairing conversation... (${retryAttempt}/${this.sequenceRetryMaxAttempts})`,
+                                action: 'retry'
+                            }
+                        );
+                        this.emitResilienceTelemetryEvent(
+                            telemetryV1Enabled,
+                            'RESILIENCE_RETRY_SCHEDULED',
+                            context,
+                            'SEQUENCE_REPAIR_RETRY',
+                            {
+                                attempt: retryAttempt,
+                                maxAttempts: this.sequenceRetryMaxAttempts,
+                                nextDelayMs: retryDelayMs
+                            }
+                        );
+                        this.sendMessageToWebview({
+                            type: 'activityUpdate',
+                            label: `Repairing conversation... (${retryAttempt}/${this.sequenceRetryMaxAttempts})`
+                        });
+
+                        const repeatedPattern = this.trackSequenceRepairPattern(context, repairResult.repairHash);
+                        if (repeatedPattern) {
+                            this.sendMessageToWebview({
+                                type: 'info',
+                                message: `Repeated sequence issues detected for ${context.selectedModel}. Consider switching model if this continues.`
+                            });
+                            log.warn(`repeated_sequence_pattern_detected: model=${context.selectedModel} hash=${repairResult.repairHash || 'none'} attempt=${retryAttempt}`);
+                        }
+
+                        await this.sleepWithStop(retryDelayMs, context);
+                        if (context.shouldStopStream) {
+                            this.emitResilienceStatus(
+                                errorContractV1Enabled,
+                                context,
+                                {
+                                    code: 'REQUEST_STOPPED',
+                                    category: 'request',
+                                    severity: 'info',
+                                    retryable: false,
+                                    attempt: retryState.attempt,
+                                    maxAttempts: retryState.attempt,
+                                    userMessage: 'Request stopped.',
+                                    action: 'none'
+                                }
+                            );
+                            this.emitResilienceTelemetryEvent(
+                                telemetryV1Enabled,
+                                'RESILIENCE_STOPPED_BY_USER',
+                                context,
+                                'REQUEST_STOPPED',
+                                { attempt: retryState.attempt, maxTokens }
+                            );
+                            this.sendMessageToWebview({ type: 'activityUpdate', label: null });
+                            this.sendMessageToWebview({ type: 'processingEnd' });
+                            this.sendMessageToWebview({ type: 'generatingEnd' });
+                            return;
+                        }
+
+                        rawMessages = [
+                            { role: 'system' as const, content: systemPrompt },
+                            ...context.conversationHistory.map(toChatMessage),
+                        ];
+                        compression = this.tokenBudgetManager.compressMessagesForBudget(
+                            context.selectedModel,
+                            rawMessages,
+                            tools,
+                            inputBudget
+                        );
+                        messages = compression.messages;
+                        maxTokens = this.computeMaxOutputTokens(compression.inputTokens, modelContextLength, modelMaxOutput, configuredMaxTokens);
+                        retryState.sequenceRetries += 1;
+                        this.sendMessageToWebview({ type: 'generatingStart' });
+                        continue;
+                    }
+                }
+                if (isSequenceError) {
+                    this.emitResilienceStatus(
+                        errorContractV1Enabled,
+                        context,
+                        {
+                            code: 'SEQUENCE_REPAIR_EXHAUSTED',
+                            category: 'sequence',
+                            severity: 'error',
+                            retryable: false,
+                            attempt: retryState.sequenceRetries,
+                            maxAttempts: this.sequenceRetryMaxAttempts,
+                            userMessage: 'Tool-call sequence could not be repaired automatically. Please retry or start a new conversation.',
+                            action: 'switch_model'
+                        }
+                    );
+                    this.emitResilienceTelemetryEvent(
+                        telemetryV1Enabled,
+                        'RESILIENCE_TERMINAL_FAILURE',
+                        context,
+                        'SEQUENCE_REPAIR_EXHAUSTED',
+                        {
+                            attempt: retryState.sequenceRetries,
+                            maxAttempts: this.sequenceRetryMaxAttempts,
+                            maxTokens
+                        }
+                    );
+                    throw new Error('Tool-call sequence could not be repaired automatically. Please retry or start a new conversation.');
+                }
+
+                if (isEmptyResponseError) {
+                    const retryAttempt = retryState.emptyResponseRetries + 1;
+                    const retryDelayMs = this.getRateLimitDelayMs(undefined, retryAttempt);
+
+                    if (!context.shouldStopStream && retryAttempt <= this.emptyResponseMaxRetries) {
+                        this.emitResilienceStatus(
+                            errorContractV1Enabled,
+                            context,
+                            {
+                                code: 'EMPTY_RESPONSE_DETECTED',
+                                category: 'empty_response',
+                                severity: 'warning',
+                                retryable: true,
+                                attempt: retryAttempt,
+                                maxAttempts: this.emptyResponseMaxRetries,
+                                nextDelayMs: retryDelayMs,
+                                userMessage: `No response received. Retrying... (${retryAttempt}/${this.emptyResponseMaxRetries})`,
+                                action: 'retry'
+                            }
+                        );
+                        this.emitResilienceTelemetryEvent(
+                            telemetryV1Enabled,
+                            'RESILIENCE_RETRY_SCHEDULED',
+                            context,
+                            'EMPTY_RESPONSE_DETECTED',
+                            {
+                                attempt: retryAttempt,
+                                maxAttempts: this.emptyResponseMaxRetries,
+                                nextDelayMs: retryDelayMs
+                            }
+                        );
+                        this.sendMessageToWebview({
+                            type: 'activityUpdate',
+                            label: `No response received. Retrying... (${retryAttempt}/${this.emptyResponseMaxRetries})`
+                        });
+                        await this.sleepWithStop(retryDelayMs, context);
+                        if (context.shouldStopStream) {
+                            this.emitResilienceStatus(
+                                errorContractV1Enabled,
+                                context,
+                                {
+                                    code: 'REQUEST_STOPPED',
+                                    category: 'request',
+                                    severity: 'info',
+                                    retryable: false,
+                                    attempt: retryState.attempt,
+                                    maxAttempts: retryState.attempt,
+                                    userMessage: 'Request stopped.',
+                                    action: 'none'
+                                }
+                            );
+                            this.emitResilienceTelemetryEvent(
+                                telemetryV1Enabled,
+                                'RESILIENCE_STOPPED_BY_USER',
+                                context,
+                                'REQUEST_STOPPED',
+                                { attempt: retryState.attempt, maxTokens }
+                            );
+                            this.sendMessageToWebview({ type: 'activityUpdate', label: null });
+                            this.sendMessageToWebview({ type: 'processingEnd' });
+                            this.sendMessageToWebview({ type: 'generatingEnd' });
+                            return;
+                        }
+                        retryState.emptyResponseRetries += 1;
+                        this.sendMessageToWebview({ type: 'generatingStart' });
+                        continue;
+                    }
+
+                    this.logResilienceEvent(
+                        'EMPTY_RESPONSE_RETRY_EXHAUSTED',
+                        `model=${context.selectedModel} retries=${retryState.emptyResponseRetries}/${this.emptyResponseMaxRetries}`
+                    );
+                    this.emitResilienceStatus(
+                        errorContractV1Enabled,
+                        context,
+                        {
+                            code: 'EMPTY_RESPONSE_RETRY_EXHAUSTED',
+                            category: 'empty_response',
+                            severity: 'error',
+                            retryable: false,
+                            attempt: retryState.emptyResponseRetries,
+                            maxAttempts: this.emptyResponseMaxRetries,
+                            userMessage: 'No assistant message was received after retries. Please retry or choose another model.',
+                            action: 'switch_model'
+                        }
+                    );
+                    this.emitResilienceTelemetryEvent(
+                        telemetryV1Enabled,
+                        'RESILIENCE_TERMINAL_FAILURE',
+                        context,
+                        'EMPTY_RESPONSE_RETRY_EXHAUSTED',
+                        {
+                            attempt: retryState.emptyResponseRetries,
+                            maxAttempts: this.emptyResponseMaxRetries,
+                            maxTokens
+                        }
+                    );
+                    this.sendMessageToWebview({
+                        type: 'error',
+                        message: 'No assistant message was received after retries. Please retry or choose another model.',
+                        code: 'EMPTY_RESPONSE_RETRY_EXHAUSTED',
+                        action: 'switch_model'
+                    });
+                    throw new Error('No assistant message was received after retries.');
+                }
+
+                if (isRateLimitError) {
+                    const retryAttempt = retryState.rateLimitRetries + 1;
+                    const retryAfterMs = error instanceof Error && 'retryAfterMs' in (error as any)
+                        ? Number((error as any).retryAfterMs)
+                        : undefined;
+                    const retryDelayMs = this.getRateLimitDelayMs(
+                        Number.isFinite(retryAfterMs) ? retryAfterMs : undefined,
+                        retryAttempt
+                    );
+
+                    if (!context.shouldStopStream && retryAttempt <= this.rateLimitMaxRetries) {
+                        log.warn(`Rate limit detected. Retrying attempt ${retryAttempt}/${this.rateLimitMaxRetries} in ${retryDelayMs}ms (model=${context.selectedModel})`);
                         log.info(`Rate-limit retry planned: attempt=${retryAttempt} delayMs=${retryDelayMs} model=${context.selectedModel} max_tokens=${maxTokens}`);
                         this.sendMessageToWebview({
                             type: 'retryingRateLimit',
                             attempt: retryAttempt,
-                            maxAttempts: maxRateLimitRetries,
+                            maxAttempts: this.rateLimitMaxRetries,
                             delayMs: retryDelayMs,
                             model: context.selectedModel
                         } as any);
+                        this.emitResilienceStatus(
+                            errorContractV1Enabled,
+                            context,
+                            {
+                                code: 'RATE_LIMIT_RETRY',
+                                category: 'rate_limit',
+                                severity: 'warning',
+                                retryable: true,
+                                attempt: retryAttempt,
+                                maxAttempts: this.rateLimitMaxRetries,
+                                nextDelayMs: retryDelayMs,
+                                userMessage: `Provider busy. Retrying in ${Math.ceil(retryDelayMs / 1000)}s...`,
+                                action: 'retry'
+                            }
+                        );
+                        this.emitResilienceTelemetryEvent(
+                            telemetryV1Enabled,
+                            'RESILIENCE_RETRY_SCHEDULED',
+                            context,
+                            'RATE_LIMIT_RETRY',
+                            {
+                                attempt: retryAttempt,
+                                maxAttempts: this.rateLimitMaxRetries,
+                                nextDelayMs: retryDelayMs
+                            }
+                        );
                         this.sendMessageToWebview({ type: 'activityUpdate', label: `Provider busy. Retrying in ${Math.ceil(retryDelayMs / 1000)}s...` });
                         await this.sleepWithStop(retryDelayMs, context);
                         if (context.shouldStopStream) {
-                            throw new Error('Request stopped by user.');
+                            this.emitResilienceStatus(
+                                errorContractV1Enabled,
+                                context,
+                                {
+                                    code: 'REQUEST_STOPPED',
+                                    category: 'request',
+                                    severity: 'info',
+                                    retryable: false,
+                                    attempt: retryState.attempt,
+                                    maxAttempts: retryState.attempt,
+                                    userMessage: 'Request stopped.',
+                                    action: 'none'
+                                }
+                            );
+                            this.emitResilienceTelemetryEvent(
+                                telemetryV1Enabled,
+                                'RESILIENCE_STOPPED_BY_USER',
+                                context,
+                                'REQUEST_STOPPED',
+                                { attempt: retryState.attempt, maxTokens }
+                            );
+                            this.sendMessageToWebview({ type: 'activityUpdate', label: null });
+                            this.sendMessageToWebview({ type: 'processingEnd' });
+                            this.sendMessageToWebview({ type: 'generatingEnd' });
+                            return;
                         }
+                        retryState.rateLimitRetries += 1;
                         this.sendMessageToWebview({ type: 'generatingStart' });
-                        rateLimitRetryCount += 1;
                         continue;
                     }
 
+                    this.emitResilienceStatus(
+                        errorContractV1Enabled,
+                        context,
+                        {
+                            code: 'RATE_LIMIT_RETRY_EXHAUSTED',
+                            category: 'rate_limit',
+                            severity: 'error',
+                            retryable: false,
+                            attempt: retryState.rateLimitRetries,
+                            maxAttempts: this.rateLimitMaxRetries,
+                            userMessage: 'Provider is currently rate-limited. Please wait and retry.',
+                            action: 'retry'
+                        }
+                    );
+                    this.emitResilienceTelemetryEvent(
+                        telemetryV1Enabled,
+                        'RESILIENCE_TERMINAL_FAILURE',
+                        context,
+                        'RATE_LIMIT_RETRY_EXHAUSTED',
+                        {
+                            attempt: retryState.rateLimitRetries,
+                            maxAttempts: this.rateLimitMaxRetries,
+                            maxTokens
+                        }
+                    );
                     const freeModelHint = context.selectedModel.includes(':free')
                         ? ' Free providers are often saturated. Try again shortly or choose another model.'
                         : '';
@@ -378,93 +1227,7 @@ export class ChatFlowManager {
                     throw new Error(`Provider is currently rate-limited. Please wait and retry.${freeModelHint}`);
                 }
 
-                if (this.openRouterService.isGuardrailPrivacyError(error)) {
-                    log.error(`Guardrail privacy mismatch: status=404 model=${context.selectedModel} max_tokens=${maxTokens}`, error);
-                    if (this.handleGuardrailPrivacyError) {
-                        await this.handleGuardrailPrivacyError();
-                    }
-                    throw new Error('OpenRouter blocked this request due to privacy/guardrail settings. To use free models, enable "free endpoints that may publish prompts" in https://openrouter.ai/settings/privacy');
-                }
-
-                if (
-                    this.openRouterService.isToolCallSequenceError(error) &&
-                    !context.shouldStopStream &&
-                    sequenceRetryCount < this.sequenceRetryMaxAttempts
-                ) {
-                    const retryAttempt = sequenceRetryCount + 1;
-                    const retryDelayMs = this.sequenceBackoffBaseMs * Math.pow(2, retryAttempt - 1);
-                    const repairResult = this.repairConversationSequence(context, context.selectedModel, `retry_attempt_${retryAttempt}`, true);
-
-                    if (repairResult.fixes.length > 0) {
-                        repairWarnings.push(...repairResult.fixes);
-                    }
-
-                    this.sendMessageToWebview({
-                        type: 'retryStatus',
-                        attempt: retryAttempt,
-                        maxAttempts: this.sequenceRetryMaxAttempts,
-                        delayMs: retryDelayMs,
-                        reason: 'tool_call_sequence',
-                        model: context.selectedModel,
-                        fixes: repairResult.fixes
-                    } as any);
-                    this.sendMessageToWebview({
-                        type: 'activityUpdate',
-                        label: `Repairing conversation... (${retryAttempt}/${this.sequenceRetryMaxAttempts})`
-                    });
-
-                    const repeatedPattern = this.trackSequenceRepairPattern(context, repairResult.repairHash);
-                    if (repeatedPattern) {
-                        this.sendMessageToWebview({
-                            type: 'info',
-                            message: `Repeated sequence issues detected for ${context.selectedModel}. Consider switching model if this continues.`
-                        });
-                        log.warn(`repeated_sequence_pattern_detected: model=${context.selectedModel} hash=${repairResult.repairHash || 'none'} attempt=${retryAttempt}`);
-                    }
-
-                    await this.sleepWithStop(retryDelayMs, context);
-                    if (context.shouldStopStream) {
-                        throw new Error('Request stopped by user.');
-                    }
-
-                    rawMessages = [
-                        { role: 'system' as const, content: systemPrompt },
-                        ...context.conversationHistory.map(toChatMessage),
-                    ];
-                    compression = this.tokenBudgetManager.compressMessagesForBudget(
-                        context.selectedModel,
-                        rawMessages,
-                        tools,
-                        inputBudget
-                    );
-                    messages = compression.messages;
-                    maxTokens = this.computeMaxOutputTokens(compression.inputTokens, modelContextLength, modelMaxOutput, configuredMaxTokens);
-                    sequenceRetryCount += 1;
-                    continue;
-                }
-                if (this.openRouterService.isToolCallSequenceError(error)) {
-                    throw new Error('Tool-call sequence could not be repaired automatically. Please retry or start a new conversation.');
-                }
-
-                if (
-                    !contextLengthRetried &&
-                    !context.shouldStopStream &&
-                    this.openRouterService.isContextLengthError(error)
-                ) {
-                    const reduced = Math.max(256, Math.floor(maxTokens * 0.75));
-                    if (reduced < maxTokens) {
-                        log.info(`Retry planned with reduced max_tokens ${maxTokens} -> ${reduced} (model=${context.selectedModel})`);
-                        log.warn(`Context-length exceeded. Retrying once with reduced max_tokens ${maxTokens} -> ${reduced} (model=${context.selectedModel})`);
-                        this.sendMessageToWebview({ type: 'retryingWithReducedTokens', originalMax: maxTokens, newMax: reduced, reason: 'context_length' } as any);
-                        this.sendMessageToWebview({ type: 'activityUpdate', label: 'Retrying with reduced output tokens...' });
-                        this.sendMessageToWebview({ type: 'generatingStart' });
-                        maxTokens = reduced;
-                        contextLengthRetried = true;
-                        continue;
-                    }
-                }
-
-                if (this.openRouterService.isContextLengthError(error)) {
+                if (isContextLengthError) {
                     log.error(`Context-length retry failed: status=400 model=${context.selectedModel} max_tokens=${maxTokens}`, error);
                 } else {
                     log.error(`OpenRouter request failed: model=${context.selectedModel} max_tokens=${maxTokens}`, error);
@@ -473,7 +1236,7 @@ export class ChatFlowManager {
             }
         }
 
-        if (assistantMessage.length > 0 || toolCalls.length > 0) {
+        if (assistantMessage.length > 0 || toolCalls.length > 0 || incompleteToolCalls.length > 0) {
             await this.completeStreaming(
                 context,
                 assistantMessage,
@@ -486,9 +1249,9 @@ export class ChatFlowManager {
                 [...compressionWarnings, ...repairWarnings],
                 isFollowUp
             );
-            this.sendMessageToWebview({ type: 'generatingEnd' });
         }
-        
+
+        this.sendMessageToWebview({ type: 'processingEnd' });
         // Ensure activity label is cleared after LLM completes (regardless of content)
         this.sendMessageToWebview({ type: 'activityUpdate', label: null });
     }
@@ -828,6 +1591,18 @@ export class ChatFlowManager {
         return Number.MAX_SAFE_INTEGER;
     }
 
+    private getResilienceSettings(): ResilienceSettings {
+        const config = vscode.workspace.getConfiguration('gently');
+        return {
+            strictResponseGuards: config.get<boolean>('resilience.strictResponseGuards', true),
+            contextRecoveryV2: config.get<boolean>('resilience.contextRecoveryV2', true),
+            killSwitch: config.get<boolean>('resilience.killSwitch', false),
+            errorContractV1: config.get<boolean>('resilience.errorContractV1', true),
+            retryOrchestratorV1: config.get<boolean>('resilience.retryOrchestratorV1', true),
+            telemetryV1: config.get<boolean>('resilience.telemetryV1', true)
+        };
+    }
+
     private computeInputBudgetTokens(
         modelContextLength: number,
         compressionLevel: 'none' | 'proactive' | 'aggressive'
@@ -843,10 +1618,179 @@ export class ChatFlowManager {
         modelMaxOutput: number,
         userConfiguredMax: number
     ): number {
-        const baseReserve = 1024;
-        const safeMax = modelContextLength - inputTokens - baseReserve;
+        const safeMax = modelContextLength - inputTokens - this.outputSafetyReserveTokens;
         const bounded = Math.min(userConfiguredMax, modelMaxOutput, safeMax);
-        return Math.max(256, bounded);
+        if (!Number.isFinite(bounded)) return 0;
+        return Math.max(0, Math.floor(bounded));
+    }
+
+    private hasSufficientOutputBudget(
+        inputTokens: number,
+        modelContextLength: number,
+        minOutputTokens: number
+    ): boolean {
+        return this.computeMaxOutputTokens(
+            inputTokens,
+            modelContextLength,
+            Number.MAX_SAFE_INTEGER,
+            Number.MAX_SAFE_INTEGER
+        ) >= minOutputTokens;
+    }
+
+    private buildRecoverySignature(messages: ChatMessage[], inputTokens: number, maxTokens: number): string {
+        const last = messages[messages.length - 1];
+        return [
+            messages.length,
+            inputTokens,
+            maxTokens,
+            last?.role || 'none',
+            last?.content?.length || 0
+        ].join(':');
+    }
+
+    private runContextRecoveryStep(params: {
+        context: ChatViewContext;
+        systemPrompt: string;
+        tools: any[] | undefined;
+        modelContextLength: number;
+        modelMaxOutput: number;
+        configuredMaxTokens: number;
+        rawMessages: ChatMessage[];
+        compression: CompressionResult;
+        messages: ChatMessage[];
+        maxTokens: number;
+        compressionLevel: 'none' | 'proactive' | 'aggressive';
+        inputBudget: number;
+        state: ContextRecoveryState;
+    }): ContextRecoveryResult {
+        const {
+            context,
+            systemPrompt,
+            tools,
+            modelContextLength,
+            modelMaxOutput,
+            configuredMaxTokens,
+            compression,
+            messages,
+            maxTokens,
+            compressionLevel,
+            inputBudget,
+            state
+        } = params;
+        const selectedModel = context.selectedModel || '';
+        const signatureBefore = this.buildRecoverySignature(messages, compression.inputTokens, maxTokens);
+
+        if (!state.attemptedAggressiveRecompress) {
+            state.attemptedAggressiveRecompress = true;
+            const nextCompressionLevel: 'aggressive' = 'aggressive';
+            const nextInputBudget = this.computeInputBudgetTokens(modelContextLength, nextCompressionLevel);
+            const nextRawMessages: ChatMessage[] = [
+                { role: 'system' as const, content: systemPrompt },
+                ...context.conversationHistory.map(toChatMessage),
+            ];
+            const nextCompression = this.tokenBudgetManager.compressMessagesForBudget(
+                selectedModel,
+                nextRawMessages,
+                tools,
+                nextInputBudget
+            );
+            const nextMessages = nextCompression.messages;
+            const nextMaxTokens = this.computeMaxOutputTokens(
+                nextCompression.inputTokens,
+                modelContextLength,
+                modelMaxOutput,
+                configuredMaxTokens
+            );
+            const signatureAfter = this.buildRecoverySignature(nextMessages, nextCompression.inputTokens, nextMaxTokens);
+            return {
+                progressed: true,
+                changed: signatureAfter !== signatureBefore,
+                reason: 'aggressive_recompress',
+                rawMessages: nextRawMessages,
+                compression: nextCompression,
+                messages: nextMessages,
+                maxTokens: nextMaxTokens,
+                compressionLevel: nextCompressionLevel,
+                inputBudget: nextInputBudget,
+                signature: signatureAfter
+            };
+        }
+
+        if (!state.attemptedToolOutputPrune) {
+            state.attemptedToolOutputPrune = true;
+            const nextRawMessages: ChatMessage[] = [
+                { role: 'system' as const, content: systemPrompt },
+                ...context.conversationHistory.map(toChatMessage),
+            ];
+            const prune = this.tokenBudgetManager.pruneToolOutputsForContext(
+                selectedModel,
+                nextRawMessages,
+                tools,
+                inputBudget,
+                {
+                    protectTokens: this.toolOutputPruneProtectTokens,
+                    protectedTurns: this.toolOutputPruneProtectedTurns
+                }
+            );
+            const prunedCompression = this.tokenBudgetManager.compressMessagesForBudget(
+                selectedModel,
+                prune.messages,
+                tools,
+                inputBudget
+            );
+            const nextMessages = prunedCompression.messages;
+            const nextMaxTokens = this.computeMaxOutputTokens(
+                prunedCompression.inputTokens,
+                modelContextLength,
+                modelMaxOutput,
+                configuredMaxTokens
+            );
+            const signatureAfter = this.buildRecoverySignature(nextMessages, prunedCompression.inputTokens, nextMaxTokens);
+            return {
+                progressed: true,
+                changed: prune.prunedMessages > 0 && signatureAfter !== signatureBefore,
+                reason: 'tool_output_prune',
+                rawMessages: prune.messages,
+                compression: prunedCompression,
+                messages: nextMessages,
+                maxTokens: nextMaxTokens,
+                compressionLevel,
+                inputBudget,
+                signature: signatureAfter
+            };
+        }
+
+        if (state.maxTokenReductionAttempts < 2) {
+            state.maxTokenReductionAttempts += 1;
+            const factor = state.maxTokenReductionAttempts === 1 ? 0.75 : 0.5;
+            const reducedMaxTokens = Math.max(1, Math.floor(maxTokens * factor));
+            const signatureAfter = this.buildRecoverySignature(messages, compression.inputTokens, reducedMaxTokens);
+            return {
+                progressed: true,
+                changed: reducedMaxTokens < maxTokens,
+                reason: 'max_tokens_reduce',
+                rawMessages: params.rawMessages,
+                compression,
+                messages,
+                maxTokens: reducedMaxTokens,
+                compressionLevel,
+                inputBudget,
+                signature: signatureAfter
+            };
+        }
+
+        return {
+            progressed: false,
+            changed: false,
+            reason: 'exhausted',
+            rawMessages: params.rawMessages,
+            compression,
+            messages,
+            maxTokens,
+            compressionLevel,
+            inputBudget,
+            signature: signatureBefore
+        };
     }
 
     private getRateLimitDelayMs(retryAfterMs: number | undefined, retryAttempt: number): number {
@@ -878,6 +1822,74 @@ export class ChatFlowManager {
             this.lastCompressionLogAt.set(key, now);
         }
         log.info(`${event}: ${details}`);
+    }
+
+    private logResilienceEvent(eventCode: string, details: string): void {
+        log.info(`${eventCode}: ${details}`);
+    }
+
+    private emitResilienceStatus(
+        enabled: boolean,
+        context: ChatViewContext,
+        status: {
+            code: ResilienceStatusCode;
+            category: ResilienceStatusCategory;
+            severity: ResilienceStatusSeverity;
+            retryable: boolean;
+            attempt: number;
+            maxAttempts: number;
+            nextDelayMs?: number;
+            userMessage: string;
+            action: ResilienceStatusAction;
+        }
+    ): void {
+        if (!enabled) return;
+        this.sendMessageToWebview({
+            type: 'resilienceStatus',
+            code: status.code,
+            category: status.category,
+            severity: status.severity,
+            retryable: status.retryable,
+            attempt: status.attempt,
+            maxAttempts: status.maxAttempts,
+            nextDelayMs: status.nextDelayMs,
+            model: context.selectedModel || 'unknown',
+            flowId: context.currentFlowId || null,
+            userMessage: status.userMessage,
+            action: status.action
+        } as any);
+    }
+
+    private emitResilienceTelemetryEvent(
+        enabled: boolean,
+        eventName:
+            | 'RESILIENCE_ATTEMPT_START'
+            | 'RESILIENCE_RETRY_SCHEDULED'
+            | 'RESILIENCE_RECOVERY_APPLIED'
+            | 'RESILIENCE_TERMINAL_FAILURE'
+            | 'RESILIENCE_STOPPED_BY_USER',
+        context: ChatViewContext,
+        code: ResilienceStatusCode,
+        metadata: Record<string, unknown> = {}
+    ): void {
+        if (!enabled) return;
+        const level =
+            eventName === 'RESILIENCE_TERMINAL_FAILURE'
+                ? 'ERROR'
+                : eventName === 'RESILIENCE_RETRY_SCHEDULED'
+                    ? 'WARN'
+                    : 'INFO';
+        log.event(level, eventName, `${eventName}:${code}`, {
+            code,
+            model: context.selectedModel || 'unknown',
+            flowId: context.currentFlowId || null,
+            ...metadata
+        });
+    }
+
+    private isStoppedByUserError(error: unknown): boolean {
+        const message = String((error as any)?.message || error || '').toLowerCase();
+        return message.includes('request stopped by user');
     }
 
     private async commitCompressedHistory(

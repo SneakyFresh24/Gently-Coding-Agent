@@ -18,6 +18,11 @@
   "exclude": [
     "node_modules",
     ".vscode-test",
+    "CLINE",
+    "cline",
+    "CLAUDE CODE",
+    "claude code",
+    "claude-code",
     "webview-ui",
     "dist",
     "test",

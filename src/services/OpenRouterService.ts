@@ -627,15 +627,23 @@ export class OpenRouterService {
         return error instanceof OpenRouterHttpError && error.status === 429;
     }
 
-    isToolCallSequenceError(error: unknown): boolean {
+    isToolCallSequenceError(
+        error: unknown,
+        options: { includeContextOverflowPattern?: boolean } = {}
+    ): boolean {
+        const includeContextOverflowPattern = options.includeContextOverflowPattern === true;
         const message = (error instanceof Error ? error.message : String(error || '')).toLowerCase();
+        const contextOverflowPattern =
+            message.includes('context window exceeds limit') ||
+            message.includes('context length exceeded') ||
+            message.includes('context_length_exceeded');
         return (
             message.includes('tool call result does not follow tool call') ||
             message.includes('tool_result does not follow tool_call') ||
             message.includes('tool call') && message.includes('does not follow') ||
             message.includes('invalid params') && message.includes('tool') ||
             message.includes('invalid function arguments') ||
-            message.includes('context window exceeds limit')
+            (includeContextOverflowPattern && contextOverflowPattern)
         );
     }
 

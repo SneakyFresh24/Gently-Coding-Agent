@@ -25,6 +25,7 @@
   let checkpointDiffFiles = $state<any[]>([]);
   let checkpointDiffFrom = $state('');
   let checkpointDiffTo = $state<string | undefined>(undefined);
+  let resilienceContractActive = $state(false);
 
   function inferPhase(label: string | null | undefined): 'idle' | 'sending' | 'thinking' | 'tooling' {
     const normalized = (label || '').toLowerCase();
@@ -35,6 +36,33 @@
     return 'thinking';
   }
 
+  function getResilienceFallbackMessage(code: string): string {
+    switch (code) {
+      case 'CTX_BUDGET_UNSAFE':
+        return 'Context budget is currently unsafe. Please shorten history or start a new chat.';
+      case 'CTX_RECOVERY_EXHAUSTED':
+        return 'Automatic context recovery was exhausted. Please start a new chat or reduce history.';
+      case 'EMPTY_RESPONSE_DETECTED':
+        return 'No assistant response received. Retrying...';
+      case 'EMPTY_RESPONSE_RETRY_EXHAUSTED':
+        return 'No assistant response was received after retries.';
+      case 'RATE_LIMIT_RETRY':
+        return 'Provider is busy. Retrying shortly...';
+      case 'RATE_LIMIT_RETRY_EXHAUSTED':
+        return 'Provider rate-limit retries were exhausted.';
+      case 'SEQUENCE_REPAIR_RETRY':
+        return 'Repairing tool-call sequence and retrying...';
+      case 'SEQUENCE_REPAIR_EXHAUSTED':
+        return 'Tool-call sequence could not be repaired automatically.';
+      case 'GUARDRAIL_PRIVACY_BLOCK':
+        return 'Provider blocked the request due to guardrail/privacy restrictions.';
+      case 'REQUEST_STOPPED':
+        return 'Request stopped.';
+      default:
+        return 'Resilience status update received.';
+    }
+  }
+
   onMount(() => {
     initMessaging({
       // State & lifecycle
@@ -42,6 +70,7 @@
       onModelsList: (data) => settingsStore.setModels(data.models),
       onModelChanged: (data) => settingsStore.setSelectedModel(data.model || ''),
       onRetryingWithReducedTokens: (data) => {
+        if (resilienceContractActive) return;
         chatStore.addMessage({
           id: `sys_retry_${Date.now()}`,
           role: 'system',
@@ -51,6 +80,7 @@
         });
       },
       onRetryingRateLimit: (data) => {
+        if (resilienceContractActive) return;
         chatStore.addMessage({
           id: `sys_rate_retry_${Date.now()}`,
           role: 'system',
@@ -60,6 +90,7 @@
         });
       },
       onRetryStatus: (data) => {
+        if (resilienceContractActive) return;
         const fixes = Array.isArray(data.fixes) && data.fixes.length > 0
           ? ` Fixes: ${data.fixes.slice(0, 2).join('; ')}`
           : '';
@@ -70,6 +101,29 @@
           timestamp: Date.now(),
           isSystemMessage: true,
         });
+      },
+      onResilienceStatus: (data) => {
+        resilienceContractActive = true;
+        const userMessage = typeof data.userMessage === 'string' && data.userMessage.trim().length > 0
+          ? data.userMessage
+          : getResilienceFallbackMessage(String(data.code || ''));
+        chatStore.addMessage({
+          id: `sys_resilience_${Date.now()}`,
+          role: 'system',
+          content: userMessage,
+          timestamp: Date.now(),
+          isSystemMessage: true,
+        });
+
+        if (data.retryable && typeof data.nextDelayMs === 'number' && data.nextDelayMs > 0) {
+          extensionStore.setActivityLabel(`${userMessage} (${Math.ceil(data.nextDelayMs / 1000)}s)`);
+          extensionStore.setActivityPhase('thinking');
+          return;
+        }
+
+        if (String(data.code || '') === 'REQUEST_STOPPED') {
+          extensionStore.clearActivityState();
+        }
       },
       onModeChanged: (data) => {
         extensionStore.hydrate({

@@ -279,6 +279,36 @@
           "default": false,
           "description": "Enable strict validation mode"
         },
+        "gently.resilience.strictResponseGuards": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable strict response guards to fail fast on empty assistant responses and invalid output budgets."
+        },
+        "gently.resilience.contextRecoveryV2": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable deterministic context-length recovery (aggressive recompress, tool-output prune, then max-token reduction)."
+        },
+        "gently.resilience.killSwitch": {
+          "type": "boolean",
+          "default": false,
+          "description": "Disable new resilience guards and fall back to the legacy request/retry behavior."
+        },
+        "gently.resilience.errorContractV1": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable structured resilience status events for deterministic UI and diagnostics."
+        },
+        "gently.resilience.retryOrchestratorV1": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable deterministic retry orchestration with fixed error-priority order."
+        },
+        "gently.resilience.telemetryV1": {
+          "type": "boolean",
+          "default": true,
+          "description": "Emit structured resilience telemetry events with stable codes and flow IDs."
+        },
         "gently.resilience.circuit.failureThreshold": {
           "type": "number",
           "default": 5,
