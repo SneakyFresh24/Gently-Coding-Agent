@@ -3,11 +3,15 @@ export type PromptVariant = 'default' | 'minimal' | 'detailed';
 export type PromptComponentId =
   | 'identity'
   | 'objective'
-  | 'rules'
+  | 'mode_contract'
+  | 'tool_policy'
+  | 'recovery_policy'
+  | 'output_contract'
   | 'tooling'
   | 'examples'
   | 'memory'
   | 'runtime_hints'
+  | 'rules'
   | 'response_formatting';
 
 export interface PromptVariantConfig {
@@ -43,6 +47,7 @@ export interface PromptContext {
   mode: string;
   model?: string | null;
   familyOverridesEnabled?: boolean;
+  promptContractV2Enabled?: boolean;
   workspaceName?: string;
   retryCount?: number;
   memoryBankContext?: string;

@@ -23,6 +23,7 @@ import { CompressionResult, TokenBudgetManager } from './TokenBudgetManager';
 import { ConversationRepairResult } from '../toolcall';
 import { buildTruncatedRetryPrompt } from '../toolcall/ToolRetryPrompts';
 import { getModelPolicyResult, getReasoningConfig, ReasoningConfig, ReasoningEffort } from '../../../utils/modelPolicy';
+import { filterToolsForModeContract } from '../../../modes/ModeContractV2';
 
 const log = new LogService('ChatFlowManager');
 
@@ -40,6 +41,7 @@ interface ResilienceSettings {
     errorContractV1: boolean;
     retryOrchestratorV1: boolean;
     telemetryV1: boolean;
+    recoveryNarrativeV2: boolean;
 }
 
 interface RetryOrchestratorState {
@@ -70,6 +72,8 @@ interface ContextRecoveryResult {
     signature: string;
 }
 
+type ResilienceTelemetryCode = ResilienceStatusCode | 'REQUEST_ATTEMPT';
+
 export class ChatFlowManager {
     private readonly tokenBudgetManager = new TokenBudgetManager();
     private readonly proactiveCompressionThreshold = 0.8;
@@ -92,6 +96,12 @@ export class ChatFlowManager {
         'minimax/minimax-m1',
         'minimax/minimax-01'
     ]);
+    private readonly recoveryNarrativeCodeMap: Record<'context' | 'sequence' | 'empty_response' | 'rate_limit', string> = {
+        context: 'CTX_BUDGET_UNSAFE',
+        sequence: 'SEQUENCE_REPAIR_RETRY',
+        empty_response: 'EMPTY_RESPONSE_DETECTED',
+        rate_limit: 'RATE_LIMIT_RETRY'
+    };
 
     constructor(
         private readonly agentManager: AgentManager,
@@ -171,6 +181,7 @@ export class ChatFlowManager {
         const errorContractV1Enabled = resilienceSettings.errorContractV1 && !resilienceSettings.killSwitch;
         const retryOrchestratorV1Enabled = resilienceSettings.retryOrchestratorV1 && !resilienceSettings.killSwitch;
         const telemetryV1Enabled = resilienceSettings.telemetryV1 && !resilienceSettings.killSwitch;
+        const recoveryNarrativeV2Enabled = resilienceSettings.recoveryNarrativeV2 && !resilienceSettings.killSwitch;
 
         const baseTemperature = this.modeService.getTemperature();
         const sampling = this.getSamplingOverrides(context.selectedModel, baseTemperature);
@@ -506,6 +517,7 @@ export class ChatFlowManager {
         let toolCalls: any[] = [];
         let incompleteToolCalls: IncompleteToolCall[] = [];
         let usage: UsageInfo | undefined;
+        let recoveryHint: { category: 'context' | 'sequence' | 'empty_response' | 'rate_limit'; reason: string; attempt: number; maxAttempts: number } | null = null;
         while (true) {
             if (context.shouldStopStream) {
                 this.emitResilienceStatus(
@@ -539,7 +551,7 @@ export class ChatFlowManager {
                 telemetryV1Enabled,
                 'RESILIENCE_ATTEMPT_START',
                 context,
-                'REQUEST_STOPPED',
+                'REQUEST_ATTEMPT',
                 {
                     attempt: retryState.attempt,
                     model: context.selectedModel,
@@ -547,7 +559,8 @@ export class ChatFlowManager {
                 }
             );
             try {
-                const result = await this.streamingService.streamResponse(messages, {
+                const requestMessages = this.applyRecoveryNarrativeHint(messages, recoveryHint, recoveryNarrativeV2Enabled);
+                const result = await this.streamingService.streamResponse(requestMessages, {
                     temperature: sampling.temperature,
                     topP: sampling.topP,
                     topK: sampling.topK,
@@ -563,6 +576,7 @@ export class ChatFlowManager {
                 toolCalls = result.toolCalls;
                 incompleteToolCalls = result.incompleteToolCalls || [];
                 usage = result.usage;
+                recoveryHint = null;
                 if (context.shouldStopStream) {
                     this.emitResilienceStatus(
                         errorContractV1Enabled,
@@ -763,6 +777,12 @@ export class ChatFlowManager {
                                 nextDelayMs: 0
                             }
                         );
+                        recoveryHint = {
+                            category: 'context',
+                            reason: 'runtime_context_recovery_applied',
+                            attempt: retryState.contextRecoveryAttempts,
+                            maxAttempts: this.contextRecoveryMaxAttempts
+                        };
                         this.sendMessageToWebview({ type: 'generatingStart' });
                         continue;
                     }
@@ -861,6 +881,12 @@ export class ChatFlowManager {
                                 newMax: reduced
                             }
                         );
+                        recoveryHint = {
+                            category: 'context',
+                            reason: 'legacy_max_tokens_reduced',
+                            attempt: 1,
+                            maxAttempts: 1
+                        };
                         this.sendMessageToWebview({ type: 'activityUpdate', label: 'Retrying with reduced output tokens...' });
                         this.sendMessageToWebview({ type: 'generatingStart' });
                         maxTokens = reduced;
@@ -976,6 +1002,12 @@ export class ChatFlowManager {
                         messages = compression.messages;
                         maxTokens = this.computeMaxOutputTokens(compression.inputTokens, modelContextLength, modelMaxOutput, configuredMaxTokens);
                         retryState.sequenceRetries += 1;
+                        recoveryHint = {
+                            category: 'sequence',
+                            reason: 'sequence_repair_applied',
+                            attempt: retryState.sequenceRetries,
+                            maxAttempts: this.sequenceRetryMaxAttempts
+                        };
                         this.sendMessageToWebview({ type: 'generatingStart' });
                         continue;
                     }
@@ -1073,6 +1105,12 @@ export class ChatFlowManager {
                             return;
                         }
                         retryState.emptyResponseRetries += 1;
+                        recoveryHint = {
+                            category: 'empty_response',
+                            reason: 'empty_response_retry_backoff',
+                            attempt: retryState.emptyResponseRetries,
+                            maxAttempts: this.emptyResponseMaxRetries
+                        };
                         this.sendMessageToWebview({ type: 'generatingStart' });
                         continue;
                     }
@@ -1191,6 +1229,12 @@ export class ChatFlowManager {
                             return;
                         }
                         retryState.rateLimitRetries += 1;
+                        recoveryHint = {
+                            category: 'rate_limit',
+                            reason: 'rate_limit_retry_backoff',
+                            attempt: retryState.rateLimitRetries,
+                            maxAttempts: this.rateLimitMaxRetries
+                        };
                         this.sendMessageToWebview({ type: 'generatingStart' });
                         continue;
                     }
@@ -1541,13 +1585,34 @@ export class ChatFlowManager {
         return this.knownSequenceIssueModels.has(modelId.toLowerCase());
     }
 
+    private applyRecoveryNarrativeHint(
+        messages: ChatMessage[],
+        hint: { category: 'context' | 'sequence' | 'empty_response' | 'rate_limit'; reason: string; attempt: number; maxAttempts: number } | null,
+        enabled: boolean
+    ): ChatMessage[] {
+        if (!enabled || !hint) return messages;
+        const recoveryCode = this.recoveryNarrativeCodeMap[hint.category];
+        const narrative = [
+            '[RECOVERY_NARRATIVE_V2]',
+            `code=${recoveryCode}`,
+            `reason=${hint.reason}`,
+            `attempt=${hint.attempt}/${hint.maxAttempts}`,
+            'rules=avoid repeating failed approach; keep response concise; preserve tool-call validity'
+        ].join(' ');
+        return [...messages, { role: 'system', content: narrative }];
+    }
+
     private getToolsForMode(context: ChatViewContext): any[] | undefined {
         const mode = this.modeService.getCurrentMode();
         if (!mode) return this.agentManager.getFormattedTools();
 
         const tools = mode.getToolsForMode(this.agentManager);
-        log.info(`getToolsForMode: mode=${mode.id}, returning ${tools?.length || 0} tools`);
-        return tools;
+        const config = vscode.workspace.getConfiguration('gently');
+        const modeStateMachineV2Enabled =
+            config.get<boolean>('modeStateMachineV2', true) && !config.get<boolean>('resilience.killSwitch', false);
+        const filtered = modeStateMachineV2Enabled ? filterToolsForModeContract(mode.id, tools || []) : tools;
+        log.info(`getToolsForMode: mode=${mode.id}, returning ${filtered?.length || 0} tools`);
+        return filtered;
     }
 
     private getSamplingOverrides(
@@ -1599,7 +1664,8 @@ export class ChatFlowManager {
             killSwitch: config.get<boolean>('resilience.killSwitch', false),
             errorContractV1: config.get<boolean>('resilience.errorContractV1', true),
             retryOrchestratorV1: config.get<boolean>('resilience.retryOrchestratorV1', true),
-            telemetryV1: config.get<boolean>('resilience.telemetryV1', true)
+            telemetryV1: config.get<boolean>('resilience.telemetryV1', true),
+            recoveryNarrativeV2: config.get<boolean>('recoveryNarrativeV2', true)
         };
     }
 
@@ -1841,9 +1907,14 @@ export class ChatFlowManager {
             nextDelayMs?: number;
             userMessage: string;
             action: ResilienceStatusAction;
+            phase?: 'preflight' | 'runtime' | 'retry' | 'terminal' | 'stopped';
+            decision?: 'retry' | 'recover' | 'abort' | 'ignore' | 'report';
+            reason?: string;
+            correlationId?: string;
         }
     ): void {
         if (!enabled) return;
+        const correlationId = status.correlationId || this.createCorrelationId(context, status.code, status.attempt);
         this.sendMessageToWebview({
             type: 'resilienceStatus',
             code: status.code,
@@ -1856,7 +1927,11 @@ export class ChatFlowManager {
             model: context.selectedModel || 'unknown',
             flowId: context.currentFlowId || null,
             userMessage: status.userMessage,
-            action: status.action
+            action: status.action,
+            phase: status.phase || 'runtime',
+            decision: status.decision || 'report',
+            reason: status.reason || 'unspecified',
+            correlationId
         } as any);
     }
 
@@ -1869,10 +1944,11 @@ export class ChatFlowManager {
             | 'RESILIENCE_TERMINAL_FAILURE'
             | 'RESILIENCE_STOPPED_BY_USER',
         context: ChatViewContext,
-        code: ResilienceStatusCode,
+        code: ResilienceTelemetryCode,
         metadata: Record<string, unknown> = {}
     ): void {
         if (!enabled) return;
+        const correlationId = String(metadata.correlationId || this.createCorrelationId(context, code, Number(metadata.attempt || 0)));
         const level =
             eventName === 'RESILIENCE_TERMINAL_FAILURE'
                 ? 'ERROR'
@@ -1882,9 +1958,17 @@ export class ChatFlowManager {
         log.event(level, eventName, `${eventName}:${code}`, {
             code,
             model: context.selectedModel || 'unknown',
+            mode: context.selectedMode || 'unknown',
             flowId: context.currentFlowId || null,
+            correlationId,
             ...metadata
         });
+    }
+
+    private createCorrelationId(context: ChatViewContext, code: ResilienceTelemetryCode, attempt: number): string {
+        const flow = context.currentFlowId || 'flow-unknown';
+        const normalizedAttempt = Number.isFinite(attempt) ? Math.max(0, Math.floor(attempt)) : 0;
+        return `${flow}:${code}:${normalizedAttempt}`;
     }
 
     private isStoppedByUserError(error: unknown): boolean {

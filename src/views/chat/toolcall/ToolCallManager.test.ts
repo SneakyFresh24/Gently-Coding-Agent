@@ -1,6 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ToolCallManager } from './ToolCallManager';
 import { ChatMessage } from '../../../services/OpenRouterService';
+
+vi.mock('vscode', () => ({
+  workspace: {
+    getConfiguration: () => ({
+      get: (_key: string, fallback: unknown) => fallback
+    })
+  }
+}));
 
 describe('ToolCallManager sequence repair', () => {
   const manager = new ToolCallManager({
@@ -56,3 +64,48 @@ describe('ToolCallManager sequence repair', () => {
   });
 });
 
+describe('ToolCallManager mode contract validation', () => {
+  const manager = new ToolCallManager({
+    executeTool: async () => ({ ok: true })
+  });
+
+  it('blocks mutating tools in architect (PLAN_STRICT)', async () => {
+    const result = await manager.processToolCalls(
+      [
+        {
+          id: 'call_1',
+          type: 'function',
+          function: { name: 'write_file', arguments: '{"path":"a.ts","content":"x"}' }
+        } as any
+      ],
+      {
+        selectedMode: 'architect',
+        conversationHistory: []
+      }
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.errors[0]).toContain('MODE_TOOL_BLOCKED');
+    expect(result.errors[0]).toContain('PLAN_STRICT');
+  });
+
+  it('blocks planning tools in code (ACT_STRICT)', async () => {
+    const result = await manager.processToolCalls(
+      [
+        {
+          id: 'call_1',
+          type: 'function',
+          function: { name: 'create_plan', arguments: '{"goal":"x","steps":[]}' }
+        } as any
+      ],
+      {
+        selectedMode: 'code',
+        conversationHistory: []
+      }
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.errors[0]).toContain('MODE_TOOL_BLOCKED');
+    expect(result.errors[0]).toContain('ACT_STRICT');
+  });
+});

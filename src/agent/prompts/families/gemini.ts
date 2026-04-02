@@ -4,7 +4,7 @@ export const GEMINI_OVERRIDE: FamilyOverrideSpec = {
   family: 'gemini',
   overrides: [
     {
-      component: 'rules',
+      component: 'output_contract',
       strategy: 'append',
       content: `GEMINI FAMILY OVERRIDE:
 - Keep responses concise and structured.
@@ -13,3 +13,4 @@ export const GEMINI_OVERRIDE: FamilyOverrideSpec = {
     }
   ]
 };
+

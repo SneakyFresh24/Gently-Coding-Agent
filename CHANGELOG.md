@@ -2,6 +2,31 @@
 
 All notable changes to the "Gently" extension will be documented in this file.
 
+## [0.9.83] - 2026-04-02
+
+### Added
+- **Prompt Contract V2 (Claude-style)**: Introduced modular prompt sections (`identity`, `objective`, `mode_contract`, `tool_policy`, `recovery_policy`, `output_contract`, `runtime_hints`) with strict required-component validation.
+- **Mode Contract V2 Utilities**: Added shared mode-contract policy helper (`PLAN_STRICT` / `ACT_STRICT`) for deterministic tool allow/deny decisions.
+- **New Production Settings**:
+  - `gently.promptContractV2` (default `true`)
+  - `gently.modeStateMachineV2` (default `true`)
+  - `gently.recoveryNarrativeV2` (default `true`)
+  - `gently.evalGateEnforced` (default `true`)
+  - `gently.modeRouting.planModelDefault` / `gently.modeRouting.codeModelDefault` (optional model routing defaults per mode)
+- **Release-Gate Script + Doc**:
+  - `npm run resilience:release-gate`
+  - `docs/sota-release-gate.md`
+
+### Changed
+- **Family Overrides → Structured Deltas**: Model-family prompt overrides now target validated prompt components (`tool_policy`, `recovery_policy`, `output_contract`, etc.) instead of free-form append-only rule blocks.
+- **Mode State Machine Guardrails**:
+  - PLAN->ACT transition now requires an existing persisted plan when `modeStateMachineV2` is enabled.
+  - Optional mode-based model default routing is applied on successful mode switch.
+- **Runtime Recovery Coupling V2**: Retry attempts now inject structured recovery narratives into request context (`RECOVERY_NARRATIVE_V2`) for deterministic retry behavior.
+- **Tool Execution Contract Enforcement**: Tool-call validation now enforces both plan and act restrictions with stable `MODE_TOOL_BLOCKED` errors.
+- **Structured Error Contract V2**: `resilienceStatus` payload now includes `phase`, `decision`, `reason`, and `correlationId`; telemetry/log events now include `mode` and correlation continuity.
+- **UI Resilience Rendering**: Webview resilience messages now render code-based fallback + action hint + phase/decision/reason metadata consistently.
+
 ## [0.9.82] - 2026-04-01
 
 ### Added

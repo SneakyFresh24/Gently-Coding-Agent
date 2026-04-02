@@ -106,6 +106,8 @@ export class PromptManager {
         try {
             const config = vscode.workspace.getConfiguration('gently');
             const familyOverridesEnabled = config.get<boolean>('promptPipeline.familyOverrides', true);
+            const resilienceKillSwitch = config.get<boolean>('resilience.killSwitch', false);
+            const promptContractV2Enabled = config.get<boolean>('promptContractV2', true) && !resilienceKillSwitch;
             const modeTools = mode ? mode.getToolsForMode(this.agentManager) : this.agentManager.getFormattedTools();
             const modeToolNames = (modeTools || [])
                 .map((tool: any) => tool?.function?.name || tool?.name)
@@ -125,6 +127,7 @@ export class PromptManager {
                 mode: mode?.id || context.selectedMode || 'architect',
                 model: context.selectedModel,
                 familyOverridesEnabled,
+                promptContractV2Enabled,
                 workspaceName,
                 retryCount,
                 memoryBankContext,
@@ -133,7 +136,7 @@ export class PromptManager {
                 tools: toolSpecs,
                 promptConfig
             }, {
-                strictTemplates: false,
+                strictTemplates: promptContractV2Enabled,
                 legacyFallbackPrompt: fallbackPrompt
             });
 

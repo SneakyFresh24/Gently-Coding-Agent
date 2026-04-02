@@ -35,6 +35,10 @@ function toBlockKey(component: FamilyOverrideEntry['component']): keyof PromptTe
   if (component === 'runtime_hints') return 'runtimeHints';
   if (component === 'identity') return 'identity';
   if (component === 'objective') return 'objective';
+  if (component === 'mode_contract') return 'modeContract';
+  if (component === 'tool_policy') return 'toolPolicy';
+  if (component === 'recovery_policy') return 'recoveryPolicy';
+  if (component === 'output_contract') return 'outputContract';
   if (component === 'rules') return 'rules';
   if (component === 'examples') return 'examples';
   return null;
@@ -48,7 +52,32 @@ function mergeComponent(base: string, content: string, strategy: MergeStrategy):
   return `${left}\n${right}`.trim();
 }
 
-export function applyFamilyOverrides(base: PromptTextBlocks, spec: FamilyOverrideSpec): PromptTextBlocks {
+function validateFamilyOverrideSpec(spec: FamilyOverrideSpec): void {
+  if (!spec || !Array.isArray(spec.overrides)) {
+    throw new Error('Family override spec must define an overrides array.');
+  }
+  for (const entry of spec.overrides) {
+    const key = toBlockKey(entry.component);
+    if (!key) {
+      throw new Error(`Unsupported family override component: "${String(entry.component)}"`);
+    }
+    if (typeof entry.content !== 'string' || entry.content.trim().length === 0) {
+      throw new Error(`Family override for component "${String(entry.component)}" must provide non-empty content.`);
+    }
+    if (entry.strategy && entry.strategy !== 'append' && entry.strategy !== 'prepend' && entry.strategy !== 'replace') {
+      throw new Error(`Invalid family override strategy: "${String(entry.strategy)}"`);
+    }
+  }
+}
+
+export function applyFamilyOverrides(
+  base: PromptTextBlocks,
+  spec: FamilyOverrideSpec,
+  options?: { validateSpec?: boolean }
+): PromptTextBlocks {
+  if (options?.validateSpec !== false) {
+    validateFamilyOverrideSpec(spec);
+  }
   const merged: PromptTextBlocks = { ...base };
   for (const entry of spec.overrides) {
     const key = toBlockKey(entry.component);

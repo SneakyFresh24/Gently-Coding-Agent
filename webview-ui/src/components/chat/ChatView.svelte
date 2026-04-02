@@ -63,6 +63,21 @@
     }
   }
 
+  function getResilienceActionHint(action: string): string {
+    switch (action) {
+      case 'retry':
+        return 'Action: Retry.';
+      case 'switch_model':
+        return 'Action: Switch model.';
+      case 'new_chat':
+        return 'Action: Start new chat.';
+      case 'check_privacy_settings':
+        return 'Action: Check privacy settings.';
+      default:
+        return '';
+    }
+  }
+
   onMount(() => {
     initMessaging({
       // State & lifecycle
@@ -104,13 +119,23 @@
       },
       onResilienceStatus: (data) => {
         resilienceContractActive = true;
+        const code = String(data.code || '');
+        const baseMessage = getResilienceFallbackMessage(code);
         const userMessage = typeof data.userMessage === 'string' && data.userMessage.trim().length > 0
           ? data.userMessage
-          : getResilienceFallbackMessage(String(data.code || ''));
+          : baseMessage;
+        const actionHint = getResilienceActionHint(String(data.action || 'none'));
+        const detailParts = [
+          String(data.phase || 'runtime'),
+          String(data.decision || 'report'),
+          String(data.reason || 'unspecified')
+        ];
+        const detail = `[${detailParts.join(' | ')}]`;
+        const content = [userMessage, actionHint, detail].filter((part) => part && part.trim().length > 0).join(' ');
         chatStore.addMessage({
           id: `sys_resilience_${Date.now()}`,
           role: 'system',
-          content: userMessage,
+          content,
           timestamp: Date.now(),
           isSystemMessage: true,
         });
@@ -121,7 +146,7 @@
           return;
         }
 
-        if (String(data.code || '') === 'REQUEST_STOPPED') {
+        if (code === 'REQUEST_STOPPED') {
           extensionStore.clearActivityState();
         }
       },

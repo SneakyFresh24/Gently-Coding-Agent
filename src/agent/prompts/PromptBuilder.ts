@@ -27,6 +27,31 @@ function buildProgressivePromptRetryHint(retryCount: number): string {
   return 'RETRY LEVEL 3+: CRITICAL. STOP retrying the same approach. Use alternatives only, or report the issue to the user.';
 }
 
+const CONTRACT_V2_REQUIRED_COMPONENTS: PromptComponentId[] = [
+  'identity',
+  'objective',
+  'mode_contract',
+  'tool_policy',
+  'recovery_policy',
+  'output_contract',
+  'runtime_hints'
+];
+
+const KNOWN_COMPONENTS = new Set<PromptComponentId>([
+  'identity',
+  'objective',
+  'mode_contract',
+  'tool_policy',
+  'recovery_policy',
+  'output_contract',
+  'rules',
+  'tooling',
+  'examples',
+  'memory',
+  'runtime_hints',
+  'response_formatting'
+]);
+
 export class PromptBuilder {
   constructor(
     private readonly templateEngine = new TemplateEngine(),
@@ -47,10 +72,14 @@ export class PromptBuilder {
     const components = context.promptConfig?.components && context.promptConfig.components.length > 0
       ? context.promptConfig.components
       : variant.components;
+    const promptContractV2Enabled = context.promptContractV2Enabled !== false;
+    if (promptContractV2Enabled) {
+      this.validatePromptContractV2Components(components);
+    }
 
     const baseBlocks = this.registry.getTextBlocks(context.mode);
     const familyOverridesEnabled = context.familyOverridesEnabled !== false;
-    const blocks = this.resolveTextBlocks(baseBlocks, context.model, familyOverridesEnabled);
+    const blocks = this.resolveTextBlocks(baseBlocks, context.model, familyOverridesEnabled, promptContractV2Enabled);
     const toolBlock = this.renderTools(context.tools || []);
     const providerSafety = this.renderProviderSafetyClause(context.model || '');
     const retryHint = context.retryCount && context.retryCount > 0
@@ -63,6 +92,10 @@ export class PromptBuilder {
     const templateValues = {
       identity: blocks.identity,
       objective: blocks.objective,
+      mode_contract: blocks.modeContract,
+      tool_policy: blocks.toolPolicy,
+      recovery_policy: blocks.recoveryPolicy,
+      output_contract: blocks.outputContract,
       rules: blocks.rules,
       tooling: toolBlock,
       examples: blocks.examples,
@@ -95,16 +128,19 @@ export class PromptBuilder {
   private resolveTextBlocks(
     baseBlocks: ReturnType<PromptRegistry['getTextBlocks']>,
     model: string | null | undefined,
-    familyOverridesEnabled: boolean
+    familyOverridesEnabled: boolean,
+    validateSpec: boolean
   ) {
     if (!familyOverridesEnabled) {
       return baseBlocks;
     }
     try {
       const overrideSpec = getFamilyOverrideSpec(model);
-      return applyFamilyOverrides(baseBlocks, overrideSpec);
+      return applyFamilyOverrides(baseBlocks, overrideSpec, { validateSpec });
     } catch {
-      // Fallback to base prompt blocks if override resolution fails.
+      if (validateSpec) {
+        throw new Error('Prompt Contract V2: family override validation failed.');
+      }
       return baseBlocks;
     }
   }
@@ -135,6 +171,14 @@ export class PromptBuilder {
         return this.templateEngine.render('{{identity}}', values, { mode });
       case 'objective':
         return this.templateEngine.render('{{objective}}', values, { mode });
+      case 'mode_contract':
+        return this.templateEngine.render('{{mode_contract}}', values, { mode });
+      case 'tool_policy':
+        return this.templateEngine.render('{{tool_policy}}', values, { mode });
+      case 'recovery_policy':
+        return this.templateEngine.render('{{recovery_policy}}', values, { mode });
+      case 'output_contract':
+        return this.templateEngine.render('{{output_contract}}', values, { mode });
       case 'rules':
         return this.templateEngine.render('{{rules}}', values, { mode });
       case 'tooling':
@@ -152,6 +196,19 @@ export class PromptBuilder {
         return this.templateEngine.render('{{response_formatting}}', values, { mode });
       default:
         return '';
+    }
+  }
+
+  private validatePromptContractV2Components(components: PromptComponentId[]): void {
+    for (const component of components) {
+      if (!KNOWN_COMPONENTS.has(component)) {
+        throw new Error(`Prompt Contract V2: unknown component "${component}"`);
+      }
+    }
+    for (const required of CONTRACT_V2_REQUIRED_COMPONENTS) {
+      if (!components.includes(required)) {
+        throw new Error(`Prompt Contract V2: missing required component "${required}"`);
+      }
     }
   }
 

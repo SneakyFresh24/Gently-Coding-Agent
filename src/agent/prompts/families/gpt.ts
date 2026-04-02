@@ -4,7 +4,7 @@ export const GPT_OVERRIDE: FamilyOverrideSpec = {
   family: 'gpt',
   overrides: [
     {
-      component: 'rules',
+      component: 'tool_policy',
       strategy: 'append',
       content: `GPT FAMILY OVERRIDE:
 - Use native JSON tool parameters and keep them compact.
@@ -13,3 +13,4 @@ export const GPT_OVERRIDE: FamilyOverrideSpec = {
     }
   ]
 };
+

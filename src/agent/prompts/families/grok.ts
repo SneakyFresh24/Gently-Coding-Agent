@@ -4,7 +4,7 @@ export const GROK_OVERRIDE: FamilyOverrideSpec = {
   family: 'grok',
   overrides: [
     {
-      component: 'rules',
+      component: 'output_contract',
       strategy: 'append',
       content: `GROK FAMILY OVERRIDE:
 - Use direct, concise responses.
@@ -13,3 +13,4 @@ export const GROK_OVERRIDE: FamilyOverrideSpec = {
     }
   ]
 };
+

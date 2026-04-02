@@ -370,6 +370,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private static readonly AGENT_LIKE_MODES = ['code'];
 
   public async setSelectedMode(modeId: string): Promise<void> {
+    const config = vscode.workspace.getConfiguration('gently');
+    const modeStateMachineV2Enabled =
+      config.get<boolean>('modeStateMachineV2', true) && !config.get<boolean>('resilience.killSwitch', false);
+    const previousMode = this.modeService.getCurrentMode()?.id || this.messageHandler.getContext()?.selectedMode;
+    if (modeStateMachineV2Enabled && previousMode === 'architect' && modeId === 'code' && !this.hasPersistedPlanForCodeTransition()) {
+      const message = 'MODE_TRANSITION_BLOCKED: PLAN -> ACT requires an existing persisted plan (create_plan).';
+      this._view?.webview.postMessage({ type: 'error', message, code: 'MODE_TRANSITION_BLOCKED', action: 'none' });
+      return;
+    }
+
     this.messageHandler.setSelectedMode(modeId);
     if (!this.modeService) return;
     try {
@@ -380,7 +390,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const isAgentMode = ChatViewProvider.AGENT_LIKE_MODES.includes(mode.id);
         this.messageHandler.setSelectedMode(mode.id);
         this.context?.globalState.update('gently.agentMode', isAgentMode);
-        const config = vscode.workspace.getConfiguration('gently');
         if (config.get<boolean>('agentMode', false) !== isAgentMode) {
           void config.update('agentMode', isAgentMode, vscode.ConfigurationTarget.Global);
         }
@@ -389,10 +398,38 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           type: 'modeChanged', modeId: mode.id, modeName: mode.displayName,
           modeDescription: mode.description, agentMode: isAgentMode,
         });
+        await this.applyModeDefaultModel(mode.id);
       }
     } catch (error: any) {
       this._view?.webview.postMessage({ type: 'error', message: `Error switching mode: ${error.message}` });
     }
+  }
+
+  private hasPersistedPlanForCodeTransition(): boolean {
+    try {
+      const plan = this.agentManager.getPlanningManager()?.getCurrentPlan();
+      return Boolean(plan && Array.isArray(plan.steps) && plan.steps.length > 0);
+    } catch {
+      return false;
+    }
+  }
+
+  private async applyModeDefaultModel(modeId: string): Promise<void> {
+    const config = vscode.workspace.getConfiguration('gently');
+    const planDefault = String(config.get<string>('modeRouting.planModelDefault', '') || '').trim();
+    const codeDefault = String(config.get<string>('modeRouting.codeModelDefault', '') || '').trim();
+    const targetModel = modeId === 'architect' ? planDefault : modeId === 'code' ? codeDefault : '';
+    if (!targetModel) return;
+    if (!this.isStructurallyValidModelId(targetModel)) return;
+    const currentModel = this.messageHandler.getContext()?.selectedModel;
+    if (currentModel === targetModel) return;
+    await this.messageHandler.setSelectedModel(targetModel);
+    this.sendMessageToWebview({ type: 'modelChanged', model: targetModel });
+    this.sendMessageToWebview({ type: 'info', message: `Mode model default applied: ${targetModel}` });
+  }
+
+  private isStructurallyValidModelId(modelId: string): boolean {
+    return /^[a-z0-9._-]+\/[a-z0-9._:@+-]+$/i.test(modelId);
   }
 
   public stopMessage(): void { this.messageHandler.stopMessage(); }

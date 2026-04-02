@@ -663,6 +663,20 @@ export type ResilienceStatusAction =
   | 'check_privacy_settings'
   | 'none';
 
+export type ResilienceStatusPhase =
+  | 'preflight'
+  | 'runtime'
+  | 'retry'
+  | 'terminal'
+  | 'stopped';
+
+export type ResilienceStatusDecision =
+  | 'retry'
+  | 'recover'
+  | 'abort'
+  | 'ignore'
+  | 'report';
+
 /**
  * Structured resilience/retry status for deterministic UI and telemetry handling.
  */
@@ -679,6 +693,10 @@ export interface ResilienceStatusMessage {
   flowId: string | null;
   userMessage: string;
   action: ResilienceStatusAction;
+  phase: ResilienceStatusPhase;
+  decision: ResilienceStatusDecision;
+  reason: string;
+  correlationId: string;
 }
 
 /**

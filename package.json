@@ -2,7 +2,7 @@
   "name": "gently",
   "displayName": "Gently - AI Coding Agent",
   "description": "AI-powered coding assistant — Bring Your Own Key via OpenRouter",
-  "version": "0.9.8",
+  "version": "0.9.9",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -159,6 +159,36 @@
           "type": "boolean",
           "default": true,
           "description": "Enable model-family specific prompt optimizations with safe fallback to base prompts."
+        },
+        "gently.promptContractV2": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable strict Prompt Contract V2 components and hard validation."
+        },
+        "gently.modeStateMachineV2": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable deterministic PLAN/ACT mode contracts and transition guards."
+        },
+        "gently.recoveryNarrativeV2": {
+          "type": "boolean",
+          "default": true,
+          "description": "Attach structured recovery narratives to retry attempts for deterministic model behavior."
+        },
+        "gently.evalGateEnforced": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enforce resilience release-gate checks before production rollout."
+        },
+        "gently.modeRouting.planModelDefault": {
+          "type": "string",
+          "default": "",
+          "description": "Optional default model slug applied when switching to architect mode."
+        },
+        "gently.modeRouting.codeModelDefault": {
+          "type": "string",
+          "default": "",
+          "description": "Optional default model slug applied when switching to code mode."
         },
         "gently.pruning.strategy": {
           "type": "string",
@@ -393,6 +423,7 @@
     "package": "npm run build && vsce package",
     "rebuild": "electron-rebuild -v 39.2.3 --arch x64",
     "rollout:phase3": "node scripts/rollout-toolcall-system-phase3.js",
+    "resilience:release-gate": "node scripts/resilience-release-gate.js",
     "cleanup:legacy": "node scripts/cleanup-legacy-files.js",
     "benchmark:retrieval": "vitest run scripts/benchmark-retrieval.test.ts"
   },

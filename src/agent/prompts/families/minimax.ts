@@ -4,7 +4,7 @@ export const MINIMAX_OVERRIDE: FamilyOverrideSpec = {
   family: 'minimax',
   overrides: [
     {
-      component: 'rules',
+      component: 'recovery_policy',
       strategy: 'append',
       content: `MINIMAX FAMILY OVERRIDE:
 - Keep tool-call JSON simple and complete.
@@ -13,3 +13,4 @@ export const MINIMAX_OVERRIDE: FamilyOverrideSpec = {
     }
   ]
 };
+

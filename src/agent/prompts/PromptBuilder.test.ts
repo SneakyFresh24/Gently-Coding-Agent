@@ -31,11 +31,9 @@ describe('PromptBuilder', () => {
     expect(result.metadata.variant).toBe('default');
     expect(result.prompt).toContain('You are "Gently" in Architect mode');
     expect(result.prompt).toContain('AVAILABLE TOOLS (MINIFIED)');
-    expect(result.prompt).toContain('TOOL CALL STRATEGY');
-    expect(result.prompt).toContain('EXAMPLES:');
-    expect(result.prompt).toContain('Example 2 - Independent reads in parallel');
-    expect(result.prompt).toContain('TASK PROGRESS');
-    expect(result.prompt).toContain('"task_progress":"- [x] Analyze existing code');
+    expect(result.prompt).toContain('MODE CONTRACT (PLAN_STRICT)');
+    expect(result.prompt).toContain('RECOVERY POLICY');
+    expect(result.prompt).toContain('OUTPUT CONTRACT');
     expect(result.prompt).toContain('MEMORY_BANK');
     expect(result.prompt).toMatchSnapshot();
   });
@@ -71,8 +69,8 @@ describe('PromptBuilder', () => {
     });
 
     expect(result.metadata.promptId).toBe('code-core');
-    expect(result.prompt).toContain('STRICT "Code" mode');
-    expect(result.prompt).toContain('NEVER create a plan');
+    expect(result.prompt).toContain('You are "Gently" in Code mode');
+    expect(result.prompt).toContain('MODE CONTRACT (ACT_STRICT)');
     expect(result.prompt).toContain('RETRY LEVEL 2');
     expect(result.prompt).toContain('MINIMAX FAMILY OVERRIDE');
     expect(result.prompt).toContain('WICHTIG: Nach Tool-Ausführung IMMER eine klare Antwort geben');
@@ -108,5 +106,16 @@ describe('PromptBuilder', () => {
       tools
     });
     expect(withoutOverride.prompt).not.toContain('CLAUDE FAMILY OVERRIDE');
+  });
+
+  it('fails hard when prompt contract v2 required components are missing', () => {
+    expect(() => builder.build({
+      mode: 'code',
+      promptContractV2Enabled: true,
+      promptConfig: {
+        promptId: 'code-core',
+        components: ['identity', 'objective']
+      }
+    })).toThrow('Prompt Contract V2: missing required component');
   });
 });

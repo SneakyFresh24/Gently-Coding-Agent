@@ -5,6 +5,10 @@ import { applyFamilyOverrides, detectPromptFamily, getFamilyOverrideSpec } from 
 const BASE_BLOCKS: PromptTextBlocks = {
   identity: 'IDENTITY',
   objective: 'OBJECTIVE',
+  modeContract: 'MODE_CONTRACT',
+  toolPolicy: 'TOOL_POLICY',
+  recoveryPolicy: 'RECOVERY_POLICY',
+  outputContract: 'OUTPUT_CONTRACT',
   rules: 'BASE_RULES',
   examples: 'BASE_EXAMPLES',
   runtimeHints: 'BASE_HINTS'
@@ -31,24 +35,33 @@ describe('family override merge', () => {
     const merged = applyFamilyOverrides(BASE_BLOCKS, {
       family: 'unknown',
       overrides: [
-        { component: 'rules', strategy: 'append', content: 'APPEND_1' },
-        { component: 'rules', strategy: 'prepend', content: 'PREPEND_1' },
-        { component: 'rules', strategy: 'replace', content: 'REPLACE_1' },
-        { component: 'rules', strategy: 'append', content: 'APPEND_2' }
+        { component: 'tool_policy', strategy: 'append', content: 'APPEND_1' },
+        { component: 'tool_policy', strategy: 'prepend', content: 'PREPEND_1' },
+        { component: 'tool_policy', strategy: 'replace', content: 'REPLACE_1' },
+        { component: 'tool_policy', strategy: 'append', content: 'APPEND_2' }
       ]
     });
 
-    expect(merged.rules).toBe('REPLACE_1\nAPPEND_2');
+    expect(merged.toolPolicy).toBe('REPLACE_1\nAPPEND_2');
   });
 
-  it('ignores unsupported components for prompt text blocks', () => {
+  it('rejects unsupported components when spec validation is enabled', () => {
+    expect(() => applyFamilyOverrides(BASE_BLOCKS, {
+      family: 'unknown',
+      overrides: [
+        { component: 'tooling', strategy: 'append', content: 'SHOULD_NOT_APPEAR' }
+      ]
+    })).toThrow('Unsupported family override component');
+  });
+
+  it('can skip strict validation for backward-compatible merges', () => {
     const merged = applyFamilyOverrides(BASE_BLOCKS, {
       family: 'unknown',
       overrides: [
         { component: 'tooling', strategy: 'append', content: 'SHOULD_NOT_APPEAR' }
       ]
-    });
-    expect(merged.rules).toBe('BASE_RULES');
+    }, { validateSpec: false });
+    expect(merged.toolPolicy).toBe('TOOL_POLICY');
     expect(merged.examples).toBe('BASE_EXAMPLES');
   });
 });

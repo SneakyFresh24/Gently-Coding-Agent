@@ -4,7 +4,7 @@ export const CLAUDE_OVERRIDE: FamilyOverrideSpec = {
   family: 'claude',
   overrides: [
     {
-      component: 'rules',
+      component: 'tool_policy',
       strategy: 'append',
       content: `CLAUDE FAMILY OVERRIDE:
 - Use extended thinking for complex multi-step reasoning.
@@ -13,3 +13,4 @@ export const CLAUDE_OVERRIDE: FamilyOverrideSpec = {
     }
   ]
 };
+

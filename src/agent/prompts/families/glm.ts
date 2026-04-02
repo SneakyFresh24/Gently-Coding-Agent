@@ -4,7 +4,7 @@ export const GLM_OVERRIDE: FamilyOverrideSpec = {
   family: 'glm',
   overrides: [
     {
-      component: 'rules',
+      component: 'recovery_policy',
       strategy: 'append',
       content: `GLM FAMILY OVERRIDE:
 - Prefer explicit, unambiguous parameter names.
@@ -13,3 +13,4 @@ export const GLM_OVERRIDE: FamilyOverrideSpec = {
     }
   ]
 };
+

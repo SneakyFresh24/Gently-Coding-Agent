@@ -11,7 +11,7 @@ describe('Prompt Golden Set', () => {
         mode: 'architect',
         tools: [{ name: 'create_plan', description: 'create a plan', parameters: {} }]
       },
-      mustContain: ['TOOL-FIRST PLANS', 'create_plan', 'ONLY plan and handover']
+      mustContain: ['MODE CONTRACT (PLAN_STRICT)', 'create_plan', 'not allowed to implement code']
     },
     {
       name: 'Code execution guardrails',
@@ -19,7 +19,7 @@ describe('Prompt Golden Set', () => {
         mode: 'code',
         tools: [{ name: 'safe_edit_file', description: 'edit', parameters: {} }]
       },
-      mustContain: ['NEVER create a plan', 'safe_edit_file']
+      mustContain: ['MODE CONTRACT (ACT_STRICT)', 'safe_edit_file']
     }
   ] as const;
 

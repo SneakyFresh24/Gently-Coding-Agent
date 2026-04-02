@@ -278,7 +278,8 @@ export class TokenBudgetManager {
             .map((message) => this.summarizeContent(message.content || ''))
             .filter((snippet) => snippet.length > 0);
         const suffix = snippets.length > 0 ? ` Key points: ${snippets.join(' | ')}` : '';
-        return `[${droppedCount} older messages compressed.${suffix}]`;
+        const continuation = ' Continuation: treat this summary as preserved context and continue from the latest user objective.';
+        return `[COMPACT_V2] ${droppedCount} older messages compressed.${suffix}${continuation}`;
     }
 
     private summarizeContent(content: string): string {

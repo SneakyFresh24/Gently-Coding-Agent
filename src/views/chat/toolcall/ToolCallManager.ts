@@ -1,6 +1,8 @@
 import { ChatMessage, ToolCall } from '../../../services/OpenRouterService';
 import { LogService } from '../../../services/LogService';
 import { createHash } from 'crypto';
+import { getModeContractViolation } from '../../../modes/ModeContractV2';
+import * as vscode from 'vscode';
 
 const log = new LogService('ToolCallManager');
 
@@ -80,27 +82,30 @@ export class ToolCallManager {
   ): { valid: boolean; errors: string[] } {
     const errors: string[] = [];
     const currentMode = context.selectedMode;
+    const modeStateMachineV2Enabled = this.isModeStateMachineV2Enabled();
 
     if (!currentMode) return { valid: true, errors: [] };
+    if (!modeStateMachineV2Enabled) return { valid: true, errors: [] };
 
     for (const toolCall of toolCalls) {
       const toolName = toolCall.function?.name;
       if (!toolName) continue;
-
-      if (currentMode === 'architect') {
-        const allowedArchitectTools = [
-          'find_files', 'regex_search', 'list_files', 'recall_memories',
-          'read_file', 'analyze_project_structure', 'create_plan',
-          'handover_to_coder', 'ask_question', 'update_memory_bank', 'query_long_term_memory'
-        ];
-
-        if (!allowedArchitectTools.includes(toolName)) {
-          errors.push(`Architect mode cannot execute tool '${toolName}'. Only planning, analysis, and memory bank tools are allowed.`);
-        }
+      const modeViolation = getModeContractViolation(currentMode, toolName);
+      if (modeViolation) {
+        errors.push(`MODE_TOOL_BLOCKED: ${modeViolation}`);
       }
     }
 
     return { valid: errors.length === 0, errors };
+  }
+
+  private isModeStateMachineV2Enabled(): boolean {
+    try {
+      const config = vscode.workspace.getConfiguration('gently');
+      return config.get<boolean>('modeStateMachineV2', true) && !config.get<boolean>('resilience.killSwitch', false);
+    } catch {
+      return true;
+    }
   }
 
   /**
