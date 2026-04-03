@@ -2,7 +2,9 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import {
+  HookContext,
   HookExecutionConfig,
+  HookFailure,
   HookType,
   NotificationPayload,
   PostToolHook,
@@ -18,8 +20,8 @@ import { LogService } from '../services/LogService';
 export class HookManager {
   private preToolHooks: PreToolHook[] = [];
   private postToolHooks: PostToolHook[] = [];
-  private preCompactHooks: Array<{ name: string; execute: (payload: any) => Promise<PreToolHookResponse | null | undefined> }> = [];
-  private notificationHooks: Array<{ name: string; execute: (payload: NotificationPayload) => Promise<any> }> = [];
+  private preCompactHooks: Array<{ name: string; execute: (payload: any, context?: HookContext) => Promise<PreToolHookResponse | null | undefined> }> = [];
+  private notificationHooks: Array<{ name: string; execute: (payload: NotificationPayload, context?: HookContext) => Promise<any> }> = [];
   private hooksInitialized: boolean = false;
   private readonly log = new LogService('HookManager');
 
@@ -98,32 +100,59 @@ export class HookManager {
   /**
    * Execute all pre-tool hooks
    */
-  public async executePreHooks(toolName: string, params: any): Promise<{ blocked: boolean; reason?: string; modifiedParams: any }> {
-    return this.executePreToolUse(toolName, params);
+  public async executePreHooks(
+    toolName: string,
+    params: any,
+    context?: Partial<HookContext>
+  ): Promise<{ blocked: boolean; reason?: string; modifiedParams: any; code?: 'HOOK_PRE_BLOCKED' | 'HOOK_PRE_FAILED'; hookName?: string }> {
+    return this.executePreToolUse(toolName, params, context);
   }
 
-  public async executePreToolUse(toolName: string, params: any): Promise<{ blocked: boolean; reason?: string; modifiedParams: any }> {
+  public async executePreToolUse(
+    toolName: string,
+    params: any,
+    context?: Partial<HookContext>
+  ): Promise<{ blocked: boolean; reason?: string; modifiedParams: any; code?: 'HOOK_PRE_BLOCKED' | 'HOOK_PRE_FAILED'; hookName?: string }> {
     await this.initialize();
+    const hookContext = this.buildHookContext(toolName, params, context);
+    const strictPreFailures = this.isHookContractV2Enabled();
     
     let currentParams = { ...params };
     
     for (const hook of this.preToolHooks) {
-      try {
-        const result = await this.executeWithIsolation(
-          HookType.PreToolUse,
-          hook.name,
-          () => hook.execute(toolName, currentParams)
-        );
-        if (result) {
-          if (result.blocked) {
-            return { blocked: true, reason: result.reason, modifiedParams: currentParams };
-          }
-          if (result.modifiedParams) {
-            currentParams = { ...currentParams, ...result.modifiedParams };
-          }
+      const execution = await this.executeWithIsolation(
+        HookType.PreToolUse,
+        hook.name,
+        () => hook.execute(toolName, currentParams, hookContext),
+        { failOpen: !strictPreFailures }
+      );
+      if (!execution.ok) {
+        const message = execution.error instanceof Error ? execution.error.message : String(execution.error);
+        if (strictPreFailures) {
+          return {
+            blocked: true,
+            reason: `Pre-hook failed (${hook.name}): ${message}`,
+            modifiedParams: currentParams,
+            code: 'HOOK_PRE_FAILED',
+            hookName: hook.name
+          };
         }
-      } catch (error) {
-        this.log.error(`Error in pre-hook ${hook.name}:`, error);
+        this.log.error(`Error in pre-hook ${hook.name}:`, execution.error);
+        continue;
+      }
+      const result = execution.result;
+      if (!result) continue;
+      if (result.blocked) {
+        return {
+          blocked: true,
+          reason: result.reason || `Blocked by hook ${hook.name}`,
+          modifiedParams: currentParams,
+          code: 'HOOK_PRE_BLOCKED',
+          hookName: hook.name
+        };
+      }
+      if (result.modifiedParams) {
+        currentParams = { ...currentParams, ...result.modifiedParams };
       }
     }
 
@@ -133,54 +162,91 @@ export class HookManager {
   /**
    * Execute all post-tool hooks
    */
-  public async executePostHooks(toolName: string, params: any, result: any): Promise<void> {
-    return this.executePostToolUse(toolName, params, result);
+  public async executePostHooks(
+    toolName: string,
+    params: any,
+    result: any,
+    context?: Partial<HookContext>
+  ): Promise<{ failures: HookFailure[] }> {
+    return this.executePostToolUse(toolName, params, result, context);
   }
 
-  public async executePostToolUse(toolName: string, params: any, result: any): Promise<void> {
+  public async executePostToolUse(
+    toolName: string,
+    params: any,
+    result: any,
+    context?: Partial<HookContext>
+  ): Promise<{ failures: HookFailure[] }> {
     await this.initialize();
+    const hookContext = this.buildHookContext(toolName, params, context);
+    const failures: HookFailure[] = [];
 
     for (const hook of this.postToolHooks) {
-      try {
-        await this.executeWithIsolation(
-          HookType.PostToolUse,
-          hook.name,
-          () => hook.execute(toolName, params, result)
-        );
-      } catch (error) {
-        this.log.error(`Error in post-hook ${hook.name}:`, error);
+      const execution = await this.executeWithIsolation(
+        HookType.PostToolUse,
+        hook.name,
+        () => hook.execute(toolName, params, result, hookContext),
+        { failOpen: true }
+      );
+      if (!execution.ok) {
+        failures.push({
+          code: 'HOOK_POST_FAILED',
+          hookName: hook.name,
+          message: execution.error instanceof Error ? execution.error.message : String(execution.error)
+        });
+        this.log.error(`Error in post-hook ${hook.name}:`, execution.error);
       }
     }
+    return { failures };
   }
 
-  public async executePreCompact(payload: any): Promise<void> {
+  public async executePreCompact(payload: any, context?: Partial<HookContext>): Promise<{ failures: HookFailure[] }> {
     await this.initialize();
+    const hookContext = this.buildHookContext('PreCompact', payload, context);
+    const failures: HookFailure[] = [];
     for (const hook of this.preCompactHooks) {
-      try {
-        await this.executeWithIsolation(
-          HookType.PreCompact,
-          hook.name,
-          () => hook.execute(payload)
-        );
-      } catch (error) {
-        this.log.error(`Error in pre-compact hook ${hook.name}:`, error);
+      const execution = await this.executeWithIsolation(
+        HookType.PreCompact,
+        hook.name,
+        () => hook.execute(payload, hookContext),
+        { failOpen: true }
+      );
+      if (!execution.ok) {
+        failures.push({
+          code: 'HOOK_POST_FAILED',
+          hookName: hook.name,
+          message: execution.error instanceof Error ? execution.error.message : String(execution.error)
+        });
+        this.log.error(`Error in pre-compact hook ${hook.name}:`, execution.error);
       }
     }
+    return { failures };
   }
 
-  public async executeNotification(payload: NotificationPayload): Promise<void> {
+  public async executeNotification(
+    payload: NotificationPayload,
+    context?: Partial<HookContext>
+  ): Promise<{ failures: HookFailure[] }> {
     await this.initialize();
+    const hookContext = this.buildHookContext('Notification', payload, context);
+    const failures: HookFailure[] = [];
     for (const hook of this.notificationHooks) {
-      try {
-        await this.executeWithIsolation(
-          HookType.Notification,
-          hook.name,
-          () => hook.execute(payload)
-        );
-      } catch (error) {
-        this.log.error(`Error in notification hook ${hook.name}:`, error);
+      const execution = await this.executeWithIsolation(
+        HookType.Notification,
+        hook.name,
+        () => hook.execute(payload, hookContext),
+        { failOpen: true }
+      );
+      if (!execution.ok) {
+        failures.push({
+          code: 'HOOK_NOTIFICATION_FAILED',
+          hookName: hook.name,
+          message: execution.error instanceof Error ? execution.error.message : String(execution.error)
+        });
+        this.log.error(`Error in notification hook ${hook.name}:`, execution.error);
       }
     }
+    return { failures };
   }
 
   private normalizeHookType(rawType: unknown): HookType | null {
@@ -205,8 +271,9 @@ export class HookManager {
   private async executeWithIsolation<T>(
     type: HookType,
     hookName: string,
-    operation: () => Promise<T>
-  ): Promise<T | undefined> {
+    operation: () => Promise<T>,
+    options: { failOpen: boolean }
+  ): Promise<{ ok: true; result: T } | { ok: false; error: unknown }> {
     const execConfig = this.getExecutionConfig();
     const beforeMemory = process.memoryUsage().heapUsed;
 
@@ -224,7 +291,7 @@ export class HookManager {
       if (deltaMb > execConfig.maxMemoryMB) {
         throw new Error(`hook_memory_limit_exceeded_${deltaMb.toFixed(2)}MB`);
       }
-      return result;
+      return { ok: true, result };
     } catch (error) {
       if (execConfig.logFailures) {
         this.log.event('WARN', 'hook.failed', `Hook ${hookName} failed`, {
@@ -233,10 +300,36 @@ export class HookManager {
           error: error instanceof Error ? error.message : String(error)
         });
       }
-      if (!execConfig.catchErrors) {
-        throw error;
+      if (!options.failOpen || !execConfig.catchErrors) {
+        return { ok: false, error };
       }
-      return undefined;
+      return { ok: false, error };
     }
+  }
+
+  private isHookContractV2Enabled(): boolean {
+    const config = vscode.workspace.getConfiguration('gently');
+    const killSwitch = config.get<boolean>('resilience.killSwitch', false);
+    if (killSwitch) return false;
+    return config.get<boolean>('resilience.hookContractV2', true);
+  }
+
+  private buildHookContext(
+    toolName: string,
+    params: any,
+    context?: Partial<HookContext>
+  ): HookContext {
+    return {
+      toolName,
+      params,
+      workspaceRoot: this.workspaceRoot,
+      flowId: context?.flowId,
+      correlationId: context?.correlationId,
+      subagentId: context?.subagentId,
+      toolCallId: context?.toolCallId,
+      attempt: context?.attempt,
+      phase: context?.phase,
+      mode: context?.mode
+    };
   }
 }

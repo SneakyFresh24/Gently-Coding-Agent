@@ -467,6 +467,16 @@ export interface ToolApprovalResponseMessage {
 }
 
 /**
+ * Response to an ask_question request rendered in the webview.
+ */
+export interface QuestionResponseMessage {
+  type: 'questionResponse';
+  questionId: string;
+  selectedOptionIndexes: number[];
+  source?: 'user' | 'stopped';
+}
+
+/**
  * Get chat history
  */
 export interface GetHistoryMessage {
@@ -516,6 +526,38 @@ export interface ToolApprovalRequestMessage {
   approvalId: string;
   toolName: string;
   params: any;
+  timestamp: number;
+}
+
+export interface QuestionRequestOption {
+  label: string;
+  description?: string;
+  mode?: string;
+}
+
+/**
+ * Ask-question request rendered as inline chat card in webview.
+ */
+export interface QuestionRequestMessage {
+  type: 'questionRequest';
+  questionId: string;
+  header?: string;
+  question: string;
+  options: QuestionRequestOption[];
+  multiple: boolean;
+  timeoutMs: number;
+  defaultOptionIndex: number;
+  timestamp: number;
+}
+
+/**
+ * Ask-question resolution event emitted when the question is settled.
+ */
+export interface QuestionResolvedMessage {
+  type: 'questionResolved';
+  questionId: string;
+  selectedOptionIndexes: number[];
+  source: 'user' | 'timeout_default' | 'stopped';
   timestamp: number;
 }
 
@@ -623,7 +665,7 @@ export interface ErrorMessage {
   type: 'error';
   message: string;
   code?: string;
-  action?: 'retry' | 'switch_model' | 'new_chat' | 'check_privacy_settings' | 'none';
+  action?: 'retry' | 'switch_model' | 'new_chat' | 'check_privacy_settings' | 'switch_to_plan' | 'create_plan_now' | 'none';
 }
 
 /**
@@ -644,6 +686,17 @@ export type ResilienceStatusCode =
   | 'SEQUENCE_REPAIR_RETRY'
   | 'SEQUENCE_REPAIR_EXHAUSTED'
   | 'GUARDRAIL_PRIVACY_BLOCK'
+  | 'TOOL_RETRY_SCHEDULED'
+  | 'TOOL_RETRY_EXHAUSTED'
+  | 'HOOK_PRE_BLOCKED'
+  | 'HOOK_PRE_FAILED'
+  | 'HOOK_POST_FAILED'
+  | 'HOOK_NOTIFICATION_FAILED'
+  | 'TOOL_APPROVAL_TIMEOUT'
+  | 'STREAM_CONTRACT_MISSING_STOP'
+  | 'MODE_STATE_DESYNC_DETECTED'
+  | 'MODE_TRANSITION_BLOCKED'
+  | 'MODE_TOOL_BLOCKED'
   | 'REQUEST_STOPPED';
 
 export type ResilienceStatusCategory =
@@ -651,7 +704,10 @@ export type ResilienceStatusCategory =
   | 'empty_response'
   | 'rate_limit'
   | 'sequence'
+  | 'tool'
+  | 'hook'
   | 'guardrail'
+  | 'mode'
   | 'request';
 
 export type ResilienceStatusSeverity = 'info' | 'warning' | 'error';
@@ -661,6 +717,8 @@ export type ResilienceStatusAction =
   | 'switch_model'
   | 'new_chat'
   | 'check_privacy_settings'
+  | 'switch_to_plan'
+  | 'create_plan_now'
   | 'none';
 
 export type ResilienceStatusPhase =
@@ -695,6 +753,63 @@ export interface ResilienceStatusMessage {
   action: ResilienceStatusAction;
   phase: ResilienceStatusPhase;
   decision: ResilienceStatusDecision;
+  reason: string;
+  correlationId: string;
+}
+
+export type SubagentStatusCode =
+  | 'SUBAGENT_START'
+  | 'SUBAGENT_PREFLIGHT_BLOCKED'
+  | 'SUBAGENT_MODE_SWITCHED'
+  | 'SUBAGENT_RUNNING'
+  | 'SUBAGENT_RETRY_SCHEDULED'
+  | 'SUBAGENT_RETRY_EXHAUSTED'
+  | 'SUBAGENT_PREHOOK_BLOCKED'
+  | 'SUBAGENT_PREHOOK_FAILED'
+  | 'SUBAGENT_POSTHOOK_FAILED'
+  | 'SUBAGENT_TERMINAL_FAILED'
+  | 'SUBAGENT_STOPPED'
+  | 'SUBAGENT_SUMMARY_READY';
+
+export type SubagentStatusCategory =
+  | 'subagent'
+  | 'hook'
+  | 'request';
+
+export type SubagentStatusPhase =
+  | 'preflight'
+  | 'mode_switch'
+  | 'worker_run'
+  | 'merge_summary'
+  | 'retry'
+  | 'terminal'
+  | 'stopped';
+
+export type SubagentStatusDecision =
+  | 'retry'
+  | 'recover'
+  | 'abort'
+  | 'report';
+
+/**
+ * Structured subagent orchestration status for deterministic UI and telemetry handling.
+ */
+export interface SubagentStatusMessage {
+  type: 'subagentStatus';
+  code: SubagentStatusCode;
+  category: SubagentStatusCategory;
+  severity: ResilienceStatusSeverity;
+  retryable: boolean;
+  attempt: number;
+  maxAttempts: number;
+  nextDelayMs?: number;
+  model: string;
+  flowId: string | null;
+  subagentId: string;
+  userMessage: string;
+  action: ResilienceStatusAction;
+  phase: SubagentStatusPhase;
+  decision: SubagentStatusDecision;
   reason: string;
   correlationId: string;
 }
@@ -1295,6 +1410,7 @@ export type InboundWebviewMessage =
   | SetAutoApproveSettingsMessage
   | ToggleYoloModeMessage
   | ToolApprovalResponseMessage
+  | QuestionResponseMessage
   | GetHistoryMessage
   | DeleteSessionMessage
   | LoadSessionMessage
@@ -1315,6 +1431,7 @@ export type OutboundWebviewMessage =
   | ClearMessagesMessage
   | MessagesCompressedMessage
   | ResilienceStatusMessage
+  | SubagentStatusMessage
   | ErrorMessage
   | InfoMessage
   | AddFileReferenceMessage
@@ -1374,6 +1491,8 @@ export type OutboundWebviewMessage =
   | { type: 'activityUpdate'; label: string | null }
   | AutoApproveSettingsUpdateMessage
   | ToolApprovalRequestMessage
+  | QuestionRequestMessage
+  | QuestionResolvedMessage
   | PlanStatusUpdateMessage
   | StepStatusUpdateMessage
   | PlanUpdatedMessage

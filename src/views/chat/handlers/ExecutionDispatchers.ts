@@ -13,6 +13,8 @@ import { ToolResultErrorCodes, ToolResultErrorCode } from '../toolcall/ToolResul
 import { buildMonolithRetryPrompt, buildOversizeRetryPrompt, buildTruncatedRetryPrompt } from '../toolcall/ToolRetryPrompts';
 import { LoopDetector, isStrategicSwitch } from '../../../core/resilience/LoopDetector';
 import { NotificationPayload } from '../../../hooks/types';
+import { SubagentOrchestrator, SubagentResilienceSettings } from '../runtime/SubagentOrchestrator';
+import { normalizeModeAlias } from '../../../modes/ModeContractV2';
 
 import { PlanningManager } from '../../../agent/agentManager/PlanningManager';
 
@@ -26,6 +28,7 @@ interface PostToolActionResult {
     requestedMode?: string;
     shouldAutoContinue?: boolean;
     continuationPrompt?: string;
+    sourceToolName?: string;
 }
 
 interface GuardrailConfig {
@@ -44,6 +47,7 @@ export class TraditionalToolExecutor {
     private partialRecoverySuccessCount = 0;
     private largestToolArgSeen = 0;
     private readonly loopDetector = new LoopDetector(3, 5);
+    private readonly subagentOrchestrator: SubagentOrchestrator;
 
     constructor(
         private readonly agentManager: AgentManager,
@@ -52,7 +56,19 @@ export class TraditionalToolExecutor {
         private readonly triggerFollowUpMessage: (message?: string) => Promise<void>,
         private readonly performModeSwitch: (modeId: string) => Promise<void>,
         private readonly sendContinuationMessage: (message: string) => Promise<void>
-    ) { }
+    ) {
+        this.subagentOrchestrator = new SubagentOrchestrator({
+            hookManager: this.agentManager.getHookManager() as any,
+            sendMessageToWebview: this.sendMessageToWebview,
+            performModeSwitch: this.performModeSwitch,
+            sendContinuationMessage: this.sendContinuationMessage,
+            hasPersistedPlan: () => {
+                const plan = this.agentManager.getPlanningManager()?.getCurrentPlan();
+                return Boolean(plan && Array.isArray(plan.steps) && plan.steps.length > 0);
+            },
+            getSettings: () => this.getSubagentResilienceSettings()
+        });
+    }
 
     public async execute(toolCalls: ToolCall[], messageId: string, context: ChatViewContext): Promise<void> {
         try {
@@ -102,8 +118,12 @@ export class TraditionalToolExecutor {
                     context.consecutiveMistakeCount = (context.consecutiveMistakeCount || 0) + 1;
                 }
 
-                if (!postAction) {
-                    postAction = this.extractPostToolAction(match.result);
+                const candidatePostAction = this.extractPostToolAction(match.result);
+                if (candidatePostAction) {
+                    candidatePostAction.sourceToolName = toolCall.function?.name;
+                }
+                if (!postAction || toolCall.function?.name === 'handover_to_coder') {
+                    postAction = candidatePostAction || postAction;
                 }
             }
 
@@ -248,7 +268,15 @@ export class TraditionalToolExecutor {
 
     private async executeToolCallsParallel(toolCalls: ToolCall[], context: ChatViewContext): Promise<{ toolCall: ToolCall, result: any, success: boolean }[]> {
         const toolManager = this.agentManager.getToolManager();
-        const mappedCalls: { id: string; name: string; params: any }[] = [];
+        const mappedCalls: Array<{
+            id: string;
+            name: string;
+            params: any;
+            flowId?: string | null;
+            correlationId?: string;
+            mode?: string;
+            model?: string;
+        }> = [];
         const blockedResults: { toolCall: ToolCall, result: any, success: boolean }[] = [];
 
         for (const toolCall of toolCalls) {
@@ -312,7 +340,11 @@ export class TraditionalToolExecutor {
             mappedCalls.push({
                 id: toolCall.id,
                 name: toolName,
-                params: parsed
+                params: parsed,
+                flowId: context.currentFlowId || null,
+                correlationId: `${context.currentFlowId || 'flow-unknown'}:${toolCall.id}`,
+                mode: context.selectedMode || 'unknown',
+                model: context.selectedModel || 'unknown'
             });
         }
 
@@ -419,6 +451,13 @@ export class TraditionalToolExecutor {
     }
 
     private async handlePostToolAction(context: ChatViewContext, result: PostToolActionResult): Promise<void> {
+        if (result.sourceToolName === 'handover_to_coder') {
+            const consumed = await this.subagentOrchestrator.runArchitectToCoder(context, result);
+            if (consumed) {
+                return;
+            }
+        }
+
         let continuationPrompt = result.continuationPrompt || 'Continue with the next step now.';
         if (result.requestedMode) {
             if (this.shouldSkipModeSwitch(context, result.requestedMode)) {
@@ -465,6 +504,16 @@ export class TraditionalToolExecutor {
 
     private async emitNotification(payload: NotificationPayload): Promise<void> {
         await this.agentManager.getHookManager().executeNotification(payload);
+    }
+
+    private getSubagentResilienceSettings(): SubagentResilienceSettings {
+        const config = vscode.workspace.getConfiguration('gently');
+        return {
+            killSwitch: config.get<boolean>('resilience.killSwitch', false),
+            subagentOrchestratorV1: config.get<boolean>('resilience.subagentOrchestratorV1', true),
+            subagentErrorContractV1: config.get<boolean>('resilience.subagentErrorContractV1', true),
+            subagentTelemetryV1: config.get<boolean>('resilience.subagentTelemetryV1', true)
+        };
     }
 }
 
@@ -563,7 +612,8 @@ export class ToolCallDispatcher {
         updateConversationHistory: (message: Message) => void,
         triggerFollowUpMessage: (message?: string) => Promise<void>,
         performModeSwitch: (modeId: string) => Promise<void>,
-        sendContinuationMessage: (message: string) => Promise<void>
+        sendContinuationMessage: (message: string) => Promise<void>,
+        private getActiveModeId?: () => string | null | undefined
     ) { 
         this.executionHandler = new ToolExecutionHandler(
             agentManager, 
@@ -583,6 +633,7 @@ export class ToolCallDispatcher {
             }
 
             // 1. Validate via ToolCallManager
+            this.syncModeBeforeValidation(context);
             const mappedToolCalls = toolCalls.map(tc => ({
                 id: tc.id,
                 type: tc.type,
@@ -601,11 +652,89 @@ export class ToolCallDispatcher {
                 await this.executionHandler.handleToolCalls(toolCalls, messageId, context);
             } else {
                 log.error(`Validation failed: ${validationResult.errors.join(', ')}`);
+                if (validationResult.errors.some((error) => error.includes('MODE_TOOL_BLOCKED'))) {
+                    this.emitModeToolBlockedStatus(context, validationResult.errors);
+                }
                 this.sendMessageToWebview({ type: 'error', message: `Validation failed: ${validationResult.errors.join(', ')}` });
+                this.sendMessageToWebview({ type: 'generatingEnd' } as any);
+                this.sendMessageToWebview({ type: 'processingEnd' } as any);
             }
         } catch (error: any) {
             log.error('Dispatch failed:', error);
             this.sendMessageToWebview({ type: 'error', message: `Execution error: ${error.message}` });
+            this.sendMessageToWebview({ type: 'generatingEnd' } as any);
+            this.sendMessageToWebview({ type: 'processingEnd' } as any);
         }
+    }
+
+    private syncModeBeforeValidation(context: ChatViewContext): void {
+        const activeMode = normalizeModeAlias(this.getActiveModeId?.()) || null;
+        const contextMode = normalizeModeAlias(context.selectedMode) || null;
+        if (!activeMode || !contextMode || activeMode === contextMode) {
+            return;
+        }
+
+        const previousMode = context.selectedMode;
+        context.selectedMode = activeMode;
+        context.agentMode = activeMode === 'code';
+        const flowId = context.currentFlowId || null;
+        const correlationId = `${flowId || 'mode'}:MODE_STATE_DESYNC_DETECTED:${Date.now()}`;
+        log.event('WARN', 'MODE_STATE_DESYNC_DETECTED', 'MODE_STATE_DESYNC_DETECTED', {
+            flowId,
+            previousMode,
+            activeMode,
+            correlationId
+        });
+        this.sendMessageToWebview({
+            type: 'resilienceStatus',
+            code: 'MODE_STATE_DESYNC_DETECTED',
+            category: 'mode',
+            severity: 'warning',
+            retryable: false,
+            attempt: 1,
+            maxAttempts: 1,
+            model: context.selectedModel || 'unknown',
+            flowId,
+            userMessage: `Mode state was desynced (${previousMode} vs ${activeMode}) and was auto-synced.`,
+            action: 'none',
+            phase: 'runtime',
+            decision: 'recover',
+            reason: 'mode_context_mismatch',
+            correlationId
+        });
+    }
+
+    private emitModeToolBlockedStatus(context: ChatViewContext, errors: string[]): void {
+        const flowId = context.currentFlowId || null;
+        const correlationId = `${flowId || 'mode'}:MODE_TOOL_BLOCKED:${Date.now()}`;
+        const mode = normalizeModeAlias(context.selectedMode) || context.selectedMode || 'unknown';
+        const blockedCreatePlan = errors.some((error) => error.includes('"create_plan"'));
+        const action = blockedCreatePlan ? 'switch_to_plan' : 'none';
+        log.event('ERROR', 'MODE_TOOL_BLOCKED', 'MODE_TOOL_BLOCKED', {
+            flowId,
+            mode,
+            action,
+            errors,
+            correlationId
+        });
+        this.sendMessageToWebview({
+            type: 'resilienceStatus',
+            code: 'MODE_TOOL_BLOCKED',
+            category: 'mode',
+            severity: 'error',
+            retryable: false,
+            attempt: 1,
+            maxAttempts: 1,
+            model: context.selectedModel || 'unknown',
+            flowId,
+            userMessage: blockedCreatePlan
+                ? 'create_plan is blocked in ACT mode. Switch to Architect/Plan mode and retry.'
+                : 'The requested tool is blocked by the current mode contract.',
+            action,
+            phase: 'runtime',
+            decision: 'abort',
+            reason: errors.join(' | '),
+            correlationId
+        });
     }
 }

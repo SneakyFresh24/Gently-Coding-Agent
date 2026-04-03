@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { MessageHandler } from './MessageHandler';
 import { ChatViewContext } from '../types/ChatTypes';
+import * as vscode from 'vscode';
 
 vi.mock('vscode', () => ({
   workspace: {
@@ -76,3 +77,64 @@ describe('MessageHandler.setAvailableModels', () => {
   });
 });
 
+describe('MessageHandler mode state loading', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('prioritizes selectedMode from storage over agentMode config', () => {
+    const getConfiguration = vi.mocked(vscode.workspace.getConfiguration);
+    getConfiguration.mockReturnValue({
+      get: vi.fn((key: string, fallback?: unknown) => {
+        if (key === 'agentMode') return true;
+        if (key === 'selectedModel') return '';
+        return fallback;
+      })
+    } as any);
+
+    const handler = Object.create(MessageHandler.prototype) as any;
+    handler.context = createContext(null);
+    handler.extensionContext = {
+      globalState: {
+        get: vi.fn((key: string, fallback?: unknown) => {
+          if (key === 'gently.selectedMode') return 'architect';
+          if (key === 'gently.selectedModel') return null;
+          return fallback;
+        })
+      }
+    };
+
+    handler.loadStoredState();
+
+    expect(handler.context.selectedMode).toBe('architect');
+    expect(handler.context.agentMode).toBe(false);
+  });
+
+  it('falls back to agentMode when selectedMode is not stored', () => {
+    const getConfiguration = vi.mocked(vscode.workspace.getConfiguration);
+    getConfiguration.mockReturnValue({
+      get: vi.fn((key: string, fallback?: unknown) => {
+        if (key === 'agentMode') return true;
+        if (key === 'selectedModel') return '';
+        return fallback;
+      })
+    } as any);
+
+    const handler = Object.create(MessageHandler.prototype) as any;
+    handler.context = createContext(null);
+    handler.extensionContext = {
+      globalState: {
+        get: vi.fn((key: string, fallback?: unknown) => {
+          if (key === 'gently.selectedMode') return null;
+          if (key === 'gently.selectedModel') return null;
+          return fallback;
+        })
+      }
+    };
+
+    handler.loadStoredState();
+
+    expect(handler.context.selectedMode).toBe('code');
+    expect(handler.context.agentMode).toBe(true);
+  });
+});

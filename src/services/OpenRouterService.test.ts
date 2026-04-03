@@ -156,3 +156,51 @@ describe('OpenRouterService model policy integration', () => {
     expect(payload.messages[3].cacheControl).toEqual({ type: 'ephemeral' });
   });
 });
+
+describe('OpenRouterService streaming contract', () => {
+  const service = new OpenRouterService({
+    getKey: async () => 'test-key'
+  } as any);
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('emits message_stop when stream ends with terminal marker', async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            'data: {"choices":[{"delta":{"content":"Hello"},"finish_reason":null}]}\n\n'
+          )
+        );
+        controller.enqueue(
+          encoder.encode(
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+          )
+        );
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      }
+    });
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      body: stream
+    });
+    vi.stubGlobal('fetch', fetchMock as any);
+
+    const chunks: Array<{ type: string; [key: string]: unknown }> = [];
+    for await (const chunk of service.streamChatMessage({
+      model: 'openai/gpt-4o-mini',
+      stream: true,
+      messages: [{ role: 'user', content: 'hello' }],
+      disableInternalRetries: true
+    })) {
+      chunks.push(chunk as any);
+    }
+
+    expect(chunks.some((chunk) => chunk.type === 'message_stop')).toBe(true);
+  });
+});

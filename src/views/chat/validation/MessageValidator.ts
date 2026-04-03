@@ -555,6 +555,14 @@ const MessageSchemas: Record<string, any> = {
       enabled: { type: 'boolean' }
     }
   },
+  'questionResponse': {
+    required: ['questionId', 'selectedOptionIndexes'],
+    fields: {
+      questionId: { type: 'string', maxLength: 120 },
+      selectedOptionIndexes: { type: 'array', maxLength: 100 },
+      source: { type: 'string', enum: ['user', 'stopped'], optional: true }
+    }
+  },
 
   // BYOK mode: no auth message types.
 };

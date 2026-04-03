@@ -24,6 +24,9 @@ import { ConversationRepairResult } from '../toolcall';
 import { buildTruncatedRetryPrompt } from '../toolcall/ToolRetryPrompts';
 import { getModelPolicyResult, getReasoningConfig, ReasoningConfig, ReasoningEffort } from '../../../utils/modelPolicy';
 import { filterToolsForModeContract } from '../../../modes/ModeContractV2';
+import { RetryPolicyEngine } from '../runtime/RetryPolicyEngine';
+import { StreamContractEngine, StreamContractViolationError } from '../runtime/StreamContractEngine';
+import { TurnEngine } from '../runtime/TurnEngine';
 
 const log = new LogService('ChatFlowManager');
 
@@ -76,20 +79,22 @@ type ResilienceTelemetryCode = ResilienceStatusCode | 'REQUEST_ATTEMPT';
 
 export class ChatFlowManager {
     private readonly tokenBudgetManager = new TokenBudgetManager();
+    private readonly retryPolicyEngine = new RetryPolicyEngine();
+    private readonly retryBudgets = this.retryPolicyEngine.getBudgets();
+    private readonly streamContractEngine = new StreamContractEngine();
     private readonly proactiveCompressionThreshold = 0.8;
     private readonly aggressiveCompressionThreshold = 0.95;
     private readonly compressionLogThrottleMs = 30_000;
     private readonly lastCompressionLogAt = new Map<string, number>();
-    private readonly sequenceRetryMaxAttempts = 3;
-    private readonly sequenceBackoffBaseMs = 2000;
     private readonly sequenceRepairHistoryLimit = 10;
     private readonly toolOutputPruneProtectTokens = 40_000;
     private readonly toolOutputPruneProtectedTurns = 2;
     private readonly minOutputTokenBudget = 256;
     private readonly outputSafetyReserveTokens = 1024;
-    private readonly contextRecoveryMaxAttempts = 4;
-    private readonly emptyResponseMaxRetries = 2;
-    private readonly rateLimitMaxRetries = 2;
+    private readonly sequenceRetryMaxAttempts = this.retryBudgets.sequence;
+    private readonly contextRecoveryMaxAttempts = this.retryBudgets.context;
+    private readonly emptyResponseMaxRetries = this.retryBudgets.empty;
+    private readonly rateLimitMaxRetries = this.retryBudgets.rate_limit;
     private readonly modelWarningByFlow = new Set<string>();
     private readonly knownSequenceIssueModels = new Set<string>([
         'minimax/minimax-m2.7',
@@ -182,7 +187,26 @@ export class ChatFlowManager {
         const retryOrchestratorV1Enabled = resilienceSettings.retryOrchestratorV1 && !resilienceSettings.killSwitch;
         const telemetryV1Enabled = resilienceSettings.telemetryV1 && !resilienceSettings.killSwitch;
         const recoveryNarrativeV2Enabled = resilienceSettings.recoveryNarrativeV2 && !resilienceSettings.killSwitch;
+        const turnEngine = resilienceSettings.killSwitch ? null : new TurnEngine();
+        const transitionTurn = (next: 'PREFLIGHT' | 'STREAMING' | 'TOOL_EXEC' | 'RECOVERY' | 'TERMINAL', reason: string) => {
+            if (!turnEngine) return;
+            turnEngine.transition(next, reason);
+        };
+        const beginRecovery = (category: 'context' | 'sequence' | 'empty' | 'rate_limit', reason: string) => {
+            if (!turnEngine) return;
+            turnEngine.beginRecovery(category, reason);
+        };
+        const endRecovery = (next: 'PREFLIGHT' | 'STREAMING', reason: string) => {
+            if (!turnEngine) return;
+            turnEngine.endRecovery(next, reason);
+        };
+        const terminalizeTurn = (outcome: 'completed' | 'failed' | 'stopped', reason: string) => {
+            if (!turnEngine) return;
+            turnEngine.terminalize(outcome, reason);
+        };
+        transitionTurn('PREFLIGHT', 'initial_preflight');
 
+        try {
         const baseTemperature = this.modeService.getTemperature();
         const sampling = this.getSamplingOverrides(context.selectedModel, baseTemperature);
         const modelMaxOutputStart = Date.now();
@@ -383,6 +407,7 @@ export class ChatFlowManager {
             this.sendMessageToWebview({ type: 'activityUpdate', label: null });
             this.sendMessageToWebview({ type: 'processingEnd' });
             this.sendMessageToWebview({ type: 'generatingEnd' });
+            terminalizeTurn('failed', 'context_over_limit_after_compression');
             return;
         }
         let messages = compression.messages;
@@ -411,6 +436,7 @@ export class ChatFlowManager {
                 'CTX_PREFLIGHT_BLOCK',
                 `model=${context.selectedModel} inputTokens=${compression.inputTokens} contextLimit=${modelContextLength} maxTokens=${maxTokens}`
             );
+            beginRecovery('context', 'preflight_context_recovery');
             while (
                 retryState.contextRecoveryAttempts < this.contextRecoveryMaxAttempts &&
                 !context.shouldStopStream &&
@@ -466,6 +492,7 @@ export class ChatFlowManager {
                 compressionLevel = recovery.compressionLevel;
                 inputBudget = recovery.inputBudget;
             }
+            endRecovery('PREFLIGHT', 'preflight_context_recovery_end');
 
             if (!this.hasSufficientOutputBudget(compression.inputTokens, modelContextLength, this.minOutputTokenBudget)) {
                 this.emitResilienceStatus(
@@ -504,6 +531,7 @@ export class ChatFlowManager {
                 this.sendMessageToWebview({ type: 'activityUpdate', label: null });
                 this.sendMessageToWebview({ type: 'processingEnd' });
                 this.sendMessageToWebview({ type: 'generatingEnd' });
+                terminalizeTurn('failed', 'preflight_ctx_budget_unsafe');
                 return;
             }
         }
@@ -511,6 +539,7 @@ export class ChatFlowManager {
         // Always send generatingStart to ensure the UI indicator is active,
         // even for follow-up responses (e.g. after tool execution)
         this.sendMessageToWebview({ type: 'generatingStart' });
+        transitionTurn('STREAMING', 'stream_loop_start');
 
         context.shouldStopStream = false;
         let assistantMessage = '';
@@ -544,6 +573,7 @@ export class ChatFlowManager {
                 this.sendMessageToWebview({ type: 'activityUpdate', label: null });
                 this.sendMessageToWebview({ type: 'processingEnd' });
                 this.sendMessageToWebview({ type: 'generatingEnd' });
+                terminalizeTurn('stopped', 'stopped_before_attempt');
                 return;
             }
             retryState.attempt += 1;
@@ -576,6 +606,13 @@ export class ChatFlowManager {
                 toolCalls = result.toolCalls;
                 incompleteToolCalls = result.incompleteToolCalls || [];
                 usage = result.usage;
+                const streamContractInput = {
+                    streamTerminated: result.streamTerminated,
+                    stoppedByUser: context.shouldStopStream,
+                    assistantMessage,
+                    toolCalls,
+                    incompleteToolCalls
+                };
                 recoveryHint = null;
                 if (context.shouldStopStream) {
                     this.emitResilienceStatus(
@@ -602,30 +639,37 @@ export class ChatFlowManager {
                     this.sendMessageToWebview({ type: 'processingEnd' });
                     this.sendMessageToWebview({ type: 'generatingEnd' });
                     this.sendMessageToWebview({ type: 'activityUpdate', label: null });
+                    terminalizeTurn('stopped', 'stopped_after_stream');
                     return;
                 }
-                if (
-                    strictResponseGuardsEnabled &&
-                    !context.shouldStopStream &&
-                    assistantMessage.trim().length === 0 &&
-                    toolCalls.length === 0 &&
-                    incompleteToolCalls.length === 0
-                ) {
-                    this.logResilienceEvent(
-                        'EMPTY_RESPONSE_DETECTED',
-                        `model=${context.selectedModel} retry=${retryState.emptyResponseRetries}/${this.emptyResponseMaxRetries}`
-                    );
-                    throw new EmptyAssistantResponseError();
+
+                if (strictResponseGuardsEnabled) {
+                    this.streamContractEngine.assertTerminated(streamContractInput);
+                    if (this.streamContractEngine.isStrictlyEmptyAssistantResponse(streamContractInput)) {
+                        this.logResilienceEvent(
+                            'EMPTY_RESPONSE_DETECTED',
+                            `model=${context.selectedModel} retry=${retryState.emptyResponseRetries}/${this.emptyResponseMaxRetries}`
+                        );
+                        throw new EmptyAssistantResponseError();
+                    }
                 }
                 break;
             } catch (error) {
                 const isGuardrailPrivacyError = this.openRouterService.isGuardrailPrivacyError(error);
                 const isStopRequested = context.shouldStopStream || this.isStoppedByUserError(error);
+                const streamContractViolation =
+                    strictResponseGuardsEnabled && error instanceof StreamContractViolationError
+                        ? error
+                        : null;
+                const isMissingStreamStop = streamContractViolation?.code === 'STREAM_CONTRACT_MISSING_STOP';
                 const isContextLengthError = this.openRouterService.isContextLengthError(error);
                 const isSequenceError = this.openRouterService.isToolCallSequenceError(error, {
                     includeContextOverflowPattern: resilienceSettings.killSwitch
                 });
-                const isEmptyResponseError = strictResponseGuardsEnabled && error instanceof EmptyAssistantResponseError;
+                const isEmptyResponseError =
+                    strictResponseGuardsEnabled &&
+                    (error instanceof EmptyAssistantResponseError ||
+                        streamContractViolation?.code === 'STREAM_CONTRACT_EMPTY_RESPONSE');
                 const isRateLimitError = this.openRouterService.isRateLimitError(error);
 
                 // Priority 1: guardrail/privacy block
@@ -684,7 +728,42 @@ export class ChatFlowManager {
                     this.sendMessageToWebview({ type: 'activityUpdate', label: null });
                     this.sendMessageToWebview({ type: 'processingEnd' });
                     this.sendMessageToWebview({ type: 'generatingEnd' });
+                    terminalizeTurn('stopped', 'stopped_by_error');
                     return;
+                }
+
+                if (isMissingStreamStop) {
+                    this.emitResilienceStatus(
+                        errorContractV1Enabled,
+                        context,
+                        {
+                            code: 'STREAM_CONTRACT_MISSING_STOP',
+                            category: 'request',
+                            severity: 'error',
+                            retryable: false,
+                            attempt: retryState.attempt,
+                            maxAttempts: retryState.attempt,
+                            userMessage: 'Assistant stream ended unexpectedly. Please retry.',
+                            action: 'retry'
+                        }
+                    );
+                    this.emitResilienceTelemetryEvent(
+                        telemetryV1Enabled,
+                        'RESILIENCE_TERMINAL_FAILURE',
+                        context,
+                        'STREAM_CONTRACT_MISSING_STOP',
+                        {
+                            attempt: retryState.attempt,
+                            maxTokens
+                        }
+                    );
+                    this.sendMessageToWebview({
+                        type: 'error',
+                        message: 'Assistant stream ended unexpectedly without a terminal stop event. Please retry.',
+                        code: 'STREAM_CONTRACT_MISSING_STOP',
+                        action: 'retry'
+                    });
+                    throw new Error('Assistant stream ended unexpectedly without a terminal stop event.');
                 }
 
                 if (
@@ -692,6 +771,7 @@ export class ChatFlowManager {
                     contextRecoveryV2Enabled &&
                     !context.shouldStopStream
                 ) {
+                    beginRecovery('context', 'runtime_context_recovery');
                     let recovered = false;
 
                     while (
@@ -752,6 +832,7 @@ export class ChatFlowManager {
                     }
 
                     if (recovered) {
+                        endRecovery('STREAMING', 'runtime_context_recovered');
                         this.emitResilienceStatus(
                             errorContractV1Enabled,
                             context,
@@ -788,6 +869,7 @@ export class ChatFlowManager {
                     }
 
                     if (context.shouldStopStream) {
+                        endRecovery('STREAMING', 'runtime_context_recovery_stopped');
                         this.emitResilienceStatus(
                             errorContractV1Enabled,
                             context,
@@ -812,9 +894,11 @@ export class ChatFlowManager {
                         this.sendMessageToWebview({ type: 'activityUpdate', label: null });
                         this.sendMessageToWebview({ type: 'processingEnd' });
                         this.sendMessageToWebview({ type: 'generatingEnd' });
+                        terminalizeTurn('stopped', 'stopped_during_context_recovery');
                         return;
                     }
 
+                    endRecovery('STREAMING', 'runtime_context_recovery_exhausted');
                     this.emitResilienceStatus(
                         errorContractV1Enabled,
                         context,
@@ -897,24 +981,31 @@ export class ChatFlowManager {
 
                 if (
                     isSequenceError &&
-                    !context.shouldStopStream &&
-                    retryState.sequenceRetries < this.sequenceRetryMaxAttempts
+                    !context.shouldStopStream
                 ) {
-                    const retryAttempt = retryState.sequenceRetries + 1;
-                    const retryDelayMs = this.sequenceBackoffBaseMs * Math.pow(2, retryAttempt - 1);
-                    const repairResult = this.repairConversationSequence(context, context.selectedModel, `retry_attempt_${retryAttempt}`, true);
+                    const tentativeAttempt = retryState.sequenceRetries + 1;
+                    const repairResult = this.repairConversationSequence(context, context.selectedModel, `retry_attempt_${tentativeAttempt}`, true);
                     const repairProducedStateChange = repairResult.repaired || repairResult.fixes.length > 0 || !retryOrchestratorV1Enabled;
+                    const sequenceDecision = this.retryPolicyEngine.planRetry('sequence', {
+                        attemptsUsed: retryState.sequenceRetries,
+                        stateChanged: repairProducedStateChange
+                    });
 
                     if (repairResult.fixes.length > 0) {
                         repairWarnings.push(...repairResult.fixes);
                     }
                     if (!repairProducedStateChange) {
-                        log.warn(`sequence_retry_skipped_no_change: model=${context.selectedModel} attempt=${retryAttempt}`);
-                    } else {
+                        log.warn(`sequence_retry_skipped_no_change: model=${context.selectedModel} attempt=${tentativeAttempt}`);
+                    }
+
+                    if (sequenceDecision.shouldRetry) {
+                        const retryAttempt = sequenceDecision.nextAttempt;
+                        const retryDelayMs = sequenceDecision.delayMs;
+                        beginRecovery('sequence', `sequence_retry_${retryAttempt}`);
                         this.sendMessageToWebview({
                             type: 'retryStatus',
                             attempt: retryAttempt,
-                            maxAttempts: this.sequenceRetryMaxAttempts,
+                            maxAttempts: sequenceDecision.maxAttempts,
                             delayMs: retryDelayMs,
                             reason: 'tool_call_sequence',
                             model: context.selectedModel,
@@ -929,9 +1020,9 @@ export class ChatFlowManager {
                                 severity: 'warning',
                                 retryable: true,
                                 attempt: retryAttempt,
-                                maxAttempts: this.sequenceRetryMaxAttempts,
+                                maxAttempts: sequenceDecision.maxAttempts,
                                 nextDelayMs: retryDelayMs,
-                                userMessage: `Repairing conversation... (${retryAttempt}/${this.sequenceRetryMaxAttempts})`,
+                                userMessage: `Repairing conversation... (${retryAttempt}/${sequenceDecision.maxAttempts})`,
                                 action: 'retry'
                             }
                         );
@@ -942,13 +1033,13 @@ export class ChatFlowManager {
                             'SEQUENCE_REPAIR_RETRY',
                             {
                                 attempt: retryAttempt,
-                                maxAttempts: this.sequenceRetryMaxAttempts,
+                                maxAttempts: sequenceDecision.maxAttempts,
                                 nextDelayMs: retryDelayMs
                             }
                         );
                         this.sendMessageToWebview({
                             type: 'activityUpdate',
-                            label: `Repairing conversation... (${retryAttempt}/${this.sequenceRetryMaxAttempts})`
+                            label: `Repairing conversation... (${retryAttempt}/${sequenceDecision.maxAttempts})`
                         });
 
                         const repeatedPattern = this.trackSequenceRepairPattern(context, repairResult.repairHash);
@@ -986,6 +1077,8 @@ export class ChatFlowManager {
                             this.sendMessageToWebview({ type: 'activityUpdate', label: null });
                             this.sendMessageToWebview({ type: 'processingEnd' });
                             this.sendMessageToWebview({ type: 'generatingEnd' });
+                            endRecovery('STREAMING', 'sequence_retry_stopped');
+                            terminalizeTurn('stopped', 'stopped_during_sequence_retry');
                             return;
                         }
 
@@ -1006,8 +1099,9 @@ export class ChatFlowManager {
                             category: 'sequence',
                             reason: 'sequence_repair_applied',
                             attempt: retryState.sequenceRetries,
-                            maxAttempts: this.sequenceRetryMaxAttempts
+                            maxAttempts: sequenceDecision.maxAttempts
                         };
+                        endRecovery('STREAMING', 'sequence_retry_scheduled');
                         this.sendMessageToWebview({ type: 'generatingStart' });
                         continue;
                     }
@@ -1042,10 +1136,15 @@ export class ChatFlowManager {
                 }
 
                 if (isEmptyResponseError) {
-                    const retryAttempt = retryState.emptyResponseRetries + 1;
-                    const retryDelayMs = this.getRateLimitDelayMs(undefined, retryAttempt);
+                    const emptyDecision = this.retryPolicyEngine.planRetry('empty', {
+                        attemptsUsed: retryState.emptyResponseRetries,
+                        stateChanged: true
+                    });
 
-                    if (!context.shouldStopStream && retryAttempt <= this.emptyResponseMaxRetries) {
+                    if (!context.shouldStopStream && emptyDecision.shouldRetry) {
+                        const retryAttempt = emptyDecision.nextAttempt;
+                        const retryDelayMs = emptyDecision.delayMs;
+                        beginRecovery('empty', `empty_response_retry_${retryAttempt}`);
                         this.emitResilienceStatus(
                             errorContractV1Enabled,
                             context,
@@ -1055,9 +1154,9 @@ export class ChatFlowManager {
                                 severity: 'warning',
                                 retryable: true,
                                 attempt: retryAttempt,
-                                maxAttempts: this.emptyResponseMaxRetries,
+                                maxAttempts: emptyDecision.maxAttempts,
                                 nextDelayMs: retryDelayMs,
-                                userMessage: `No response received. Retrying... (${retryAttempt}/${this.emptyResponseMaxRetries})`,
+                                userMessage: `No response received. Retrying... (${retryAttempt}/${emptyDecision.maxAttempts})`,
                                 action: 'retry'
                             }
                         );
@@ -1068,13 +1167,13 @@ export class ChatFlowManager {
                             'EMPTY_RESPONSE_DETECTED',
                             {
                                 attempt: retryAttempt,
-                                maxAttempts: this.emptyResponseMaxRetries,
+                                maxAttempts: emptyDecision.maxAttempts,
                                 nextDelayMs: retryDelayMs
                             }
                         );
                         this.sendMessageToWebview({
                             type: 'activityUpdate',
-                            label: `No response received. Retrying... (${retryAttempt}/${this.emptyResponseMaxRetries})`
+                            label: `No response received. Retrying... (${retryAttempt}/${emptyDecision.maxAttempts})`
                         });
                         await this.sleepWithStop(retryDelayMs, context);
                         if (context.shouldStopStream) {
@@ -1102,6 +1201,8 @@ export class ChatFlowManager {
                             this.sendMessageToWebview({ type: 'activityUpdate', label: null });
                             this.sendMessageToWebview({ type: 'processingEnd' });
                             this.sendMessageToWebview({ type: 'generatingEnd' });
+                            endRecovery('STREAMING', 'empty_response_retry_stopped');
+                            terminalizeTurn('stopped', 'stopped_during_empty_retry');
                             return;
                         }
                         retryState.emptyResponseRetries += 1;
@@ -1109,8 +1210,9 @@ export class ChatFlowManager {
                             category: 'empty_response',
                             reason: 'empty_response_retry_backoff',
                             attempt: retryState.emptyResponseRetries,
-                            maxAttempts: this.emptyResponseMaxRetries
+                            maxAttempts: emptyDecision.maxAttempts
                         };
+                        endRecovery('STREAMING', 'empty_response_retry_scheduled');
                         this.sendMessageToWebview({ type: 'generatingStart' });
                         continue;
                     }
@@ -1154,22 +1256,24 @@ export class ChatFlowManager {
                 }
 
                 if (isRateLimitError) {
-                    const retryAttempt = retryState.rateLimitRetries + 1;
                     const retryAfterMs = error instanceof Error && 'retryAfterMs' in (error as any)
                         ? Number((error as any).retryAfterMs)
                         : undefined;
-                    const retryDelayMs = this.getRateLimitDelayMs(
-                        Number.isFinite(retryAfterMs) ? retryAfterMs : undefined,
-                        retryAttempt
-                    );
+                    const rateLimitDecision = this.retryPolicyEngine.planRetry('rate_limit', {
+                        attemptsUsed: retryState.rateLimitRetries,
+                        retryAfterMs: Number.isFinite(retryAfterMs) ? retryAfterMs : undefined
+                    });
 
-                    if (!context.shouldStopStream && retryAttempt <= this.rateLimitMaxRetries) {
-                        log.warn(`Rate limit detected. Retrying attempt ${retryAttempt}/${this.rateLimitMaxRetries} in ${retryDelayMs}ms (model=${context.selectedModel})`);
+                    if (!context.shouldStopStream && rateLimitDecision.shouldRetry) {
+                        const retryAttempt = rateLimitDecision.nextAttempt;
+                        const retryDelayMs = rateLimitDecision.delayMs;
+                        beginRecovery('rate_limit', `rate_limit_retry_${retryAttempt}`);
+                        log.warn(`Rate limit detected. Retrying attempt ${retryAttempt}/${rateLimitDecision.maxAttempts} in ${retryDelayMs}ms (model=${context.selectedModel})`);
                         log.info(`Rate-limit retry planned: attempt=${retryAttempt} delayMs=${retryDelayMs} model=${context.selectedModel} max_tokens=${maxTokens}`);
                         this.sendMessageToWebview({
                             type: 'retryingRateLimit',
                             attempt: retryAttempt,
-                            maxAttempts: this.rateLimitMaxRetries,
+                            maxAttempts: rateLimitDecision.maxAttempts,
                             delayMs: retryDelayMs,
                             model: context.selectedModel
                         } as any);
@@ -1182,7 +1286,7 @@ export class ChatFlowManager {
                                 severity: 'warning',
                                 retryable: true,
                                 attempt: retryAttempt,
-                                maxAttempts: this.rateLimitMaxRetries,
+                                maxAttempts: rateLimitDecision.maxAttempts,
                                 nextDelayMs: retryDelayMs,
                                 userMessage: `Provider busy. Retrying in ${Math.ceil(retryDelayMs / 1000)}s...`,
                                 action: 'retry'
@@ -1195,7 +1299,7 @@ export class ChatFlowManager {
                             'RATE_LIMIT_RETRY',
                             {
                                 attempt: retryAttempt,
-                                maxAttempts: this.rateLimitMaxRetries,
+                                maxAttempts: rateLimitDecision.maxAttempts,
                                 nextDelayMs: retryDelayMs
                             }
                         );
@@ -1226,6 +1330,8 @@ export class ChatFlowManager {
                             this.sendMessageToWebview({ type: 'activityUpdate', label: null });
                             this.sendMessageToWebview({ type: 'processingEnd' });
                             this.sendMessageToWebview({ type: 'generatingEnd' });
+                            endRecovery('STREAMING', 'rate_limit_retry_stopped');
+                            terminalizeTurn('stopped', 'stopped_during_rate_limit_retry');
                             return;
                         }
                         retryState.rateLimitRetries += 1;
@@ -1233,8 +1339,9 @@ export class ChatFlowManager {
                             category: 'rate_limit',
                             reason: 'rate_limit_retry_backoff',
                             attempt: retryState.rateLimitRetries,
-                            maxAttempts: this.rateLimitMaxRetries
+                            maxAttempts: rateLimitDecision.maxAttempts
                         };
+                        endRecovery('STREAMING', 'rate_limit_retry_scheduled');
                         this.sendMessageToWebview({ type: 'generatingStart' });
                         continue;
                     }
@@ -1281,6 +1388,9 @@ export class ChatFlowManager {
         }
 
         if (assistantMessage.length > 0 || toolCalls.length > 0 || incompleteToolCalls.length > 0) {
+            if (toolCalls.length > 0 || incompleteToolCalls.length > 0) {
+                transitionTurn('TOOL_EXEC', 'tool_dispatch_or_followup');
+            }
             await this.completeStreaming(
                 context,
                 assistantMessage,
@@ -1298,6 +1408,19 @@ export class ChatFlowManager {
         this.sendMessageToWebview({ type: 'processingEnd' });
         // Ensure activity label is cleared after LLM completes (regardless of content)
         this.sendMessageToWebview({ type: 'activityUpdate', label: null });
+        terminalizeTurn('completed', 'stream_completed');
+        } catch (error) {
+            if (context.shouldStopStream) {
+                terminalizeTurn('stopped', 'top_level_stop');
+            } else {
+                terminalizeTurn('failed', 'top_level_failure');
+            }
+            throw error;
+        } finally {
+            if (turnEngine) {
+                turnEngine.ensureTerminalized();
+            }
+        }
     }
 
     private async completeStreaming(

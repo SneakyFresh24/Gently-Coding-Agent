@@ -1,10 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { TraditionalToolExecutor } from './ExecutionDispatchers';
+import { TraditionalToolExecutor, ToolCallDispatcher } from './ExecutionDispatchers';
 import { ChatViewContext } from '../types/ChatTypes';
 import { ToolCall } from '../../../services/OpenRouterService';
 import { LogService } from '../../../services/LogService';
 
 vi.mock('vscode', () => ({
+  workspace: {
+    getConfiguration: () => ({
+      get: (_key: string, fallback?: unknown) => fallback
+    })
+  },
   window: {
     showWarningMessage: vi.fn()
   }
@@ -23,7 +28,7 @@ function createContext(overrides: Partial<ChatViewContext> = {}): ChatViewContex
   };
 }
 
-function createToolCall(id: string, name = 'write_file', args = { path: 'a.txt', content: 'x' }): ToolCall {
+function createToolCall(id: string, name = 'write_file', args: Record<string, unknown> = { path: 'a.txt', content: 'x' }): ToolCall {
   return {
     id,
     type: 'function',
@@ -37,6 +42,10 @@ function createToolCall(id: string, name = 'write_file', args = { path: 'a.txt',
 describe('TraditionalToolExecutor loop handling', () => {
   let executeNotification: ReturnType<typeof vi.fn>;
   let executeTools: ReturnType<typeof vi.fn>;
+  let performModeSwitch: ReturnType<typeof vi.fn>;
+  let sendContinuationMessage: ReturnType<typeof vi.fn>;
+  let sendMessageToWebview: ReturnType<typeof vi.fn>;
+  let activeContext: ChatViewContext | null;
   let executor: TraditionalToolExecutor;
 
   beforeEach(() => {
@@ -44,19 +53,28 @@ describe('TraditionalToolExecutor loop handling', () => {
     executeTools = vi.fn(async (calls: Array<{ id: string }>) =>
       calls.map((call) => ({ id: call.id, result: { ok: true } }))
     );
+    activeContext = null;
+    performModeSwitch = vi.fn(async (modeId: string) => {
+      if (activeContext) {
+        activeContext.selectedMode = modeId;
+      }
+    });
+    sendContinuationMessage = vi.fn().mockResolvedValue(undefined);
+    sendMessageToWebview = vi.fn();
 
     const agentManager = {
       getToolManager: () => ({ executeTools }),
-      getHookManager: () => ({ executeNotification })
+      getHookManager: () => ({ executeNotification, executePreHooks: vi.fn(async (_name: string, params: any) => ({ blocked: false, modifiedParams: params })), executePostHooks: vi.fn(async () => ({ failures: [] })) }),
+      getPlanningManager: () => ({ getCurrentPlan: () => ({ id: 'plan-1', steps: [{ id: 's1' }] }) })
     } as any;
 
     executor = new TraditionalToolExecutor(
       agentManager,
-      vi.fn(),
+      sendMessageToWebview,
       vi.fn(),
       vi.fn().mockResolvedValue(undefined),
-      vi.fn().mockResolvedValue(undefined),
-      vi.fn().mockResolvedValue(undefined)
+      performModeSwitch,
+      sendContinuationMessage
     );
   });
 
@@ -117,5 +135,122 @@ describe('TraditionalToolExecutor loop handling', () => {
 
     expect(nonStrategicContext.loopDetectorState?.count).toBe(4);
     expect(nonStrategicContext.loopDetectorState?.lastSignature).toBe('sig');
+  });
+
+  it('forwards flow correlation metadata to ToolManager executeTools', async () => {
+    const context = createContext({
+      currentFlowId: 'flow-123',
+      selectedMode: 'architect',
+      selectedModel: 'anthropic/claude-sonnet-4'
+    } as Partial<ChatViewContext>);
+    activeContext = context;
+
+    await (executor as any).executeToolCallsParallel([createToolCall('tc-1', 'read_file', { path: 'README.md' })], context);
+
+    expect(executeTools).toHaveBeenCalledTimes(1);
+    const mappedCall = executeTools.mock.calls[0][0][0];
+    expect(mappedCall).toMatchObject({
+      id: 'tc-1',
+      name: 'read_file',
+      flowId: 'flow-123',
+      correlationId: 'flow-123:tc-1',
+      mode: 'architect',
+      model: 'anthropic/claude-sonnet-4'
+    });
+  });
+
+  it('routes handover_to_coder through subagent orchestrator and emits subagentStatus', async () => {
+    executeTools.mockResolvedValueOnce([
+      {
+        id: 'handover-1',
+        result: {
+          success: true,
+          requestedMode: 'code',
+          shouldAutoContinue: true,
+          continuationPrompt: 'Implement step 1 now.'
+        }
+      }
+    ]);
+
+    const context = createContext({
+      selectedMode: 'architect',
+      selectedModel: 'openai/gpt-4o',
+      currentFlowId: 'flow-handover-1'
+    } as Partial<ChatViewContext>);
+    activeContext = context;
+
+    await executor.execute([createToolCall('handover-1', 'handover_to_coder', { message: 'handover' })], 'msg-1', context);
+
+    expect(performModeSwitch).toHaveBeenCalledWith('code');
+    expect(sendContinuationMessage).toHaveBeenCalledWith('Implement step 1 now.');
+    const statusCodes = sendMessageToWebview.mock.calls
+      .map((call) => call[0])
+      .filter((msg) => msg.type === 'subagentStatus')
+      .map((msg) => msg.code);
+    expect(statusCodes).toContain('SUBAGENT_START');
+    expect(statusCodes).toContain('SUBAGENT_MODE_SWITCHED');
+    expect(statusCodes).toContain('SUBAGENT_SUMMARY_READY');
+  });
+});
+
+describe('ToolCallDispatcher mode desync + validation guard', () => {
+  function createDispatcher(sendMessageToWebview: ReturnType<typeof vi.fn>, getActiveModeId?: () => string | null) {
+    const toolCallManager = {
+      processToolCalls: vi.fn()
+    } as any;
+    const followUp = {
+      sendFollowUpMessage: vi.fn().mockResolvedValue(undefined)
+    } as any;
+    const agentManager = {
+      getToolManager: () => ({ executeTools: vi.fn().mockResolvedValue([]) }),
+      getHookManager: () => ({ executeNotification: vi.fn().mockResolvedValue(undefined), executePreHooks: vi.fn(async (_name: string, params: any) => ({ blocked: false, modifiedParams: params })), executePostHooks: vi.fn(async () => ({ failures: [] })) }),
+      getPlanningManager: () => ({ getCurrentPlan: () => ({ id: 'plan-1', steps: [{ id: 's1' }] }) })
+    } as any;
+
+    const dispatcher = new ToolCallDispatcher(
+      toolCallManager,
+      followUp,
+      sendMessageToWebview,
+      agentManager,
+      vi.fn(),
+      vi.fn().mockResolvedValue(undefined),
+      vi.fn().mockResolvedValue(undefined),
+      vi.fn().mockResolvedValue(undefined),
+      getActiveModeId
+    );
+
+    return { dispatcher, toolCallManager, followUp };
+  }
+
+  it('self-heals mode desync and emits structured mode-block status', async () => {
+    const sendMessageToWebview = vi.fn();
+    const { dispatcher, toolCallManager } = createDispatcher(sendMessageToWebview, () => 'architect');
+    const context = createContext({
+      selectedMode: 'code',
+      currentFlowId: 'flow-mode-1'
+    });
+    const toolCalls = [createToolCall('call-1', 'create_plan', { goal: 'x', steps: [{ title: 's1' }] })];
+
+    toolCallManager.processToolCalls.mockImplementation(async (_calls: any, ctx: any) => {
+      expect(ctx.selectedMode).toBe('architect');
+      return {
+        valid: false,
+        errors: ['MODE_TOOL_BLOCKED: ACT_STRICT forbids planning tool "create_plan".'],
+        warnings: [],
+        toolCallGroups: []
+      };
+    });
+
+    await dispatcher.handleToolCalls(toolCalls, 'msg-1', context);
+
+    expect(context.selectedMode).toBe('architect');
+    const statuses = sendMessageToWebview.mock.calls
+      .map((call) => call[0])
+      .filter((msg) => msg?.type === 'resilienceStatus');
+
+    expect(statuses.some((msg) => msg.code === 'MODE_STATE_DESYNC_DETECTED')).toBe(true);
+    expect(statuses.some((msg) => msg.code === 'MODE_TOOL_BLOCKED' && msg.action === 'switch_to_plan')).toBe(true);
+    expect(sendMessageToWebview).toHaveBeenCalledWith(expect.objectContaining({ type: 'processingEnd' }));
+    expect(sendMessageToWebview).toHaveBeenCalledWith(expect.objectContaining({ type: 'generatingEnd' }));
   });
 });

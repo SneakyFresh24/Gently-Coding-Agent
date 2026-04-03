@@ -17,6 +17,8 @@ import { StreamingService } from './StreamingService';
 import { ChatFlowManager } from './ChatFlowManager';
 import { OutboundWebviewMessage } from '../types/WebviewMessageTypes';
 import { SessionType } from '../../../services/HistoryManager';
+import { LifecycleGuard } from '../runtime/LifecycleGuard';
+import { normalizeModeAlias } from '../../../modes/ModeContractV2';
 
 export class MessageHandler {
   private context!: ChatViewContext;
@@ -25,6 +27,8 @@ export class MessageHandler {
   private toolCallManager: ToolCallManager;
   private flowManager: ChatFlowManager;
   private availableModelIds = new Set<string>();
+  private readonly lifecycleGuard: LifecycleGuard;
+  private readonly guardedSendMessageToWebview: (message: OutboundWebviewMessage) => void;
 
   constructor(
     private readonly extensionContext: vscode.ExtensionContext,
@@ -35,26 +39,31 @@ export class MessageHandler {
     private readonly updateConversationHistory: (message: Message) => void,
     private readonly onModeSwitch?: (modeId: string) => Promise<void>
   ) {
+    this.lifecycleGuard = new LifecycleGuard((message) => sendMessageToWebview(message as OutboundWebviewMessage));
+    this.guardedSendMessageToWebview = (message: OutboundWebviewMessage) => {
+      this.lifecycleGuard.dispatch(message as any);
+    };
+
     const fileRef = new FileReferenceManager(agentManager.getFileOperations(), agentManager.getIndexer());
-    this.architectHandoverHandler = new ArchitectHandoverHandler(sendMessageToWebview);
+    this.architectHandoverHandler = new ArchitectHandoverHandler(this.guardedSendMessageToWebview);
     
     // Get message handler from planning manager
     const planning = this.agentManager.getPlanningManager();
     const messageHandler = planning?.getMessageHandler();
     
-    const streaming = new StreamingService(openRouterService, sendMessageToWebview, messageHandler, this.agentManager.getHookManager());
+    const streaming = new StreamingService(openRouterService, this.guardedSendMessageToWebview, messageHandler, this.agentManager.getHookManager());
     const refParser = new ReferenceParser(fileRef);
     const pruner = new ConversationPruner(openRouterService, agentManager);
 
     this.toolCallManager = new ToolCallManager(this.agentManager);
     this.initializeNewToolCallSystem();
 
-    this.sessionHistoryManager = new SessionHistoryManager(extensionContext, agentManager.getServiceProvider().getService('sessionManager'), sendMessageToWebview);
+    this.sessionHistoryManager = new SessionHistoryManager(extensionContext, agentManager.getServiceProvider().getService('sessionManager'), this.guardedSendMessageToWebview);
     const promptMgr = new PromptManager(agentManager, this.modeService);
 
     const followUp = new FollowUpHandler(
         this.toolCallManager as any, // Cast temporarily if types mismatch during migration
-        sendMessageToWebview,
+        this.guardedSendMessageToWebview,
         (messages: Message[]) => {
           const validation = this.toolCallManager.validateMessageSequence(messages.map(toChatMessage));
           return { valid: validation.valid, issues: validation.errors };
@@ -81,7 +90,7 @@ export class MessageHandler {
     const dispatcher = new ToolCallDispatcher(
       this.toolCallManager, 
       followUp, 
-      sendMessageToWebview,
+      this.guardedSendMessageToWebview,
       this.agentManager,
       updateConversationHistory,
       (m: string | undefined) => followUp.sendFollowUpMessage(this.context, m || ''),
@@ -94,7 +103,8 @@ export class MessageHandler {
       },
       async (message: string) => {
         await this.sendMessage(message, false);
-      }
+      },
+      () => this.modeService.getCurrentMode()?.id ?? this.context.selectedMode
     );
 
     this.flowManager = new ChatFlowManager(
@@ -107,7 +117,7 @@ export class MessageHandler {
       this.toolCallManager,
       dispatcher,
       this.modeService,
-      sendMessageToWebview,
+      this.guardedSendMessageToWebview,
       openRouterService,
       async () => {
         await this.setSelectedModel(null);
@@ -157,16 +167,21 @@ export class MessageHandler {
     const configuredAgentMode = config.get<boolean>('agentMode', false);
     const configuredModel = config.get<string>('selectedModel', '');
     const storedModel = this.extensionContext.globalState.get<string | null>('gently.selectedModel', null);
+    const storedMode = this.extensionContext.globalState.get<string | null>('gently.selectedMode', null);
+    const normalizedStoredMode = normalizeModeAlias(storedMode);
+    const configuredMode = configuredAgentMode ? 'code' : 'architect';
+    const resolvedMode = normalizedStoredMode ?? configuredMode;
 
-    this.context.agentMode = configuredAgentMode;
-    this.context.selectedMode = configuredAgentMode ? 'code' : 'architect';
+    this.context.selectedMode = resolvedMode;
+    this.context.agentMode = resolvedMode === 'code';
     this.context.selectedModel = this.normalizeModelId(configuredModel) ?? this.normalizeModelId(storedModel);
   }
 
   setSelectedMode(modeId: string): void {
-    this.context.selectedMode = modeId;
-    this.context.agentMode = modeId === 'code';
-    this.extensionContext.globalState.update('gently.selectedMode', modeId);
+    const resolvedMode = normalizeModeAlias(modeId) || modeId;
+    this.context.selectedMode = resolvedMode;
+    this.context.agentMode = resolvedMode === 'code';
+    this.extensionContext.globalState.update('gently.selectedMode', resolvedMode);
     this.extensionContext.globalState.update('gently.agentMode', this.context.agentMode);
   }
 
@@ -291,9 +306,9 @@ export class MessageHandler {
     // Abort active tool executions & approvals
     this.agentManager.getToolManager().abortAllExecutions();
 
-    this.sendMessageToWebview({ type: 'assistantMessageEnd', messageId: this.context.currentMessageId || '' });
-    this.sendMessageToWebview({ type: 'processingEnd' });
-    this.sendMessageToWebview({ type: 'generatingEnd' });
+    this.guardedSendMessageToWebview({ type: 'assistantMessageEnd', messageId: this.context.currentMessageId || '' } as any);
+    this.guardedSendMessageToWebview({ type: 'processingEnd' } as any);
+    this.guardedSendMessageToWebview({ type: 'generatingEnd' } as any);
   }
 
 

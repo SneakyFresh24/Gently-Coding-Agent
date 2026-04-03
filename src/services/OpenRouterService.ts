@@ -271,6 +271,8 @@ export class OpenRouterService {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
+        let sawDoneSentinel = false;
+        let sawFinishReason = false;
 
         try {
             while (true) {
@@ -283,7 +285,11 @@ export class OpenRouterService {
 
                 for (const line of lines) {
                     const trimmed = line.trim();
-                    if (!trimmed || trimmed === 'data: [DONE]') continue;
+                    if (!trimmed) continue;
+                    if (trimmed === 'data: [DONE]') {
+                        sawDoneSentinel = true;
+                        continue;
+                    }
                     if (!trimmed.startsWith('data: ')) continue;
 
                     let chunk: any;
@@ -324,6 +330,10 @@ export class OpenRouterService {
                     const choice = chunk.choices?.[0];
                     if (!choice) continue;
 
+                    if (choice.finish_reason && choice.finish_reason !== 'error') {
+                        sawFinishReason = true;
+                    }
+
                     // 2. Mid-stream error detection
                     if (choice.finish_reason === "error") {
                         yield { type: 'error', error: new Error(`Stream Error Choice: ${choice.message || 'The model encountered an error during generation.'}`) };
@@ -358,6 +368,10 @@ export class OpenRouterService {
             }
             for (const incomplete of toolCallResult.incompleteToolCalls) {
                 yield { type: 'tool_call_incomplete', incomplete, index: -1 };
+            }
+
+            if (sawDoneSentinel || sawFinishReason) {
+                yield { type: 'message_stop' };
             }
 
         } finally {

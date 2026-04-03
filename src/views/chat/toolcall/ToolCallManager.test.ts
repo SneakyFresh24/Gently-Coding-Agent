@@ -108,4 +108,38 @@ describe('ToolCallManager mode contract validation', () => {
     expect(result.errors[0]).toContain('MODE_TOOL_BLOCKED');
     expect(result.errors[0]).toContain('ACT_STRICT');
   });
+
+  it('accepts plan/act aliases for mode contract validation', async () => {
+    const planResult = await manager.processToolCalls(
+      [
+        {
+          id: 'call_plan',
+          type: 'function',
+          function: { name: 'create_plan', arguments: '{"goal":"x","steps":[{"id":"1","title":"s"}]}' }
+        } as any
+      ],
+      {
+        selectedMode: 'plan',
+        conversationHistory: []
+      }
+    );
+    expect(planResult.valid).toBe(true);
+
+    const actResult = await manager.processToolCalls(
+      [
+        {
+          id: 'call_act',
+          type: 'function',
+          function: { name: 'create_plan', arguments: '{"goal":"x","steps":[]}' }
+        } as any
+      ],
+      {
+        selectedMode: 'act',
+        conversationHistory: []
+      }
+    );
+    expect(actResult.valid).toBe(false);
+    expect(actResult.errors[0]).toContain('MODE_TOOL_BLOCKED');
+    expect(actResult.errors[0]).toContain('ACT_STRICT');
+  });
 });

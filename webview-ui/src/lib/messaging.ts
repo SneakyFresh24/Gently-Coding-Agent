@@ -14,6 +14,7 @@ export interface MessageHandlers {
   onRetryingRateLimit?: (data: any) => void;
   onRetryStatus?: (data: any) => void;
   onResilienceStatus?: (data: any) => void;
+  onSubagentStatus?: (data: any) => void;
   onModeChanged?: (data: any) => void;
   onError?: (data: any) => void;
   onInfo?: (data: any) => void;
@@ -46,6 +47,8 @@ export interface MessageHandlers {
   onCommandKilled?: (data: any) => void;
   onAutoApproveSettingsUpdate?: (data: any) => void;
   onToolApprovalRequest?: (data: any) => void;
+  onQuestionRequest?: (data: any) => void;
+  onQuestionResolved?: (data: any) => void;
 
   // Checkpoints
   onCheckpointRestored?: (data: any) => void;
@@ -110,6 +113,7 @@ const TYPE_TO_HANDLER: Record<string, keyof MessageHandlers> = {
   retryingRateLimit: 'onRetryingRateLimit',
   retryStatus: 'onRetryStatus',
   resilienceStatus: 'onResilienceStatus',
+  subagentStatus: 'onSubagentStatus',
   modeChanged: 'onModeChanged',
   error: 'onError',
   info: 'onInfo',
@@ -132,6 +136,8 @@ const TYPE_TO_HANDLER: Record<string, keyof MessageHandlers> = {
   commandKilled: 'onCommandKilled',
   autoApproveSettingsUpdate: 'onAutoApproveSettingsUpdate',
   toolApprovalRequest: 'onToolApprovalRequest',
+  questionRequest: 'onQuestionRequest',
+  questionResolved: 'onQuestionResolved',
   checkpointRestored: 'onCheckpointRestored',
   checkpointRestorePlanned: 'onCheckpointRestorePlanned',
   checkpointRestoreError: 'onCheckpointRestoreError',

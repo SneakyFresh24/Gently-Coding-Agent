@@ -37,4 +37,14 @@ describe('StreamRecoveryManager', () => {
     });
     expect(replay).toHaveLength(0);
   });
+
+  it('emits message_stop only once across reconnect replay', () => {
+    const manager = new StreamRecoveryManager();
+    const first = manager.process({ type: 'message_stop' });
+    expect(first).toHaveLength(1);
+
+    manager.beginReconnectAttempt();
+    const replay = manager.process({ type: 'message_stop' });
+    expect(replay).toHaveLength(0);
+  });
 });

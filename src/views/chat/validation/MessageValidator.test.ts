@@ -283,6 +283,54 @@ describe('MessageValidator', () => {
         );
       });
     });
+
+    describe('Question Response', () => {
+      it('should validate a correct questionResponse payload', () => {
+        const message = {
+          type: 'questionResponse',
+          questionId: 'question_123',
+          selectedOptionIndexes: [0, 2],
+          source: 'user'
+        };
+
+        const result = validator.validateInboundMessage(message);
+        expect(result.isValid).toBe(true);
+      });
+
+      it('should reject questionResponse without questionId', () => {
+        const message = {
+          type: 'questionResponse',
+          selectedOptionIndexes: [0]
+        };
+
+        const result = validator.validateInboundMessage(message);
+        expect(result.isValid).toBe(false);
+        expect(result.errors).toContainEqual(
+          expect.objectContaining({
+            field: 'questionId',
+            code: 'REQUIRED_FIELD_MISSING'
+          })
+        );
+      });
+
+      it('should reject questionResponse with invalid source enum', () => {
+        const message = {
+          type: 'questionResponse',
+          questionId: 'question_abc',
+          selectedOptionIndexes: [0],
+          source: 'timeout_default'
+        };
+
+        const result = validator.validateInboundMessage(message);
+        expect(result.isValid).toBe(false);
+        expect(result.errors).toContainEqual(
+          expect.objectContaining({
+            field: 'source',
+            code: 'INVALID_ENUM_VALUE'
+          })
+        );
+      });
+    });
   });
 
   describe('Input Sanitization', () => {

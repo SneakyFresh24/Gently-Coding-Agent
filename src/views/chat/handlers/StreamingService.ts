@@ -39,7 +39,7 @@ export class StreamingService {
             isFollowUp?: boolean;
             shouldStopRef: { current: boolean };
         }
-    ): Promise<{ assistantMessage: string; toolCalls: any[]; incompleteToolCalls: IncompleteToolCall[]; usage?: UsageInfo }> {
+    ): Promise<{ assistantMessage: string; toolCalls: any[]; incompleteToolCalls: IncompleteToolCall[]; usage?: UsageInfo; streamTerminated: boolean }> {
         const streamHandler = new StreamResponseHandler();
         const msgIndex = 0; // Default index for the assistant message in this stream
         const config = vscode.workspace.getConfiguration('gently');
@@ -95,7 +95,7 @@ export class StreamingService {
                         messageId: `msg_${Date.now()}`
                     });
                 }
-                return { assistantMessage, toolCalls, incompleteToolCalls, usage };
+                return { assistantMessage, toolCalls, incompleteToolCalls, usage, streamTerminated: true };
             } catch (error) {
                 log.error('Non-streaming follow-up failed:', error);
                 this.sendMessageToWebview({ type: 'processingEnd' });
@@ -118,6 +118,7 @@ export class StreamingService {
             try {
                 let usage: UsageInfo | undefined;
                 const incompleteToolCalls: IncompleteToolCall[] = [];
+                let streamTerminated = false;
                 const recovery = new StreamRecoveryManager(1);
                 let recoveryState: StreamRecoveryState = 'STREAMING';
                 let reconnectAttempt = 0;
@@ -241,6 +242,10 @@ export class StreamingService {
                                                 usage = chunk.usage;
                                                 break;
 
+                                            case 'message_stop':
+                                                streamTerminated = true;
+                                                break;
+
                                             case 'error':
                                                 throw chunk.error;
                                         }
@@ -324,7 +329,8 @@ export class StreamingService {
                     assistantMessage: finalState.content, 
                     toolCalls: finalState.toolCalls,
                     incompleteToolCalls,
-                    usage
+                    usage,
+                    streamTerminated
                 };
             } catch (error) {
                 log.error('Streaming failed:', error);

@@ -1,7 +1,7 @@
 import { ChatMessage, ToolCall } from '../../../services/OpenRouterService';
 import { LogService } from '../../../services/LogService';
 import { createHash } from 'crypto';
-import { getModeContractViolation } from '../../../modes/ModeContractV2';
+import { getModeContractViolation, normalizeModeAlias } from '../../../modes/ModeContractV2';
 import * as vscode from 'vscode';
 
 const log = new LogService('ToolCallManager');
@@ -81,7 +81,7 @@ export class ToolCallManager {
     context: ToolCallMessageContext
   ): { valid: boolean; errors: string[] } {
     const errors: string[] = [];
-    const currentMode = context.selectedMode;
+    const currentMode = normalizeModeAlias(context.selectedMode) || context.selectedMode;
     const modeStateMachineV2Enabled = this.isModeStateMachineV2Enabled();
 
     if (!currentMode) return { valid: true, errors: [] };

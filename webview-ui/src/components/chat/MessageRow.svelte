@@ -5,6 +5,7 @@
   import ToolMessage from '../message/ToolMessage.svelte';
   import CommandMessage from '../message/CommandMessage.svelte';
   import ErrorMessage from '../message/ErrorMessage.svelte';
+  import QuestionCardMessage from '../message/QuestionCardMessage.svelte';
 
   let {
     message,
@@ -14,7 +15,9 @@
 </script>
 
 <div class="message-row" data-role={message.role}>
-  {#if message.role === 'user'}
+  {#if message.questionCard}
+    <QuestionCardMessage {message} />
+  {:else if message.role === 'user'}
     <UserMessage {message} />
   {:else if message.role === 'assistant'}
     <AssistantMessage {message} />

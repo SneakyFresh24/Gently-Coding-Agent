@@ -2,11 +2,61 @@
 
 All notable changes to the "Gently" extension will be documented in this file.
 
-## [0.9.83] - 2026-04-02
+## [0.10.0] - 2026-04-02
 
 ### Added
 - **Prompt Contract V2 (Claude-style)**: Introduced modular prompt sections (`identity`, `objective`, `mode_contract`, `tool_policy`, `recovery_policy`, `output_contract`, `runtime_hints`) with strict required-component validation.
 - **Mode Contract V2 Utilities**: Added shared mode-contract policy helper (`PLAN_STRICT` / `ACT_STRICT`) for deterministic tool allow/deny decisions.
+- **R4 Chaos/Replay Harness**:
+  - Added shared deterministic soak utilities (`R4SoakHarness`) for seeded fault plans, replay snapshot normalization, mismatch detection, and standardized suite report output.
+  - Added unit coverage for harness determinism and replay comparison.
+- **R5 In-Chat Question Card V1**:
+  - Added structured ask-question webview contract (`questionRequest`, `questionResponse`, `questionResolved`) with deterministic timeout-default resolution.
+  - Added inline chat question-card rendering with single/multiple selection, submit/cancel actions, and resolved-state replay in chat history.
+  - Added ToolManager-owned ask-question runtime orchestration with stop/abort-safe pending question handling and kill-switch fallback to legacy path.
+- **R3 Subagent Orchestration Core**:
+  - Added `SubagentRunStateMachine` with deterministic phases (`IDLE -> PREFLIGHT -> MODE_SWITCH -> WORKER_RUN -> MERGE_SUMMARY -> TERMINAL`) and strict transition/terminal guarantees.
+  - Added `SubagentRetryPolicyEngine` for recoverable handover failures (`mode_switch_recoverable`, `worker_start_recoverable`) with fixed retry budget/backoff.
+  - Added `SubagentOrchestrator` as single-owner runtime for `handover_to_coder` with single-active-run invariant and auto-start of coder continuation after successful handover.
+- **R3 Structured UI Contract**:
+  - Added outbound webview event `subagentStatus` with stable code-based statuses for subagent lifecycle, retries, hook failures, stop, and summary completion.
+  - Added UI/webview message wiring for `subagentStatus` and compact system rendering in chat.
+- **R3 Production Flags**:
+  - `gently.resilience.subagentOrchestratorV1` (default `true`)
+  - `gently.resilience.subagentErrorContractV1` (default `true`)
+  - `gently.resilience.subagentTelemetryV1` (default `true`)
+- **R2 Tool + Hook Runtime Core**:
+  - Added `ToolRunStateMachine` with deterministic phases (`INIT -> PRE_HOOK -> VALIDATE -> CIRCUIT -> APPROVAL -> EXECUTE -> POST_HOOK -> TERMINAL`) and hard transition/terminal guards.
+  - Added `ToolRetryPolicyEngine` with fixed recoverable retry budget/backoff (`2` retries, `500ms/1000ms`).
+  - Added hook correlation context propagation (`flowId`, `correlationId`, `toolCallId`, `attempt`, `phase`, `mode`) and stable hook failure codes.
+- **R2 Production Flags**:
+  - `gently.resilience.toolOrchestratorV2` (default `true`)
+  - `gently.resilience.hookContractV2` (default `true`)
+  - `gently.resilience.toolTelemetryV2` (default `true`)
+- **R2 Test Coverage**:
+  - Added hook policy contract tests (`src/hooks/HookManager.test.ts`).
+  - Added tool runtime engine tests (`ToolRunStateMachine`, `ToolRetryPolicyEngine`).
+  - Added tool orchestration tests (`ToolManager.orchestration.test.ts`) and dispatcher metadata delegation assertions.
+  - Added `ToolManager.soak.test.ts` with 1000 mixed fault-injected tool flows as R2 hard gate.
+- **R3 Test Coverage**:
+  - Added `SubagentRunStateMachine.test.ts`, `SubagentRetryPolicyEngine.test.ts`, and `SubagentOrchestrator.test.ts`.
+  - Added `SubagentOrchestrator.soak.test.ts` with 1000 fault-injected subagent flows as R3 hard gate.
+- **R4 Soak Coverage Upgrade**:
+  - Upgraded chat/tool/subagent 1000-flow soak suites to deterministic seeded chaos replay with strict R4 SLO assertions.
+  - Added explicit fault catalog coverage for `429`, `400/context-overflow`, `stream-cut`, `tool-invalid`, and mixed fault chains across the resilience corpus.
+- **Webview Interaction Contract**:
+  - ChatViewProvider now accepts `questionResponse` messages and routes them deterministically to ToolManager pending question runs.
+- **R5.1 Mode-Desync Regression Coverage**:
+  - Added `ChatViewProvider.modeSync.test.ts` for blocked `PLAN -> ACT` transition fallback behavior.
+  - Added dispatcher regression tests for mode desync self-heal + structured `MODE_TOOL_BLOCKED` emission.
+  - Added mode-alias validation tests (`plan/act`) in `ToolCallManager.test.ts`.
+- **R1 Runtime Engines**:
+  - `TurnEngine` state machine (`INIT -> PREFLIGHT -> STREAMING -> TOOL_EXEC -> RECOVERY -> TERMINAL`) with strict transition/terminal invariants.
+  - `RetryPolicyEngine` with deterministic budgets/backoffs (`context=4`, `sequence=3`, `empty=2`, `rate_limit=2`).
+  - `StreamContractEngine` for explicit stream-stop and strict empty-response contract checks.
+  - `LifecycleGuard` for idempotent lifecycle messaging (`processing*`, `generating*`).
+- **R1 Soak Coverage**:
+  - Added `ChatFlowManager.soak.test.ts` with 1000 fault-injected flows and hard assertions for silent-abort/stability/recovery criteria.
 - **New Production Settings**:
   - `gently.promptContractV2` (default `true`)
   - `gently.modeStateMachineV2` (default `true`)
@@ -18,14 +68,47 @@ All notable changes to the "Gently" extension will be documented in this file.
   - `docs/sota-release-gate.md`
 
 ### Changed
+- **R5.1 Mode State Sync Hotfix**:
+  - Runtime mode boot now prioritizes stored `selectedMode` over `agentMode` fallback to prevent UI/runtime desync.
+  - Blocked `PLAN -> ACT` transitions now force-safe sync back to Architect/Plan mode and emit `modeChanged` + structured `resilienceStatus`.
+- **Mode Contract Aliases (non-breaking)**:
+  - Added internal alias support `plan -> architect` and `act -> code` for deterministic contract resolution without breaking existing mode IDs.
+- **Mode Validation Terminal Guard**:
+  - Mode validation failures now emit structured `resilienceStatus` (`MODE_STATE_DESYNC_DETECTED`, `MODE_TRANSITION_BLOCKED`, `MODE_TOOL_BLOCKED`) plus legacy `error` fallback and deterministic lifecycle end signals.
 - **Family Overrides → Structured Deltas**: Model-family prompt overrides now target validated prompt components (`tool_policy`, `recovery_policy`, `output_contract`, etc.) instead of free-form append-only rule blocks.
 - **Mode State Machine Guardrails**:
   - PLAN->ACT transition now requires an existing persisted plan when `modeStateMachineV2` is enabled.
   - Optional mode-based model default routing is applied on successful mode switch.
+- **Global Kill-Switch Consistency**:
+  - `gently.resilience.killSwitch` now consistently disables the new Prompt/Mode V2 guard paths as well (Prompt Contract V2 strict path, mode transition guard, and tool mode-contract enforcement), forcing deterministic legacy fallback behavior.
 - **Runtime Recovery Coupling V2**: Retry attempts now inject structured recovery narratives into request context (`RECOVERY_NARRATIVE_V2`) for deterministic retry behavior.
 - **Tool Execution Contract Enforcement**: Tool-call validation now enforces both plan and act restrictions with stable `MODE_TOOL_BLOCKED` errors.
 - **Structured Error Contract V2**: `resilienceStatus` payload now includes `phase`, `decision`, `reason`, and `correlationId`; telemetry/log events now include `mode` and correlation continuity.
+- **Tool/Hook Structured Contract Expansion**: `resilienceStatus` now includes stable tool/hook resilience codes (`TOOL_RETRY_SCHEDULED`, `TOOL_RETRY_EXHAUSTED`, `HOOK_PRE_BLOCKED`, `HOOK_PRE_FAILED`, `HOOK_POST_FAILED`, `HOOK_NOTIFICATION_FAILED`, `TOOL_APPROVAL_TIMEOUT`) and code-driven UI actions.
+- **Single-Owner Tool Execution Path (R2)**:
+  - `ExecutionDispatchers` now forwards flow/correlation metadata and delegates tool execution to `ToolManager` as the single orchestration owner.
+  - Centralized tool retry/terminalization into ToolManager V2 path and removed competing retry ownership in dispatcher path.
+- **Single-Owner Subagent Execution Path (R3)**:
+  - `ExecutionDispatchers` now routes `handover_to_coder` through `SubagentOrchestrator` instead of ad-hoc follow-up handling.
+  - Architect->Coder handover now enforces preflight/mode-contract checks and auto-starts coder continuation on successful mode switch.
+- **Hook Context Enrichment (R3)**:
+  - Added `subagentId` propagation in hook context for deterministic subagent correlation across hook execution and telemetry.
+- **Hook Contract Semantics (R2)**:
+  - `PreToolUse` now enforces fail-closed under `hookContractV2`.
+  - `PostToolUse`/`Notification` remain fail-open with explicit structured failure reporting.
+- **Telemetry Semantics**: `RESILIENCE_ATTEMPT_START` now emits code `REQUEST_ATTEMPT` (instead of `REQUEST_STOPPED`) for clean observability and alerting semantics.
 - **UI Resilience Rendering**: Webview resilience messages now render code-based fallback + action hint + phase/decision/reason metadata consistently.
+- **Stream Termination Contract**:
+  - OpenRouter streaming now emits explicit `message_stop` terminal chunks when provider finish markers are observed.
+  - `StreamingService` propagates `streamTerminated` to the orchestration layer.
+  - `ChatFlowManager` fails fast on missing terminal stop with stable code `STREAM_CONTRACT_MISSING_STOP`.
+- **Release Gate Hardening**:
+  - `scripts/resilience-release-gate.js` now includes runtime engine suites and the required R1 soak-gate run.
+  - Added R2 tool/hook orchestration suites as mandatory release-gate checks.
+  - Added R3 subagent orchestration suites and R3 1000-flow soak gate as mandatory release-gate checks.
+  - Added dedicated R4 hardening gate (`resilience:hardening-gate`) as merge blocker with subsystem-specific SLO validation and machine-readable JSON reporting.
+  - Added ask-question runtime + contract tests (`ToolManager.askQuestion.test.ts`) and message-validator contract coverage for `questionResponse`.
+  - Added `npm run resilience:soak`.
 
 ## [0.9.82] - 2026-04-01
 

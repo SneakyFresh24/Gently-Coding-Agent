@@ -45,6 +45,7 @@ export type StreamChunk =
     | { type: 'tool_call_incomplete'; incomplete: IncompleteToolCall; index: number }
     | { type: 'reasoning'; reasoning: string }
     | { type: 'usage'; usage: UsageInfo }
+    | { type: 'message_stop' }
     | { type: 'error'; error: Error }
     | { type: 'partial_update'; index: number; updates: PartialMessageUpdate };
 

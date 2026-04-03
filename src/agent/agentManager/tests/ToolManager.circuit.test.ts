@@ -19,10 +19,10 @@ vi.mock('vscode', () => ({
 
 describe('ToolManager circuit transition notifications', () => {
   it('emits half_open and closed notifications during successful execution', async () => {
-    const executeNotification = vi.fn().mockResolvedValue(undefined);
+    const executeNotification = vi.fn().mockResolvedValue({ failures: [] });
     const hookManager = {
       executePreHooks: vi.fn().mockResolvedValue({ blocked: false, modifiedParams: { path: 'README.md' } }),
-      executePostHooks: vi.fn().mockResolvedValue(undefined),
+      executePostHooks: vi.fn().mockResolvedValue({ failures: [] }),
       executeNotification
     } as any;
 
@@ -71,14 +71,14 @@ describe('ToolManager circuit transition notifications', () => {
     await manager.executeTool('read_file', { path: 'README.md' });
 
     expect(executeNotification).toHaveBeenCalledTimes(2);
-    expect(executeNotification).toHaveBeenCalledWith(expect.objectContaining({
+    expect(executeNotification).toHaveBeenNthCalledWith(1, expect.objectContaining({
       channel: 'circuit_breaker',
       severity: 'warning',
       action: 'retry'
-    }));
-    expect(executeNotification).toHaveBeenCalledWith(expect.objectContaining({
+    }), expect.any(Object));
+    expect(executeNotification).toHaveBeenNthCalledWith(2, expect.objectContaining({
       channel: 'circuit_breaker',
       severity: 'info'
-    }));
+    }), expect.any(Object));
   });
 });

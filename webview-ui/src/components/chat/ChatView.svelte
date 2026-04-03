@@ -56,6 +56,12 @@
         return 'Tool-call sequence could not be repaired automatically.';
       case 'GUARDRAIL_PRIVACY_BLOCK':
         return 'Provider blocked the request due to guardrail/privacy restrictions.';
+      case 'MODE_STATE_DESYNC_DETECTED':
+        return 'Mode desync detected and auto-synced.';
+      case 'MODE_TRANSITION_BLOCKED':
+        return 'Mode transition to Code/Act is blocked until a persisted plan exists.';
+      case 'MODE_TOOL_BLOCKED':
+        return 'Tool call blocked by current mode contract.';
       case 'REQUEST_STOPPED':
         return 'Request stopped.';
       default:
@@ -73,8 +79,54 @@
         return 'Action: Start new chat.';
       case 'check_privacy_settings':
         return 'Action: Check privacy settings.';
+      case 'switch_to_plan':
+        return 'Action: Switch to Architect/Plan mode.';
+      case 'create_plan_now':
+        return 'Action: Create and persist a plan first.';
       default:
         return '';
+    }
+  }
+
+  function getSubagentFallbackMessage(code: string): string {
+    switch (code) {
+      case 'SUBAGENT_START':
+        return 'Starting subagent handover...';
+      case 'SUBAGENT_PREFLIGHT_BLOCKED':
+        return 'Subagent preflight blocked.';
+      case 'SUBAGENT_MODE_SWITCHED':
+        return 'Switched to code mode for subagent run.';
+      case 'SUBAGENT_RUNNING':
+        return 'Starting coder worker...';
+      case 'SUBAGENT_RETRY_SCHEDULED':
+        return 'Subagent retry scheduled.';
+      case 'SUBAGENT_RETRY_EXHAUSTED':
+        return 'Subagent retries exhausted.';
+      case 'SUBAGENT_PREHOOK_BLOCKED':
+        return 'Subagent blocked by pre-hook policy.';
+      case 'SUBAGENT_PREHOOK_FAILED':
+        return 'Subagent pre-hook failed.';
+      case 'SUBAGENT_POSTHOOK_FAILED':
+        return 'Subagent post-hook failed.';
+      case 'SUBAGENT_TERMINAL_FAILED':
+        return 'Subagent terminated with failure.';
+      case 'SUBAGENT_STOPPED':
+        return 'Subagent stopped.';
+      case 'SUBAGENT_SUMMARY_READY':
+        return 'Subagent summary ready.';
+      default:
+        return 'Subagent status update received.';
+    }
+  }
+
+  function getQuestionResolutionHint(source: string): string {
+    switch (source) {
+      case 'timeout_default':
+        return 'Auto-selected default option.';
+      case 'stopped':
+        return 'Question was stopped.';
+      default:
+        return 'Answered.';
     }
   }
 
@@ -149,6 +201,123 @@
         if (code === 'REQUEST_STOPPED') {
           extensionStore.clearActivityState();
         }
+      },
+      onSubagentStatus: (data) => {
+        const code = String(data.code || '');
+        const userMessage = typeof data.userMessage === 'string' && data.userMessage.trim().length > 0
+          ? data.userMessage
+          : getSubagentFallbackMessage(code);
+        const actionHint = getResilienceActionHint(String(data.action || 'none'));
+        const detailParts = [
+          String(data.phase || 'runtime'),
+          String(data.decision || 'report'),
+          String(data.reason || 'unspecified')
+        ];
+        const detail = `[subagent ${String(data.subagentId || 'unknown')}] [${detailParts.join(' | ')}]`;
+        const content = [userMessage, actionHint, detail].filter((part) => part && part.trim().length > 0).join(' ');
+        chatStore.addMessage({
+          id: `sys_subagent_${Date.now()}`,
+          role: 'system',
+          content,
+          timestamp: Date.now(),
+          isSystemMessage: true,
+        });
+
+        if (data.retryable && typeof data.nextDelayMs === 'number' && data.nextDelayMs > 0) {
+          extensionStore.setActivityLabel(`${userMessage} (${Math.ceil(data.nextDelayMs / 1000)}s)`);
+          extensionStore.setActivityPhase('thinking');
+          return;
+        }
+
+        if (code === 'SUBAGENT_STOPPED' || code === 'SUBAGENT_SUMMARY_READY' || code === 'SUBAGENT_TERMINAL_FAILED') {
+          extensionStore.clearActivityState();
+        }
+      },
+      onQuestionRequest: (data) => {
+        const questionId = String(data.questionId || '');
+        if (!questionId) return;
+        const messageId = `question_${questionId}`;
+        const timestamp = Number(data.timestamp || Date.now());
+        const nextCard = {
+          questionId,
+          header: typeof data.header === 'string' ? data.header : undefined,
+          question: String(data.question || ''),
+          options: Array.isArray(data.options) ? data.options : [],
+          multiple: Boolean(data.multiple),
+          timeoutMs: Number(data.timeoutMs || 60000),
+          defaultOptionIndex: Number.isInteger(data.defaultOptionIndex) ? Number(data.defaultOptionIndex) : 0,
+          status: 'pending' as const,
+          selectedOptionIndexes: []
+        };
+
+        const existing = get(chatStore).messages.find((msg) => msg.id === messageId);
+        if (existing) {
+          chatStore.updateMessage(messageId, {
+            content: String(data.question || ''),
+            questionCard: nextCard,
+            timestamp,
+            isSystemMessage: false
+          });
+        } else {
+          chatStore.addMessage({
+            id: messageId,
+            role: 'system',
+            content: String(data.question || ''),
+            timestamp,
+            isSystemMessage: false,
+            questionCard: nextCard
+          });
+        }
+
+        extensionStore.setActivityLabel('Waiting for your answer...');
+        extensionStore.setActivityPhase('thinking');
+      },
+      onQuestionResolved: (data) => {
+        const questionId = String(data.questionId || '');
+        if (!questionId) return;
+        const messageId = `question_${questionId}`;
+        const selectedOptionIndexes = Array.isArray(data.selectedOptionIndexes)
+          ? data.selectedOptionIndexes.filter((value) => Number.isInteger(value) && value >= 0)
+          : [];
+        const source = String(data.source || 'user');
+        const resolutionSource = source === 'timeout_default' || source === 'stopped' ? source : 'user';
+        const timestamp = Number(data.timestamp || Date.now());
+
+        const existing = get(chatStore).messages.find((msg) => msg.id === messageId);
+        if (!existing || !existing.questionCard) {
+          chatStore.addMessage({
+            id: messageId,
+            role: 'system',
+            content: 'Question resolved.',
+            timestamp,
+            isSystemMessage: false,
+            questionCard: {
+              questionId,
+              header: undefined,
+              question: 'Question resolved.',
+              options: [],
+              multiple: false,
+              timeoutMs: 60000,
+              defaultOptionIndex: 0,
+              status: 'resolved',
+              selectedOptionIndexes,
+              resolutionSource
+            }
+          });
+        } else {
+          chatStore.updateMessage(messageId, {
+            timestamp,
+            questionCard: {
+              ...existing.questionCard,
+              status: 'resolved',
+              selectedOptionIndexes,
+              resolutionSource
+            },
+            content: `${existing.questionCard.question} (${getQuestionResolutionHint(source)})`
+          });
+        }
+
+        extensionStore.clearActivityState();
       },
       onModeChanged: (data) => {
         extensionStore.hydrate({

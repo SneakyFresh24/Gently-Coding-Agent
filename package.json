@@ -2,7 +2,7 @@
   "name": "gently",
   "displayName": "Gently - AI Coding Agent",
   "description": "AI-powered coding assistant — Bring Your Own Key via OpenRouter",
-  "version": "0.9.9",
+  "version": "0.10.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -339,6 +339,36 @@
           "default": true,
           "description": "Emit structured resilience telemetry events with stable codes and flow IDs."
         },
+        "gently.resilience.toolOrchestratorV2": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable deterministic single-owner tool orchestration with state-machine enforced phases."
+        },
+        "gently.resilience.hookContractV2": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable strict hook contract semantics (Pre fail-closed, Post/Notification fail-open)."
+        },
+        "gently.resilience.toolTelemetryV2": {
+          "type": "boolean",
+          "default": true,
+          "description": "Emit structured tool/hook resilience telemetry events with flow and correlation IDs."
+        },
+        "gently.resilience.subagentOrchestratorV1": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable deterministic single-worker subagent orchestration for architect-to-coder handover."
+        },
+        "gently.resilience.subagentErrorContractV1": {
+          "type": "boolean",
+          "default": true,
+          "description": "Emit structured subagent status events for deterministic UI handling."
+        },
+        "gently.resilience.subagentTelemetryV1": {
+          "type": "boolean",
+          "default": true,
+          "description": "Emit structured subagent telemetry events with stable codes and correlation IDs."
+        },
         "gently.resilience.circuit.failureThreshold": {
           "type": "number",
           "default": 5,
@@ -423,6 +453,8 @@
     "package": "npm run build && vsce package",
     "rebuild": "electron-rebuild -v 39.2.3 --arch x64",
     "rollout:phase3": "node scripts/rollout-toolcall-system-phase3.js",
+    "resilience:soak": "npm exec vitest run src/views/chat/handlers/ChatFlowManager.soak.test.ts",
+    "resilience:hardening-gate": "node scripts/resilience-hardening-gate.js",
     "resilience:release-gate": "node scripts/resilience-release-gate.js",
     "cleanup:legacy": "node scripts/cleanup-legacy-files.js",
     "benchmark:retrieval": "vitest run scripts/benchmark-retrieval.test.ts"

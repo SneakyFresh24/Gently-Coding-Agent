@@ -1,6 +1,9 @@
 import { AgentTool } from '../agent/agentManager/AgentManager';
 
 export type ModeContractId = 'PLAN_STRICT' | 'ACT_STRICT' | 'UNKNOWN';
+export type CanonicalModeId = 'plan' | 'act' | 'unknown';
+
+type RuntimeModeId = 'architect' | 'code';
 
 const PLAN_STRICT_ALLOWED_TOOLS = new Set<string>([
   'find_files',
@@ -22,9 +25,23 @@ const ACT_STRICT_BLOCKED_TOOLS = new Set<string>([
   'ask_question'
 ]);
 
+export function normalizeModeAlias(modeId?: string | null): RuntimeModeId | null {
+  if (!modeId) return null;
+  const normalized = modeId.trim().toLowerCase();
+  if (normalized === 'architect' || normalized === 'plan') return 'architect';
+  if (normalized === 'code' || normalized === 'act') return 'code';
+  return null;
+}
+
+export function toCanonicalModeId(modeId?: string | null): CanonicalModeId {
+  const runtime = normalizeModeAlias(modeId);
+  if (runtime === 'architect') return 'plan';
+  if (runtime === 'code') return 'act';
+  return 'unknown';
+}
+
 export function resolveModeContract(modeId?: string | null): ModeContractId {
-  if (!modeId) return 'UNKNOWN';
-  const normalized = modeId.toLowerCase();
+  const normalized = normalizeModeAlias(modeId);
   if (normalized === 'architect') return 'PLAN_STRICT';
   if (normalized === 'code') return 'ACT_STRICT';
   return 'UNKNOWN';

@@ -17,6 +17,7 @@ import { SessionHandler } from './handlers/SessionHandler';
 import { WebviewMessageHandler } from './handlers/WebviewMessageHandler';
 import { FileHandler } from './handlers/FileHandler';
 import { SystemHandler } from './handlers/SystemHandler';
+import { normalizeModeAlias } from '../../modes/ModeContractV2';
 
 import { ChatViewContext, WebviewMessage } from './types/ChatTypes';
 
@@ -233,6 +234,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this.agentManager.getToolManager().handleApprovalResponse(data.approvalId, data.approved, data.alwaysApprove);
             return;
           }
+          if (data.type === 'questionResponse') {
+            this.agentManager.getToolManager().handleQuestionResponse(
+              data.questionId,
+              Array.isArray(data.selectedOptionIndexes) ? data.selectedOptionIndexes : [],
+              data.source
+            );
+            return;
+          }
           if (data.type === 'getTokenUsage') {
             await this.sessionHandler.sendActiveSessionTokenUsage();
             return;
@@ -370,20 +379,63 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private static readonly AGENT_LIKE_MODES = ['code'];
 
   public async setSelectedMode(modeId: string): Promise<void> {
+    const requestedMode = normalizeModeAlias(modeId) || modeId;
     const config = vscode.workspace.getConfiguration('gently');
     const modeStateMachineV2Enabled =
       config.get<boolean>('modeStateMachineV2', true) && !config.get<boolean>('resilience.killSwitch', false);
-    const previousMode = this.modeService.getCurrentMode()?.id || this.messageHandler.getContext()?.selectedMode;
-    if (modeStateMachineV2Enabled && previousMode === 'architect' && modeId === 'code' && !this.hasPersistedPlanForCodeTransition()) {
+    const previousMode = normalizeModeAlias(this.modeService.getCurrentMode()?.id || this.messageHandler.getContext()?.selectedMode) || 'architect';
+    if (modeStateMachineV2Enabled && previousMode === 'architect' && requestedMode === 'code' && !this.hasPersistedPlanForCodeTransition()) {
       const message = 'MODE_TRANSITION_BLOCKED: PLAN -> ACT requires an existing persisted plan (create_plan).';
-      this._view?.webview.postMessage({ type: 'error', message, code: 'MODE_TRANSITION_BLOCKED', action: 'none' });
+      const correlationId = `mode_transition_blocked:${Date.now()}`;
+      console.warn(`[ChatViewProvider] MODE_TRANSITION_BLOCKED previous=${previousMode} requested=${requestedMode} correlationId=${correlationId}`);
+      this.messageHandler.setSelectedMode('architect');
+      this.context?.globalState.update('gently.selectedMode', 'architect');
+      this.context?.globalState.update('gently.agentMode', false);
+      if (config.get<boolean>('agentMode', false) !== false) {
+        await config.update('agentMode', false, vscode.ConfigurationTarget.Global);
+      }
+
+      if (this.modeService.getCurrentMode()?.id !== 'architect') {
+        try {
+          await this.modeService.setMode('architect');
+        } catch (error) {
+          console.warn('[ChatViewProvider] Failed to restore architect mode after transition block:', error);
+        }
+      }
+
+      const mode = this.modeService.getCurrentMode();
+      this._view?.webview.postMessage({
+        type: 'modeChanged',
+        modeId: mode?.id || 'architect',
+        modeName: mode?.displayName || 'Architect',
+        modeDescription: mode?.description || 'Planning mode',
+        agentMode: false
+      });
+      this._view?.webview.postMessage({
+        type: 'resilienceStatus',
+        code: 'MODE_TRANSITION_BLOCKED',
+        category: 'mode',
+        severity: 'warning',
+        retryable: false,
+        attempt: 1,
+        maxAttempts: 1,
+        model: this.messageHandler.getContext()?.selectedModel || 'unknown',
+        flowId: this.messageHandler.getContext()?.currentFlowId || null,
+        userMessage: 'Code mode was blocked because no persisted plan exists. Create a plan first.',
+        action: 'create_plan_now',
+        phase: 'preflight',
+        decision: 'abort',
+        reason: 'plan_required_for_plan_to_act_transition',
+        correlationId
+      });
+      this._view?.webview.postMessage({ type: 'error', message, code: 'MODE_TRANSITION_BLOCKED', action: 'create_plan_now' });
       return;
     }
 
-    this.messageHandler.setSelectedMode(modeId);
+    this.messageHandler.setSelectedMode(requestedMode);
     if (!this.modeService) return;
     try {
-      await this.modeService.setMode(modeId);
+      await this.modeService.setMode(requestedMode);
       const mode = this.modeService.getCurrentMode();
       if (mode) {
         // NEVER overwrite the real mode.id — pass it through directly!
@@ -393,7 +445,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         if (config.get<boolean>('agentMode', false) !== isAgentMode) {
           void config.update('agentMode', isAgentMode, vscode.ConfigurationTarget.Global);
         }
-        console.log(`[ChatViewProvider] setSelectedMode: ${modeId} → resolved to ${mode.id} (agentLike=${isAgentMode})`);
+        console.log(`[ChatViewProvider] setSelectedMode: ${modeId} -> requested ${requestedMode} -> resolved to ${mode.id} (agentLike=${isAgentMode})`);
         this._view?.webview.postMessage({
           type: 'modeChanged', modeId: mode.id, modeName: mode.displayName,
           modeDescription: mode.description, agentMode: isAgentMode,

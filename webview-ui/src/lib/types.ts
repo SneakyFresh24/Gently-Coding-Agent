@@ -47,6 +47,25 @@ export interface PendingApproval {
   timestamp: number;
 }
 
+export interface QuestionOption {
+  label: string;
+  description?: string;
+  mode?: string;
+}
+
+export interface QuestionCardState {
+  questionId: string;
+  header?: string;
+  question: string;
+  options: QuestionOption[];
+  multiple: boolean;
+  timeoutMs: number;
+  defaultOptionIndex: number;
+  status: 'pending' | 'resolved';
+  selectedOptionIndexes: number[];
+  resolutionSource?: 'user' | 'timeout_default' | 'stopped';
+}
+
 export interface ToolCallInfo {
   toolId: string;
   toolName: string;
@@ -81,6 +100,7 @@ export interface Message {
   isSystemMessage?: boolean;
   commandApproval?: CommandApproval;
   toolExecution?: ToolExecution;
+  questionCard?: QuestionCardState;
 }
 
 // ── Extension State ──────────────────────────────────
@@ -216,6 +236,7 @@ export type InboundMessageType =
   | 'setAutoApproveSettings'
   | 'toggleYoloMode'
   | 'toolApprovalResponse'
+  | 'questionResponse'
   | 'syncTasks'
   | 'syncContext'
   | 'requestCurrentPlan'
@@ -240,6 +261,7 @@ export type OutboundMessageType =
   | 'retryingRateLimit'
   | 'retryStatus'
   | 'resilienceStatus'
+  | 'subagentStatus'
   | 'error'
   | 'info'
   | 'modeChanged'
@@ -274,6 +296,8 @@ export type OutboundMessageType =
   | 'planStepCompleted'
   | 'autoApproveSettingsUpdate'
   | 'toolApprovalRequest'
+  | 'questionRequest'
+  | 'questionResolved'
   | 'setPromptFromGuardian'
   | 'workspaceInfo'
   | 'currentPlanResponse'

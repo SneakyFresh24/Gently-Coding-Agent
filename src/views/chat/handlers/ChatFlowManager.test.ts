@@ -47,7 +47,8 @@ function createManager(overrides: {
             assistantMessage: 'ok',
             toolCalls: [],
             incompleteToolCalls: [],
-            usage: undefined
+            usage: undefined,
+            streamTerminated: true
         })
     };
     const openRouterService = {
@@ -137,7 +138,8 @@ describe('ChatFlowManager resilience hardening', () => {
             assistantMessage: '',
             toolCalls: [],
             incompleteToolCalls: [],
-            usage: undefined
+            usage: undefined,
+            streamTerminated: true
         });
         const { manager, streamingService, sendMessageToWebview } = createManager({
             streamResponse: empty,
@@ -182,7 +184,8 @@ describe('ChatFlowManager resilience hardening', () => {
                 assistantMessage: '',
                 toolCalls: [],
                 incompleteToolCalls: [],
-                usage: undefined
+                usage: undefined,
+                streamTerminated: true
             };
         });
         const { manager, streamingService, sendMessageToWebview } = createManager({
@@ -209,6 +212,38 @@ describe('ChatFlowManager resilience hardening', () => {
         );
     });
 
+    it('fails explicitly when stream ends without terminal stop event', async () => {
+        const missingStop = vi.fn().mockResolvedValue({
+            assistantMessage: 'partial response',
+            toolCalls: [],
+            incompleteToolCalls: [],
+            usage: undefined,
+            streamTerminated: false
+        });
+        const { manager, sendMessageToWebview } = createManager({
+            streamResponse: missingStop
+        });
+
+        await expect(manager.generateAndStreamResponse(createContext(), 'test')).rejects.toThrow(
+            'Assistant stream ended unexpectedly without a terminal stop event.'
+        );
+        expect(sendMessageToWebview).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'resilienceStatus',
+                code: 'STREAM_CONTRACT_MISSING_STOP',
+                category: 'request',
+                retryable: false,
+                action: 'retry'
+            })
+        );
+        expect(sendMessageToWebview).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'error',
+                code: 'STREAM_CONTRACT_MISSING_STOP'
+            })
+        );
+    });
+
     it('kill-switch disables strict empty-response retries and keeps legacy behavior', async () => {
         configOverrides = {
             'resilience.strictResponseGuards': true,
@@ -219,7 +254,8 @@ describe('ChatFlowManager resilience hardening', () => {
             assistantMessage: '',
             toolCalls: [],
             incompleteToolCalls: [],
-            usage: undefined
+            usage: undefined,
+            streamTerminated: true
         });
         const { manager, streamingService, sendMessageToWebview } = createManager({
             streamResponse: empty,
@@ -254,7 +290,8 @@ describe('ChatFlowManager resilience hardening', () => {
                 assistantMessage: 'ok',
                 toolCalls: [],
                 incompleteToolCalls: [],
-                usage: undefined
+                usage: undefined,
+                streamTerminated: true
             });
         const { manager, streamingService, sendMessageToWebview } = createManager({
             streamResponse,
@@ -334,7 +371,8 @@ describe('ChatFlowManager resilience hardening', () => {
                 assistantMessage: 'ok',
                 toolCalls: [],
                 incompleteToolCalls: [],
-                usage: undefined
+                usage: undefined,
+                streamTerminated: true
             });
         const { manager, streamingService } = createManager({
             streamResponse,

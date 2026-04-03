@@ -16,6 +16,7 @@ export class StreamRecoveryManager {
   private emittedToolStarts = new Set<string>();
   private emittedToolReady = new Set<string>();
   private emittedUsage = false;
+  private emittedMessageStop = false;
 
   private replayContent = '';
   private replayReasoning = '';
@@ -61,6 +62,10 @@ export class StreamRecoveryManager {
       case 'usage':
         if (this.emittedUsage) return [];
         this.emittedUsage = true;
+        return [chunk];
+      case 'message_stop':
+        if (this.emittedMessageStop) return [];
+        this.emittedMessageStop = true;
         return [chunk];
       case 'error':
       case 'partial_update':

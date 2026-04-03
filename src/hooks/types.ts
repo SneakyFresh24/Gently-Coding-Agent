@@ -7,6 +7,13 @@ export interface HookContext {
   toolName: string;
   params: any;
   workspaceRoot: string;
+  flowId?: string;
+  correlationId?: string;
+  subagentId?: string;
+  toolCallId?: string;
+  attempt?: number;
+  phase?: string;
+  mode?: string;
 }
 
 export enum HookType {
@@ -52,25 +59,31 @@ export interface PostToolHookResponse {
 export interface GenericHook {
   name: string;
   type: 'pre' | 'post' | HookType;
-  execute: (toolName: string, params: any, extra?: any) => Promise<any>;
+  execute: (toolName: string, params: any, extra?: any, context?: HookContext) => Promise<any>;
 }
 
 export interface PreToolHook extends GenericHook {
   type: 'pre' | HookType.PreToolUse;
-  execute: (toolName: string, params: any) => Promise<PreToolHookResponse | null | undefined>;
+  execute: (toolName: string, params: any, context?: HookContext) => Promise<PreToolHookResponse | null | undefined>;
 }
 
 export interface PostToolHook extends GenericHook {
   type: 'post' | HookType.PostToolUse;
-  execute: (toolName: string, params: any, result: any) => Promise<PostToolHookResponse | null | undefined>;
+  execute: (toolName: string, params: any, result: any, context?: HookContext) => Promise<PostToolHookResponse | null | undefined>;
 }
 
 export interface PreCompactHook extends GenericHook {
   type: HookType.PreCompact;
-  execute: (_toolName: string, params: any) => Promise<PreToolHookResponse | null | undefined>;
+  execute: (_toolName: string, params: any, context?: HookContext) => Promise<PreToolHookResponse | null | undefined>;
 }
 
 export interface NotificationHook extends GenericHook {
   type: HookType.Notification;
-  execute: (_toolName: string, params: NotificationPayload) => Promise<PostToolHookResponse | null | undefined>;
+  execute: (_toolName: string, params: NotificationPayload, context?: HookContext) => Promise<PostToolHookResponse | null | undefined>;
+}
+
+export interface HookFailure {
+  code: 'HOOK_PRE_FAILED' | 'HOOK_POST_FAILED' | 'HOOK_NOTIFICATION_FAILED';
+  hookName: string;
+  message: string;
 }

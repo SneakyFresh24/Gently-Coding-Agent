@@ -30,8 +30,58 @@ const checks = [
       'run',
       'src/services/OpenRouterService.test.ts',
       'src/views/chat/handlers/ChatFlowManager.test.ts',
-      'src/views/chat/toolcall/ToolCallManager.test.ts'
+      'src/views/chat/toolcall/ToolCallManager.test.ts',
+      'src/views/chat/validation/MessageValidator.test.ts'
     ]
+  },
+  {
+    name: 'Resilience runtime engines',
+    command: 'npm',
+    args: [
+      'exec',
+      'vitest',
+      'run',
+      'src/views/chat/runtime/TurnEngine.test.ts',
+      'src/views/chat/runtime/RetryPolicyEngine.test.ts',
+      'src/views/chat/runtime/StreamContractEngine.test.ts',
+      'src/views/chat/runtime/LifecycleGuard.test.ts',
+      'src/core/streaming/tests/StreamRecoveryManager.test.ts',
+      'src/core/resilience/R4SoakHarness.test.ts'
+    ]
+  },
+  {
+    name: 'R2 tool + hook orchestration',
+    command: 'npm',
+    args: [
+      'exec',
+      'vitest',
+      'run',
+      'src/hooks/HookManager.test.ts',
+      'src/agent/agentManager/tests/ToolRunStateMachine.test.ts',
+      'src/agent/agentManager/tests/ToolRetryPolicyEngine.test.ts',
+      'src/agent/agentManager/tests/ToolManager.circuit.test.ts',
+      'src/agent/agentManager/tests/ToolManager.orchestration.test.ts',
+      'src/agent/agentManager/tests/ToolManager.askQuestion.test.ts',
+      'src/views/chat/handlers/ExecutionDispatchers.test.ts'
+    ]
+  },
+  {
+    name: 'R3 subagent orchestration',
+    command: 'npm',
+    args: [
+      'exec',
+      'vitest',
+      'run',
+      'src/views/chat/runtime/SubagentRunStateMachine.test.ts',
+      'src/views/chat/runtime/SubagentRetryPolicyEngine.test.ts',
+      'src/views/chat/runtime/SubagentOrchestrator.test.ts',
+      'src/views/chat/handlers/ExecutionDispatchers.test.ts'
+    ]
+  },
+  {
+    name: 'R4 hardening gate (chaos/replay SLO blocker)',
+    command: 'npm',
+    args: ['run', 'resilience:hardening-gate']
   },
   {
     name: 'Mode behavior consistency',

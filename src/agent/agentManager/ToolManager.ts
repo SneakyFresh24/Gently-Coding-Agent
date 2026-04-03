@@ -2,6 +2,7 @@
 // ToolManager - Refactored Tool System Management
 // =====================================================
 
+import * as vscode from 'vscode';
 import * as path from 'path';
 import {
   ToolRegistry,
@@ -28,8 +29,97 @@ import { NotificationPayload } from '../../hooks/types';
 import { telemetry } from '../../services/Telemetry';
 import { LogService } from '../../services/LogService';
 import { CircuitBreakerRegistry } from '../../core/resilience/CircuitBreakerRegistry';
+import { ToolRunPhase, ToolRunStateMachine } from './runtime/ToolRunStateMachine';
+import { ToolRetryPolicyEngine } from './runtime/ToolRetryPolicyEngine';
 
 const log = new LogService('ToolManager');
+const QUESTION_TIMEOUT_MS = 60_000;
+
+type ToolResilienceCode =
+  | 'TOOL_RETRY_SCHEDULED'
+  | 'TOOL_RETRY_EXHAUSTED'
+  | 'HOOK_PRE_BLOCKED'
+  | 'HOOK_PRE_FAILED'
+  | 'HOOK_POST_FAILED'
+  | 'HOOK_NOTIFICATION_FAILED'
+  | 'TOOL_APPROVAL_TIMEOUT';
+
+interface ToolResilienceSettings {
+  killSwitch: boolean;
+  errorContractV1: boolean;
+  toolOrchestratorV2: boolean;
+  hookContractV2: boolean;
+  toolTelemetryV2: boolean;
+}
+
+interface ToolRunContext {
+  toolCallId?: string;
+  flowId?: string | null;
+  correlationId?: string;
+  mode?: string;
+  model?: string;
+}
+
+interface AskQuestionOption {
+  label: string;
+  description?: string;
+  mode?: string;
+}
+
+interface AskQuestionParams {
+  question: string;
+  header?: string;
+  options: AskQuestionOption[];
+  multiple?: boolean;
+}
+
+type QuestionResolutionSource = 'user' | 'timeout_default' | 'stopped';
+
+interface QuestionResolutionPayload {
+  selectedOptionIndexes: number[];
+  source: QuestionResolutionSource;
+}
+
+interface PendingQuestionEntry {
+  resolve: (payload: QuestionResolutionPayload) => void;
+  optionCount: number;
+  multiple: boolean;
+  timeoutHandle: NodeJS.Timeout;
+  settled: boolean;
+}
+
+interface ExecuteToolCallInput {
+  id: string;
+  name: string;
+  params: any;
+  flowId?: string | null;
+  correlationId?: string;
+  mode?: string;
+  model?: string;
+}
+
+interface ApprovalDecision {
+  status: 'approved' | 'rejected' | 'timeout';
+}
+
+class ToolExecutionError extends Error {
+  readonly code: ToolResilienceCode | 'TOOL_EXECUTION_FAILED' | 'TOOL_APPROVAL_REJECTED' | 'TOOL_VALIDATION_FAILED' | 'TOOL_CIRCUIT_BLOCKED' | 'TOOL_NOT_FOUND' | 'QUESTION_STOPPED';
+  readonly retryable: boolean;
+  readonly stoppedByUser: boolean;
+
+  constructor(params: {
+    code: ToolExecutionError['code'];
+    message: string;
+    retryable?: boolean;
+    stoppedByUser?: boolean;
+  }) {
+    super(params.message);
+    this.name = 'ToolExecutionError';
+    this.code = params.code;
+    this.retryable = params.retryable === true;
+    this.stoppedByUser = params.stoppedByUser === true;
+  }
+}
 
 export class ToolManager implements IAgentService {
   // Core tool components
@@ -59,6 +149,7 @@ export class ToolManager implements IAgentService {
   private modeProvider?: () => string | undefined;
   private lastToolName: string | null = null;
   private readonly toolParamValidator = new ToolParamValidator();
+  private pendingQuestions: Map<string, PendingQuestionEntry> = new Map();
 
   constructor(
     toolRegistry: ToolRegistry,
@@ -189,7 +280,7 @@ export class ToolManager implements IAgentService {
    * Execute multiple tool calls, potentially in parallel.
    * Independent tools run simultaneously, while tools targeting the same files run sequentially.
    */
-  async executeTools(toolCalls: { id: string, name: string, params: any }[]): Promise<{ id: string, result: any }[]> {
+  async executeTools(toolCalls: ExecuteToolCallInput[]): Promise<{ id: string, result: any }[]> {
     if (this.debug) {
       console.log(`[ToolManager] Dispatching ${toolCalls.length} tool calls`);
     }
@@ -202,6 +293,13 @@ export class ToolManager implements IAgentService {
         const taskId = call.id;
         const toolName = call.name;
         const toolArgs = call.params;
+        const runContext: ToolRunContext = {
+          toolCallId: taskId,
+          flowId: call.flowId ?? null,
+          correlationId: call.correlationId,
+          mode: call.mode,
+          model: call.model
+        };
 
         try {
           // 1. Resolve planning context if applicable
@@ -227,7 +325,7 @@ export class ToolManager implements IAgentService {
           }
 
           // 4. Execution
-          const result = await this.executeTool(toolName, toolArgs);
+          const result = await this.executeTool(toolName, toolArgs, runContext);
           results.push({ id: taskId, result });
 
           // 5. Handle success updates
@@ -297,9 +395,9 @@ export class ToolManager implements IAgentService {
    * Groups tool calls that target the same file to ensure sequential execution for those files.
    * Independent tools each get their own group and run in parallel.
    */
-  private groupToolCalls(toolCalls: { id: string, name: string, params: any }[]): { id: string, name: string, params: any }[][] {
-    const fileToGroup = new Map<string, { id: string, name: string, params: any }[]>();
-    const independentGroups: { id: string, name: string, params: any }[][] = [];
+  private groupToolCalls(toolCalls: ExecuteToolCallInput[]): ExecuteToolCallInput[][] {
+    const fileToGroup = new Map<string, ExecuteToolCallInput[]>();
+    const independentGroups: ExecuteToolCallInput[][] = [];
     const collectTargetPaths = (params: any): string[] => {
       const paths = new Set<string>();
       const directPath = params?.path || params?.file_path;
@@ -326,7 +424,7 @@ export class ToolManager implements IAgentService {
       if (isFileModifying && targetPaths.length > 0) {
         let group = targetPaths
           .map((p) => fileToGroup.get(p))
-          .find((candidate): candidate is { id: string, name: string, params: any }[] => Array.isArray(candidate));
+          .find((candidate): candidate is ExecuteToolCallInput[] => Array.isArray(candidate));
 
         if (!group) {
           group = [];
@@ -351,7 +449,16 @@ export class ToolManager implements IAgentService {
   /**
    * Execute a tool with hooks and auto-approval check
    */
-  async executeTool(toolName: string, params: any): Promise<any> {
+  async executeTool(toolName: string, params: any, runContext: ToolRunContext = {}): Promise<any> {
+    const settings = this.getResilienceSettings();
+    const v2Enabled = settings.toolOrchestratorV2 && !settings.killSwitch;
+    if (!v2Enabled) {
+      return this.executeToolLegacy(toolName, params);
+    }
+    return this.executeToolV2(toolName, params, runContext, settings);
+  }
+
+  private async executeToolLegacy(toolName: string, params: any): Promise<any> {
     const currentMode = this.modeProvider?.();
     
     // Anti-Loop Check for handover_to_coder
@@ -541,6 +648,731 @@ export class ToolManager implements IAgentService {
     }
   }
 
+  private async executeToolV2(
+    toolName: string,
+    rawParams: any,
+    runContext: ToolRunContext,
+    settings: ToolResilienceSettings
+  ): Promise<any> {
+    const currentMode = runContext.mode || this.modeProvider?.() || 'unknown';
+    const retryPolicy = new ToolRetryPolicyEngine();
+    const retryConfig = retryPolicy.getPolicy();
+    let attemptsUsed = 0;
+    let params = this.toolParamValidator.sanitizeInternalFields(rawParams);
+    let terminalized = false;
+
+    // Anti-loop check remains strict and non-retryable
+    if (toolName === 'handover_to_coder' && this.lastToolName === 'handover_to_coder') {
+      throw new ToolExecutionError({
+        code: 'TOOL_EXECUTION_FAILED',
+        message: 'Cannot call handover_to_coder consecutively - already in handover state',
+        retryable: false
+      });
+    }
+
+    while (attemptsUsed < retryConfig.recoverableRetries + 1) {
+      const stateMachine = new ToolRunStateMachine();
+      attemptsUsed += 1;
+      const attempt = attemptsUsed;
+      const correlationId = this.createToolCorrelationId(runContext, toolName, attempt);
+
+      this.emitToolTelemetryEvent(
+        settings,
+        'TOOL_ATTEMPT_START',
+        {
+          code: 'TOOL_RETRY_SCHEDULED',
+          toolName,
+          attempt,
+          maxAttempts: retryConfig.recoverableRetries + 1,
+          flowId: runContext.flowId || null,
+          correlationId,
+          mode: currentMode,
+          model: runContext.model || 'unknown'
+        }
+      );
+
+      try {
+        const tool = this.toolRegistry.get(toolName);
+        if (!tool) {
+          throw new ToolExecutionError({
+            code: 'TOOL_NOT_FOUND',
+            message: `Tool not found: ${toolName}`,
+            retryable: false
+          });
+        }
+
+        if (params && params.task_progress && this.eventCallback) {
+          this.eventCallback({
+            type: 'taskProgress',
+            label: params.task_progress
+          });
+        }
+        params = this.toolParamValidator.sanitizeInternalFields(params);
+
+        stateMachine.transition('PRE_HOOK', 'pre_hook_start');
+        const preHookResult = await this.hookManager.executePreHooks(toolName, params, {
+          flowId: runContext.flowId || undefined,
+          correlationId,
+          toolCallId: runContext.toolCallId,
+          attempt,
+          phase: 'PRE_HOOK',
+          mode: currentMode
+        });
+        if (preHookResult.blocked) {
+          const code = preHookResult.code || 'HOOK_PRE_BLOCKED';
+          throw new ToolExecutionError({
+            code,
+            message: preHookResult.reason || `Tool execution blocked by pre-hook (${preHookResult.hookName || 'unknown'})`,
+            retryable: false
+          });
+        }
+        params = this.toolParamValidator.sanitizeInternalFields(preHookResult.modifiedParams);
+
+        stateMachine.transition('VALIDATE', 'validation_start');
+        const validationResult = await telemetry.withSpan(
+          'tool.validation',
+          { 'tool.name': toolName },
+          async (validationSpan) => {
+            const result = this.toolParamValidator.validate(toolName, params);
+            validationSpan.setAttributes({
+              'validation.outcome': result.valid ? 'ok' : 'failed',
+              'validation.error_count': result.errors.length
+            });
+            if (!result.valid) {
+              validationSpan.setStatusError('tool_validation_failed');
+            }
+            return result;
+          }
+        );
+        if (!validationResult.valid) {
+          const first = validationResult.errors[0];
+          throw new ToolExecutionError({
+            code: 'TOOL_VALIDATION_FAILED',
+            message: JSON.stringify(first),
+            retryable: false
+          });
+        }
+
+        stateMachine.transition('CIRCUIT', 'circuit_check');
+        const gate = this.circuitBreakers.canExecute('tool.execute', toolName);
+        if (!gate.decision.allowed) {
+          const notificationResult = await this.hookManager.executeNotification({
+            channel: 'circuit_breaker',
+            severity: 'warning',
+            action: 'wait',
+            retryAfter: gate.decision.retryAfterMs,
+            message: `Circuit breaker open for ${gate.key}`,
+            metadata: { toolName, circuitKey: gate.key, state: gate.decision.state }
+          }, {
+            flowId: runContext.flowId || undefined,
+            correlationId,
+            toolCallId: runContext.toolCallId,
+            attempt,
+            phase: 'CIRCUIT',
+            mode: currentMode
+          });
+          this.emitHookFailures(settings, notificationResult.failures, runContext, attempt, correlationId);
+          throw new ToolExecutionError({
+            code: 'TOOL_CIRCUIT_BLOCKED',
+            message: `CIRCUIT_OPEN_REJECT: Tool "${toolName}" temporarily blocked. Retry after ${gate.decision.retryAfterMs || 0}ms.`,
+            retryable: false
+          });
+        }
+        if (gate.transition === 'half_open') {
+          const notificationResult = await this.hookManager.executeNotification({
+            channel: 'circuit_breaker',
+            severity: 'warning',
+            action: 'retry',
+            message: `Circuit breaker half-open for ${gate.key}`,
+            metadata: { toolName, circuitKey: gate.key, state: gate.decision.state }
+          }, {
+            flowId: runContext.flowId || undefined,
+            correlationId,
+            toolCallId: runContext.toolCallId,
+            attempt,
+            phase: 'CIRCUIT',
+            mode: currentMode
+          });
+          this.emitHookFailures(settings, notificationResult.failures, runContext, attempt, correlationId);
+        }
+
+        stateMachine.transition('APPROVAL', 'approval_check');
+        const autoApproved = await this.autoApproveManager.shouldAutoApprove(toolName, params);
+        if (!autoApproved) {
+          const decision = await this.requestApprovalDecision(toolName, params);
+          if (decision.status === 'timeout') {
+            throw new ToolExecutionError({
+              code: 'TOOL_APPROVAL_TIMEOUT',
+              message: `Tool approval timed out for "${toolName}".`,
+              retryable: false
+            });
+          }
+          if (decision.status === 'rejected') {
+            throw new ToolExecutionError({
+              code: 'TOOL_APPROVAL_REJECTED',
+              message: 'Tool execution rejected by user',
+              retryable: false,
+              stoppedByUser: true
+            });
+          }
+        }
+
+        stateMachine.transition('EXECUTE', 'tool_execute');
+        const executionStart = Date.now();
+        const isWriteTool = toolName === 'write_file';
+        const writePath = params?.path || params?.file_path;
+        const contentLength = typeof params?.content === 'string' ? params.content.length : 0;
+        if (isWriteTool && this.eventCallback) {
+          this.eventCallback({
+            type: 'write_started',
+            path: writePath,
+            bytes: contentLength,
+            timestamp: Date.now()
+          });
+        }
+
+        let result: any;
+        try {
+          if (toolName === 'ask_question') {
+            result = await this.executeAskQuestionViaWebview(params, runContext);
+          } else {
+            result = await tool.execute(params);
+          }
+        } catch (error) {
+          if (error instanceof ToolExecutionError) {
+            throw error;
+          }
+          throw new ToolExecutionError({
+            code: 'TOOL_EXECUTION_FAILED',
+            message: error instanceof Error ? error.message : String(error),
+            retryable: this.isRecoverableToolError(error)
+          });
+        }
+
+        const successUpdate = this.circuitBreakers.recordSuccess('tool.execute', toolName);
+        if (successUpdate.transition === 'closed') {
+          const notificationResult = await this.hookManager.executeNotification({
+            channel: 'circuit_breaker',
+            severity: 'info',
+            message: `Circuit breaker closed for ${successUpdate.key}`,
+            metadata: { toolName, circuitKey: successUpdate.key }
+          }, {
+            flowId: runContext.flowId || undefined,
+            correlationId,
+            toolCallId: runContext.toolCallId,
+            attempt,
+            phase: 'EXECUTE',
+            mode: currentMode
+          });
+          this.emitHookFailures(settings, notificationResult.failures, runContext, attempt, correlationId);
+        }
+        if (isWriteTool && this.eventCallback) {
+          this.eventCallback({
+            type: 'write_finished',
+            path: writePath,
+            bytes: contentLength,
+            success: result?.success !== false,
+            durationMs: Date.now() - executionStart,
+            timestamp: Date.now()
+          });
+        }
+
+        stateMachine.transition('POST_HOOK', 'post_hook');
+        const postHookResult = await this.hookManager.executePostHooks(toolName, params, result, {
+          flowId: runContext.flowId || undefined,
+          correlationId,
+          toolCallId: runContext.toolCallId,
+          attempt,
+          phase: 'POST_HOOK',
+          mode: currentMode
+        });
+        this.emitHookFailures(settings, postHookResult.failures, runContext, attempt, correlationId);
+
+        if (attempt > 1) {
+          this.emitToolTelemetryEvent(settings, 'TOOL_RECOVERY_APPLIED', {
+            code: 'TOOL_RETRY_SCHEDULED',
+            toolName,
+            flowId: runContext.flowId || null,
+            correlationId,
+            attempt,
+            mode: currentMode,
+            model: runContext.model || 'unknown'
+          });
+        }
+
+        if (toolName !== 'handover_to_coder') {
+          this.lastToolName = toolName;
+        }
+
+        stateMachine.terminalize('completed', 'tool_completed');
+        stateMachine.ensureTerminalized();
+        terminalized = true;
+        return result;
+      } catch (error) {
+        const normalized = this.normalizeToolExecutionError(error);
+        const recoverableDecision = retryPolicy.decideRecoverableRetry({
+          attemptsUsed: attempt,
+          recoverable: normalized.retryable,
+          stateChanged: true
+        });
+
+        if (
+          (normalized.code === 'TOOL_APPROVAL_REJECTED' && normalized.stoppedByUser)
+          || normalized.code === 'QUESTION_STOPPED'
+        ) {
+          this.emitToolTelemetryEvent(settings, 'TOOL_STOPPED_BY_USER', {
+            code: 'TOOL_APPROVAL_TIMEOUT',
+            toolName,
+            flowId: runContext.flowId || null,
+            correlationId,
+            attempt,
+            mode: currentMode,
+            model: runContext.model || 'unknown'
+          });
+          stateMachine.terminalize('stopped', 'approval_rejected');
+          terminalized = true;
+          throw new Error(normalized.message);
+        }
+
+        if (recoverableDecision.shouldRetry) {
+          stateMachine.beginRetry();
+          this.emitToolResilienceStatus(settings, {
+            code: 'TOOL_RETRY_SCHEDULED',
+            category: 'tool',
+            severity: 'warning',
+            retryable: true,
+            attempt: recoverableDecision.nextAttempt,
+            maxAttempts: recoverableDecision.maxAttempts,
+            nextDelayMs: recoverableDecision.delayMs,
+            model: runContext.model || 'unknown',
+            flowId: runContext.flowId || null,
+            userMessage: `Tool failed temporarily. Retrying... (${recoverableDecision.nextAttempt}/${recoverableDecision.maxAttempts})`,
+            action: 'retry',
+            phase: 'retry',
+            decision: 'retry',
+            reason: normalized.code,
+            correlationId
+          });
+          this.emitToolTelemetryEvent(settings, 'TOOL_RETRY_SCHEDULED', {
+            code: 'TOOL_RETRY_SCHEDULED',
+            toolName,
+            flowId: runContext.flowId || null,
+            correlationId,
+            attempt: recoverableDecision.nextAttempt,
+            maxAttempts: recoverableDecision.maxAttempts,
+            nextDelayMs: recoverableDecision.delayMs,
+            mode: currentMode,
+            model: runContext.model || 'unknown'
+          });
+          if (recoverableDecision.delayMs > 0) {
+            await this.sleep(recoverableDecision.delayMs);
+          }
+          stateMachine.endRetry();
+          continue;
+        }
+
+        const terminalCode: ToolResilienceCode =
+          normalized.code === 'HOOK_PRE_BLOCKED'
+            ? 'HOOK_PRE_BLOCKED'
+            : normalized.code === 'HOOK_PRE_FAILED'
+              ? 'HOOK_PRE_FAILED'
+              : normalized.code === 'TOOL_APPROVAL_TIMEOUT'
+                ? 'TOOL_APPROVAL_TIMEOUT'
+                : 'TOOL_RETRY_EXHAUSTED';
+
+        this.emitToolResilienceStatus(settings, {
+          code: terminalCode,
+          category: terminalCode.startsWith('HOOK_') ? 'hook' : 'tool',
+          severity: 'error',
+          retryable: false,
+          attempt,
+          maxAttempts: retryConfig.recoverableRetries + 1,
+          model: runContext.model || 'unknown',
+          flowId: runContext.flowId || null,
+          userMessage: normalized.message,
+          action: terminalCode.startsWith('HOOK_') ? 'retry' : 'retry',
+          phase: 'terminal',
+          decision: 'abort',
+          reason: normalized.code,
+          correlationId
+        });
+        this.emitToolTelemetryEvent(settings, 'TOOL_TERMINAL_FAILURE', {
+          code: terminalCode,
+          toolName,
+          flowId: runContext.flowId || null,
+          correlationId,
+          attempt,
+          mode: currentMode,
+          model: runContext.model || 'unknown'
+        });
+
+        stateMachine.terminalize('failed', 'terminal_failure');
+        terminalized = true;
+        throw new Error(normalized.message);
+      } finally {
+        if (terminalized) {
+          try {
+            stateMachine.ensureTerminalized();
+          } catch (error) {
+            log.error('Tool run terminal invariant violation', error);
+          }
+        }
+      }
+    }
+
+    throw new Error(`Tool retry budget exhausted for ${toolName}`);
+  }
+
+  private normalizeToolExecutionError(error: unknown): ToolExecutionError {
+    if (error instanceof ToolExecutionError) return error;
+    return new ToolExecutionError({
+      code: 'TOOL_EXECUTION_FAILED',
+      message: error instanceof Error ? error.message : String(error),
+      retryable: this.isRecoverableToolError(error)
+    });
+  }
+
+  private emitHookFailures(
+    settings: ToolResilienceSettings,
+    failures: Array<{ code: 'HOOK_PRE_FAILED' | 'HOOK_POST_FAILED' | 'HOOK_NOTIFICATION_FAILED'; hookName: string; message: string }>,
+    runContext: ToolRunContext,
+    attempt: number,
+    correlationId: string
+  ): void {
+    if (!failures || failures.length === 0) return;
+    for (const failure of failures) {
+      const statusCode = failure.code;
+      const resilienceCode: ToolResilienceCode =
+        statusCode === 'HOOK_POST_FAILED'
+          ? 'HOOK_POST_FAILED'
+          : statusCode === 'HOOK_NOTIFICATION_FAILED'
+            ? 'HOOK_NOTIFICATION_FAILED'
+            : 'HOOK_PRE_FAILED';
+      this.emitToolResilienceStatus(settings, {
+        code: resilienceCode,
+        category: 'hook',
+        severity: statusCode === 'HOOK_PRE_FAILED' ? 'error' : 'warning',
+        retryable: false,
+        attempt,
+        maxAttempts: attempt,
+        model: runContext.model || 'unknown',
+        flowId: runContext.flowId || null,
+        userMessage: `Hook ${failure.hookName} failed: ${failure.message}`,
+        action: 'none',
+        phase: 'runtime',
+        decision: 'report',
+        reason: failure.code,
+        correlationId
+      });
+      this.emitToolTelemetryEvent(settings, 'HOOK_EXECUTION_FAILED', {
+        code: resilienceCode,
+        hookName: failure.hookName,
+        flowId: runContext.flowId || null,
+        correlationId,
+        attempt,
+        mode: runContext.mode || this.modeProvider?.() || 'unknown',
+        model: runContext.model || 'unknown'
+      });
+    }
+  }
+
+  private async executeAskQuestionViaWebview(
+    params: Record<string, unknown> | undefined,
+    runContext: ToolRunContext
+  ): Promise<{
+    success: boolean;
+    answer: string[];
+    message: string;
+    requestedMode: string | null;
+    continuationPrompt: string;
+  }> {
+    const question = typeof params?.question === 'string' ? params.question.trim() : '';
+    const header = typeof params?.header === 'string' ? params.header.trim() : '';
+    const multiple = params?.multiple === true;
+    const rawOptions = Array.isArray(params?.options) ? params.options : [];
+    const options: AskQuestionOption[] = [];
+    for (const rawOpt of rawOptions) {
+      if (!rawOpt || typeof rawOpt !== 'object') {
+        continue;
+      }
+
+      const option = rawOpt as Record<string, unknown>;
+      const label = typeof option.label === 'string' ? option.label.trim() : '';
+      if (!label) {
+        continue;
+      }
+
+      options.push({
+        label,
+        description: typeof option.description === 'string' ? option.description.trim() : undefined,
+        mode: typeof option.mode === 'string' ? option.mode.trim() : undefined
+      });
+    }
+
+    if (!question || options.length === 0) {
+      return {
+        success: false,
+        answer: [],
+        message: 'Invalid ask_question input. Expected non-empty question and at least one option.',
+        requestedMode: null,
+        continuationPrompt: 'ask_question input was invalid. Continue without mode switch.'
+      };
+    }
+
+    const defaultOptionIndex = 0;
+    const questionId = this.createQuestionId(runContext);
+    const resolution = await this.awaitQuestionResolution({
+      questionId,
+      header: header.length > 0 ? header : undefined,
+      question,
+      options,
+      multiple,
+      timeoutMs: QUESTION_TIMEOUT_MS,
+      defaultOptionIndex
+    });
+
+    if (resolution.source === 'stopped') {
+      throw new ToolExecutionError({
+        code: 'QUESTION_STOPPED',
+        message: 'Question stopped by user.',
+        retryable: false,
+        stoppedByUser: true
+      });
+    }
+
+    let selectedOptionIndexes = this.sanitizeQuestionSelection(
+      resolution.selectedOptionIndexes,
+      options.length,
+      multiple
+    );
+    if (selectedOptionIndexes.length === 0) {
+      selectedOptionIndexes = [defaultOptionIndex];
+    }
+
+    const selectedOptions = selectedOptionIndexes.map((index) => options[index]).filter(Boolean);
+    const answer = selectedOptions.map((opt) => opt.label);
+    const requestedMode = (selectedOptions.find((opt) => typeof opt.mode === 'string' && opt.mode.trim().length > 0)?.mode || null) as string | null;
+    const answerText = answer.join(', ');
+
+    const message = resolution.source === 'timeout_default'
+      ? `Auto-selected default option: ${answerText}`
+      : `User selected: ${answerText}`;
+    const continuationPrompt = requestedMode
+      ? `User selected "${answer[0] || 'option'}". Continue in ${requestedMode} mode.`
+      : `User selected: ${answerText}. Continue accordingly.`;
+
+    return {
+      success: true,
+      answer,
+      message,
+      requestedMode,
+      continuationPrompt
+    };
+  }
+
+  private async awaitQuestionResolution(args: {
+    questionId: string;
+    header?: string;
+    question: string;
+    options: AskQuestionOption[];
+    multiple: boolean;
+    timeoutMs: number;
+    defaultOptionIndex: number;
+  }): Promise<QuestionResolutionPayload> {
+    if (!this.eventCallback) {
+      return {
+        selectedOptionIndexes: [args.defaultOptionIndex],
+        source: 'timeout_default'
+      };
+    }
+
+    return new Promise((resolve) => {
+      const resolveOnce = (payload: QuestionResolutionPayload) => {
+        const entry = this.pendingQuestions.get(args.questionId);
+        if (!entry || entry.settled) return;
+        entry.settled = true;
+        clearTimeout(entry.timeoutHandle);
+        this.pendingQuestions.delete(args.questionId);
+        this.emitQuestionResolved(args.questionId, payload.selectedOptionIndexes, payload.source);
+        resolve(payload);
+      };
+
+      const timeoutHandle = setTimeout(() => {
+        resolveOnce({
+          selectedOptionIndexes: [args.defaultOptionIndex],
+          source: 'timeout_default'
+        });
+      }, args.timeoutMs);
+
+      this.pendingQuestions.set(args.questionId, {
+        resolve: resolveOnce,
+        optionCount: args.options.length,
+        multiple: args.multiple,
+        timeoutHandle,
+        settled: false
+      });
+
+      this.emitQuestionRequest({
+        questionId: args.questionId,
+        header: args.header,
+        question: args.question,
+        options: args.options,
+        multiple: args.multiple,
+        timeoutMs: args.timeoutMs,
+        defaultOptionIndex: args.defaultOptionIndex
+      });
+    });
+  }
+
+  private emitQuestionRequest(payload: {
+    questionId: string;
+    header?: string;
+    question: string;
+    options: AskQuestionOption[];
+    multiple: boolean;
+    timeoutMs: number;
+    defaultOptionIndex: number;
+  }): void {
+    if (!this.eventCallback) return;
+    this.eventCallback({
+      type: 'questionRequest',
+      questionId: payload.questionId,
+      header: payload.header,
+      question: payload.question,
+      options: payload.options,
+      multiple: payload.multiple,
+      timeoutMs: payload.timeoutMs,
+      defaultOptionIndex: payload.defaultOptionIndex,
+      timestamp: Date.now()
+    });
+  }
+
+  private emitQuestionResolved(
+    questionId: string,
+    selectedOptionIndexes: number[],
+    source: QuestionResolutionSource
+  ): void {
+    if (!this.eventCallback) return;
+    this.eventCallback({
+      type: 'questionResolved',
+      questionId,
+      selectedOptionIndexes,
+      source,
+      timestamp: Date.now()
+    });
+  }
+
+  private sanitizeQuestionSelection(indices: number[], optionCount: number, multiple: boolean): number[] {
+    const uniqueOrdered = Array.from(
+      new Set(
+        (Array.isArray(indices) ? indices : [])
+          .map((value) => Number(value))
+          .filter((value) => Number.isInteger(value))
+          .filter((value) => value >= 0 && value < optionCount)
+      )
+    ).sort((a, b) => a - b);
+
+    if (!multiple && uniqueOrdered.length > 1) {
+      return [uniqueOrdered[0]];
+    }
+    return uniqueOrdered;
+  }
+
+  private createQuestionId(runContext: ToolRunContext): string {
+    const flowId = runContext.flowId || 'flow-unknown';
+    const toolCallId = runContext.toolCallId || 'toolcall-unknown';
+    const nonce = Math.random().toString(36).slice(2, 9);
+    return `question_${flowId}_${toolCallId}_${nonce}`;
+  }
+
+  private getResilienceSettings(): ToolResilienceSettings {
+    const config = vscode.workspace.getConfiguration('gently');
+    const killSwitch = config.get<boolean>('resilience.killSwitch', false);
+    return {
+      killSwitch,
+      errorContractV1: config.get<boolean>('resilience.errorContractV1', true),
+      toolOrchestratorV2: config.get<boolean>('resilience.toolOrchestratorV2', true),
+      hookContractV2: config.get<boolean>('resilience.hookContractV2', true),
+      toolTelemetryV2: config.get<boolean>('resilience.toolTelemetryV2', true)
+    };
+  }
+
+  private createToolCorrelationId(runContext: ToolRunContext, toolName: string, attempt: number): string {
+    if (runContext.correlationId && runContext.correlationId.trim() !== '') {
+      return runContext.correlationId;
+    }
+    const flowId = runContext.flowId || 'flow-unknown';
+    const toolCallId = runContext.toolCallId || 'toolcall-unknown';
+    return `${flowId}:${toolName}:${toolCallId}:${Math.max(1, Math.floor(attempt))}`;
+  }
+
+  private emitToolResilienceStatus(
+    settings: ToolResilienceSettings,
+    payload: {
+      code: ToolResilienceCode;
+      category: 'tool' | 'hook';
+      severity: 'info' | 'warning' | 'error';
+      retryable: boolean;
+      attempt: number;
+      maxAttempts: number;
+      nextDelayMs?: number;
+      model: string;
+      flowId: string | null;
+      userMessage: string;
+      action: 'retry' | 'none';
+      phase: 'runtime' | 'retry' | 'terminal' | 'stopped';
+      decision: 'retry' | 'abort' | 'report';
+      reason: string;
+      correlationId: string;
+    }
+  ): void {
+    if (!settings.errorContractV1 || !this.eventCallback) return;
+    this.eventCallback({
+      type: 'resilienceStatus',
+      code: payload.code,
+      category: payload.category,
+      severity: payload.severity,
+      retryable: payload.retryable,
+      attempt: payload.attempt,
+      maxAttempts: payload.maxAttempts,
+      nextDelayMs: payload.nextDelayMs,
+      model: payload.model,
+      flowId: payload.flowId,
+      userMessage: payload.userMessage,
+      action: payload.action,
+      phase: payload.phase,
+      decision: payload.decision,
+      reason: payload.reason,
+      correlationId: payload.correlationId
+    });
+  }
+
+  private emitToolTelemetryEvent(
+    settings: ToolResilienceSettings,
+    eventName:
+      | 'TOOL_ATTEMPT_START'
+      | 'TOOL_RETRY_SCHEDULED'
+      | 'TOOL_RECOVERY_APPLIED'
+      | 'TOOL_TERMINAL_FAILURE'
+      | 'TOOL_STOPPED_BY_USER'
+      | 'HOOK_EXECUTION_FAILED',
+    metadata: Record<string, unknown>
+  ): void {
+    if (!settings.toolTelemetryV2) return;
+    const level =
+      eventName === 'TOOL_TERMINAL_FAILURE'
+        ? 'ERROR'
+        : eventName === 'TOOL_RETRY_SCHEDULED' || eventName === 'HOOK_EXECUTION_FAILED'
+          ? 'WARN'
+          : 'INFO';
+    log.event(level, eventName, eventName, metadata);
+  }
+
+  private async sleep(ms: number): Promise<void> {
+    if (!Number.isFinite(ms) || ms <= 0) return;
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   private isRecoverableToolError(error: unknown): boolean {
     const message = String((error as any)?.message || error || '').toLowerCase();
     if (!message) return true;
@@ -552,6 +1384,42 @@ export class ToolManager implements IAgentService {
       message.includes('busy') ||
       message.includes('econnreset')
     );
+  }
+
+  /**
+   * Request approval for a tool execution
+   * Returns a promise that resolves when the user approves or rejects
+   */
+  private async requestApprovalDecision(toolName: string, params: any): Promise<ApprovalDecision> {
+    return new Promise((resolve) => {
+      const approvalId = `tool_approval_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+      if (!this.eventCallback) {
+        resolve({ status: 'rejected' });
+        return;
+      }
+
+      const timeout = setTimeout(() => {
+        this.pendingApprovals.delete(approvalId);
+        resolve({ status: 'timeout' });
+      }, 5 * 60 * 1000);
+
+      this.eventCallback({
+        type: 'toolApprovalRequest',
+        approvalId,
+        toolName,
+        params,
+        timestamp: Date.now()
+      });
+
+      this.pendingApprovals.set(approvalId, {
+        resolve: (approved: boolean) => {
+          clearTimeout(timeout);
+          resolve({ status: approved ? 'approved' : 'rejected' });
+        },
+        toolName
+      });
+    });
   }
 
   /**
@@ -616,19 +1484,56 @@ export class ToolManager implements IAgentService {
     }
   }
 
+  public handleQuestionResponse(
+    questionId: string,
+    selectedOptionIndexes: number[],
+    source: 'user' | 'stopped' = 'user'
+  ): void {
+    const entry = this.pendingQuestions.get(questionId);
+    if (!entry || entry.settled) return;
+
+    const sanitizedSelection = this.sanitizeQuestionSelection(
+      selectedOptionIndexes,
+      entry.optionCount,
+      entry.multiple
+    );
+
+    if (source === 'stopped') {
+      entry.resolve({
+        selectedOptionIndexes: [],
+        source: 'stopped'
+      });
+      return;
+    }
+
+    entry.resolve({
+      selectedOptionIndexes: sanitizedSelection,
+      source: 'user'
+    });
+  }
+
   /**
    * Abort all pending tool executions and approvals
    */
   public abortAllExecutions(): void {
-    console.log(`[ToolManager] 🛑 Aborting all ${this.pendingApprovals.size} pending approvals`);
+    console.log(`[ToolManager] 🛑 Aborting pending interactions (approvals=${this.pendingApprovals.size}, questions=${this.pendingQuestions.size})`);
     
     // 1. Resolve all pending approvals with 'false'
     for (const [approvalId, entry] of this.pendingApprovals.entries()) {
       entry.resolve(false);
       this.pendingApprovals.delete(approvalId);
     }
+
+    // 2. Resolve all pending questions as stopped
+    for (const [questionId, entry] of this.pendingQuestions.entries()) {
+      entry.resolve({
+        selectedOptionIndexes: [],
+        source: 'stopped'
+      });
+      this.pendingQuestions.delete(questionId);
+    }
     
-    // 2. Clear lastToolName to prevent loop detection issues after abort
+    // 3. Clear lastToolName to prevent loop detection issues after abort
     this.lastToolName = null;
     
     if (this.debug) {
