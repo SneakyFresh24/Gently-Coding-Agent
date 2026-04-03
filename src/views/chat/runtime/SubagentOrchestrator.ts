@@ -12,6 +12,7 @@ import { LogService } from '../../../services/LogService';
 import { getModeContractViolation } from '../../../modes/ModeContractV2';
 import { SubagentRetryPolicyEngine } from './SubagentRetryPolicyEngine';
 import { SubagentRunStateMachine } from './SubagentRunStateMachine';
+import { sleepWithAbort } from '../../../core/resilience/RetryDelayUtils';
 
 const log = new LogService('SubagentOrchestrator');
 
@@ -884,6 +885,45 @@ export class SubagentOrchestrator {
       reason: payload.reason,
       correlationId: payload.correlationId
     });
+
+    if (payload.code === 'SUBAGENT_START') {
+      this.deps.sendMessageToWebview({
+        type: 'handoverProgress',
+        flowId: payload.flowId,
+        status: 'started',
+        detail: payload.userMessage,
+        timestamp: Date.now()
+      } as any);
+      return;
+    }
+
+    if (payload.code === 'SUBAGENT_SUMMARY_READY') {
+      this.deps.sendMessageToWebview({
+        type: 'handoverProgress',
+        flowId: payload.flowId,
+        status: 'completed',
+        detail: payload.userMessage,
+        timestamp: Date.now()
+      } as any);
+      return;
+    }
+
+    if (
+      payload.code === 'SUBAGENT_TERMINAL_FAILED' ||
+      payload.code === 'SUBAGENT_STOPPED' ||
+      payload.code === 'SUBAGENT_PREFLIGHT_BLOCKED' ||
+      payload.code === 'SUBAGENT_PREHOOK_BLOCKED' ||
+      payload.code === 'SUBAGENT_PREHOOK_FAILED' ||
+      payload.code === 'SUBAGENT_RETRY_EXHAUSTED'
+    ) {
+      this.deps.sendMessageToWebview({
+        type: 'handoverProgress',
+        flowId: payload.flowId,
+        status: 'aborted',
+        detail: payload.userMessage,
+        timestamp: Date.now()
+      } as any);
+    }
   }
 
   private emitLegacyError(message: string, code: string, action: ResilienceStatusAction): void {
@@ -940,6 +980,6 @@ export class SubagentOrchestrator {
       await this.deps.sleep(delay);
       return;
     }
-    await new Promise((resolve) => setTimeout(resolve, delay));
+    await sleepWithAbort(delay);
   }
 }

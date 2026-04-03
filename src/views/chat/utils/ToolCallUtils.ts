@@ -29,6 +29,7 @@ interface StructuralFeedback {
 
 export class ToolCallUtils {
   private static readonly MAX_TOOL_ARG_CHARS = 50_000;
+  private static readonly CHUNK_TARGET_CHARS = 30_000;
   private static readonly DEFAULT_GUARDRAIL_POLICY: GuardrailPolicy = {
     monolithPolicy: 'warn',
     maxInlineLines: 20,
@@ -225,6 +226,19 @@ export class ToolCallUtils {
             toolCall.id = originalId;
           }
           seenIds.set(originalId, currentCount + 1);
+        }
+
+        const chunkedWrite = this.tryExpandChunkedWriteToolCalls(
+          toolCall,
+          (fixedArgs && typeof fixedArgs === 'object' && !Array.isArray(fixedArgs))
+            ? fixedArgs as Record<string, unknown>
+            : {},
+          modelTag
+        );
+        if (chunkedWrite) {
+          warnings.push(chunkedWrite.warning);
+          validToolCalls.push(...chunkedWrite.calls);
+          continue;
         }
 
         const oversize = this.getOversizeViolation(
@@ -426,6 +440,74 @@ export class ToolCallUtils {
     return null;
   }
 
+  private static tryExpandChunkedWriteToolCalls(
+    toolCall: any,
+    args: Record<string, unknown>,
+    modelTag: string
+  ): { calls: any[]; warning: string } | null {
+    const toolName = String(toolCall?.function?.name || '').toLowerCase();
+    if (toolName !== 'write_file') return null;
+
+    const content = typeof args.content === 'string' ? args.content : null;
+    if (!content || content.length <= this.MAX_TOOL_ARG_CHARS) return null;
+
+    const targetPath = typeof args.path === 'string'
+      ? args.path
+      : (typeof args.file_path === 'string' ? args.file_path : '');
+    if (!targetPath) {
+      return null;
+    }
+
+    const chunks = this.splitIntoDeterministicChunks(content, this.CHUNK_TARGET_CHARS);
+    if (chunks.length <= 1) return null;
+
+    const baseId = String(toolCall?.id || `tool_${Date.now()}`);
+    const writeSessionId = `write_session_${createHash('sha256')
+      .update(`${targetPath}:${baseId}:${content.length}`)
+      .digest('hex')
+      .slice(0, 16)}`;
+    const checksum = createHash('sha256').update(content).digest('hex');
+
+    const calls = chunks.map((chunk, index) => ({
+      ...toolCall,
+      id: `${baseId}_chunk_${index + 1}`,
+      function: {
+        name: 'write_file_chunk',
+        arguments: JSON.stringify({
+          path: targetPath,
+          writeSessionId,
+          chunkIndex: index,
+          chunkCount: chunks.length,
+          chunkContent: chunk,
+          checksum
+        })
+      }
+    }));
+
+    return {
+      calls,
+      warning: `[${modelTag}] write_file auto-chunked into ${chunks.length} calls for "${targetPath}" (${content.length} chars).`
+    };
+  }
+
+  private static splitIntoDeterministicChunks(content: string, targetChars: number): string[] {
+    const chunks: string[] = [];
+    let cursor = 0;
+    const safeTarget = Math.max(4_000, targetChars);
+    while (cursor < content.length) {
+      let end = Math.min(content.length, cursor + safeTarget);
+      if (end < content.length) {
+        const newlineCandidate = content.lastIndexOf('\n', end);
+        if (newlineCandidate > cursor + Math.floor(safeTarget * 0.6)) {
+          end = newlineCandidate + 1;
+        }
+      }
+      chunks.push(content.slice(cursor, end));
+      cursor = end;
+    }
+    return chunks;
+  }
+
   private static formatModelTag(model?: string): string {
     return `model=${model && model.trim() !== '' ? model : 'unknown'}`;
   }
@@ -585,6 +667,8 @@ export class ToolCallUtils {
         return `Reading file ${filePath || 'unknown'}...`;
       case 'write_file':
         return `Creating file ${filePath || 'unknown'}...`;
+      case 'write_file_chunk':
+        return `Writing chunk ${typeof toolArgs.chunkIndex === 'number' ? toolArgs.chunkIndex + 1 : '?'} / ${toolArgs.chunkCount || '?'} to ${filePath || 'unknown'}...`;
       case 'edit_file':
         return `Editing file ${filePath || 'unknown'}...`;
       case 'safe_edit_file':
@@ -673,6 +757,17 @@ export class ToolCallUtils {
         comment.details.push({
           type: 'file',
           path: toolArgs.path || toolArgs.file_path
+        });
+        break;
+      case 'write_file_chunk':
+        comment.text = 'Chunked file write';
+        comment.details.push({
+          type: 'file',
+          path: toolArgs.path || toolArgs.file_path
+        });
+        comment.details.push({
+          type: 'info',
+          text: `Chunk ${typeof toolArgs.chunkIndex === 'number' ? toolArgs.chunkIndex + 1 : '?'} / ${toolArgs.chunkCount || '?'}`
         });
         break;
 
@@ -805,6 +900,7 @@ export class ToolCallUtils {
   static isModifyingTool(toolName: string): boolean {
     const modifyingTools = [
       'write_file',
+      'write_file_chunk',
       'edit_file',
       'safe_edit_file',
       'apply_block_edit',
@@ -827,7 +923,7 @@ export class ToolCallUtils {
    * Get tool category
    */
   static getToolCategory(toolName: string): 'file' | 'search' | 'memory' | 'execution' | 'planning' | 'other' {
-    if (['read_file', 'write_file', 'edit_file', 'safe_edit_file', 'apply_block_edit', 'apply_changes', 'list_files'].includes(toolName)) {
+    if (['read_file', 'write_file', 'write_file_chunk', 'edit_file', 'safe_edit_file', 'apply_block_edit', 'apply_changes', 'list_files'].includes(toolName)) {
       return 'file';
     }
     if (['find_files', 'regex_search', 'search_codebase', 'get_context', 'analyze_project_structure', 'show_checkpoint_diff'].includes(toolName)) {

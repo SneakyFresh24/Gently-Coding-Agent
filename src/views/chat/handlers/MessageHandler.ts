@@ -9,7 +9,7 @@ import { ToolCallManager } from '../toolcall';
 // Refactored Handlers
 // Refactored Consolidated Handlers
 import { ConversationPruner, PromptManager, ReferenceParser } from './ContextGenerators';
-import { FollowUpHandler, ArchitectHandoverHandler } from './SequenceManagers';
+import { FollowUpHandler } from './SequenceManagers';
 import { ToolCallDispatcher } from './ExecutionDispatchers';
 import { SessionHistoryManager } from './SessionHistoryManager';
 import { ModeService } from '../../../modes/ModeService';
@@ -22,7 +22,6 @@ import { normalizeModeAlias } from '../../../modes/ModeContractV2';
 
 export class MessageHandler {
   private context!: ChatViewContext;
-  private architectHandoverHandler: ArchitectHandoverHandler;
   private sessionHistoryManager: SessionHistoryManager;
   private toolCallManager: ToolCallManager;
   private flowManager: ChatFlowManager;
@@ -45,8 +44,6 @@ export class MessageHandler {
     };
 
     const fileRef = new FileReferenceManager(agentManager.getFileOperations(), agentManager.getIndexer());
-    this.architectHandoverHandler = new ArchitectHandoverHandler(this.guardedSendMessageToWebview);
-    
     // Get message handler from planning manager
     const planning = this.agentManager.getPlanningManager();
     const messageHandler = planning?.getMessageHandler();
@@ -56,8 +53,6 @@ export class MessageHandler {
     const pruner = new ConversationPruner(openRouterService, agentManager);
 
     this.toolCallManager = new ToolCallManager(this.agentManager);
-    this.initializeNewToolCallSystem();
-
     this.sessionHistoryManager = new SessionHistoryManager(extensionContext, agentManager.getServiceProvider().getService('sessionManager'), this.guardedSendMessageToWebview);
     const promptMgr = new PromptManager(agentManager, this.modeService);
 
@@ -146,11 +141,6 @@ export class MessageHandler {
     this.sessionHistoryManager.initializeSession(this.context);
   }
 
-  private initializeNewToolCallSystem(): void {
-    const planning = this.agentManager.getPlanningManager();
-    if (planning) planning.addListener((e: any) => this.architectHandoverHandler.handlePlanEvent(e, this.context));
-  }
-
   async sendMessage(userMessage: string, silent: boolean = false, fileReferences?: any[], retryCount: number = 0): Promise<void> {
     if (!this.isValidOpenRouterModelId(this.context.selectedModel)) {
       this.sendMessageToWebview({
@@ -159,6 +149,9 @@ export class MessageHandler {
       });
       return;
     }
+    // Always clear stale stop flags at the beginning of a new turn.
+    this.context.shouldStopStream = false;
+    this.context.shouldAbortTools = false;
     await this.flowManager.handleUserMessage(this.context, userMessage, { silent, fileReferences, retryCount });
   }
 

@@ -13,6 +13,7 @@ const PLAN_STRICT_ALLOWED_TOOLS = new Set<string>([
   'read_file',
   'analyze_project_structure',
   'create_plan',
+  'update_plan_steps',
   'handover_to_coder',
   'ask_question',
   'update_memory_bank',

@@ -187,9 +187,34 @@ function createChatStore() {
 
     /** Replace all messages (e.g., session load) */
     hydrateMessages(messages: Message[]) {
+      const incoming = Array.isArray(messages) ? messages : [];
       update(s => ({
         ...s,
-        messages,
+        messages: (() => {
+          const existingById = new Map(s.messages.map((message) => [message.id, message]));
+          const reconciled = incoming.map((message) => {
+            const existing = existingById.get(message.id);
+            if (!existing) return message;
+            return {
+              ...existing,
+              ...message,
+              questionCard: message.questionCard || existing.questionCard,
+              planCard: message.planCard || existing.planCard,
+              approvalCard: message.approvalCard || existing.approvalCard
+            };
+          });
+
+          const incomingIds = new Set(reconciled.map((message) => message.id));
+          const preservedCards = s.messages.filter(
+            (message) =>
+              !incomingIds.has(message.id) &&
+              (Boolean(message.planCard) || Boolean(message.approvalCard) || Boolean(message.questionCard))
+          );
+
+          const merged = [...reconciled, ...preservedCards];
+          merged.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+          return merged;
+        })(),
         messageEpoch: s.messageEpoch + 1,
         streamingMessageId: null
       }));

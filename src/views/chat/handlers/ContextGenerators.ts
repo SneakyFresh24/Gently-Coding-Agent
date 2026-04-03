@@ -210,8 +210,8 @@ Current workspace: ${vscode.workspace.name || 'No workspace open'}`;
             `2. NEVER edit based on assumed file contents\n\n` +
             `When using apply_block_edit / write_file / safe_edit_file:\n` +
             `1. ALWAYS put path/file_path BEFORE content/new_content\n` +
-            `2. Keep content under 50KB per call\n` +
-            `3. Split larger writes into multiple calls\n` +
+            `2. safe_edit_file payloads should stay <=50KB\n` +
+            `3. write_file supports runtime auto-chunking for large payloads\n` +
             `Example: {"path":"src/file.ts","content":"..."}`;
 
         return systemPrompt;

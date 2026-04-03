@@ -212,6 +212,25 @@ describe('ChatFlowManager resilience hardening', () => {
         );
     });
 
+    it('resets stale tool-abort flag at the beginning of a new turn', async () => {
+        const context = createContext();
+        context.shouldAbortTools = true;
+        const streamResponse = vi.fn().mockResolvedValue({
+            assistantMessage: 'ok',
+            toolCalls: [],
+            incompleteToolCalls: [],
+            usage: undefined,
+            streamTerminated: true
+        });
+        const { manager } = createManager({
+            streamResponse
+        });
+
+        await expect(manager.generateAndStreamResponse(context, 'test')).resolves.toBeUndefined();
+        expect(context.shouldAbortTools).toBe(false);
+        expect(streamResponse).toHaveBeenCalledTimes(1);
+    });
+
     it('fails explicitly when stream ends without terminal stop event', async () => {
         const missingStop = vi.fn().mockResolvedValue({
             assistantMessage: 'partial response',

@@ -331,6 +331,38 @@ describe('MessageValidator', () => {
         );
       });
     });
+
+    describe('Plan Approval Response', () => {
+      it('should validate a correct planApprovalResponse payload', () => {
+        const message = {
+          type: 'planApprovalResponse',
+          planId: 'plan_123',
+          approvalRequestId: 'plan_approval_plan_123_1',
+          approved: true,
+          source: 'user'
+        };
+
+        const result = validator.validateInboundMessage(message);
+        expect(result.isValid).toBe(true);
+      });
+
+      it('should reject planApprovalResponse without approvalRequestId', () => {
+        const message = {
+          type: 'planApprovalResponse',
+          planId: 'plan_123',
+          approved: true
+        };
+
+        const result = validator.validateInboundMessage(message);
+        expect(result.isValid).toBe(false);
+        expect(result.errors).toContainEqual(
+          expect.objectContaining({
+            field: 'approvalRequestId',
+            code: 'REQUIRED_FIELD_MISSING'
+          })
+        );
+      });
+    });
   });
 
   describe('Input Sanitization', () => {

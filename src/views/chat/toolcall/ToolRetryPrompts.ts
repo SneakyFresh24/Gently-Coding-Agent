@@ -100,7 +100,7 @@ This usually happens when the content is too large for a single tool call.
 ${progressive}
 
 Solution: Split into multiple smaller calls:
-- write_file(path, content) -> Multiple calls with ~30KB each
+- write_file(path, content) -> runtime auto-chunking will split large payloads
 - Or use chunked safe_edit_file updates for incremental writes
 ${hasPath ? '' : '- IMPORTANT: Put "path" (or "file_path") as the FIRST JSON field before content'}
 
@@ -117,18 +117,25 @@ export function buildOversizeRetryPrompt(params: OversizeRetryPromptParams): str
     retryCount: params.retryCount || 1,
     errorKind: 'oversize'
   });
+  const isWriteFile = params.toolName === 'write_file';
+  const titleLine = isWriteFile
+    ? `❌ Tool call "${params.toolName}" exceeded direct payload handling for one attempt.`
+    : `❌ Tool call "${params.toolName}" rejected: content exceeds 50KB limit.`;
+  const limitLine = isWriteFile
+    ? 'Payload exceeded current runtime limit for this attempt.'
+    : 'Maximum allowed: 50,000 characters';
+  const solutionLine = isWriteFile
+    ? `Solution: Retry with write_file(${pathHint}, "<full content>"). Runtime auto-chunking will segment it.`
+    : `Solution: Split into multiple calls:\n1. write_file(${pathHint}, "<first 30KB>")\n2. safe_edit_file(${pathHint}, "<append next 30KB>")\n3. Continue until complete`;
   return `
-❌ Tool call "${params.toolName}" rejected: content exceeds 50KB limit.
+${titleLine}
 
 Actual size: ${params.actualSize} characters
-Maximum allowed: 50,000 characters
+${limitLine}
 
 ${progressive}
 
-Solution: Split into multiple calls:
-1. write_file(${pathHint}, "<first 30KB>")
-2. safe_edit_file(${pathHint}, "<append next 30KB>")
-3. Continue until complete
+${solutionLine}
 `.trim();
 }
 

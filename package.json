@@ -56,6 +56,16 @@
         "command": "gently.configureApiKey",
         "title": "Configure OpenRouter API Key",
         "icon": "$(key)"
+      },
+      {
+        "command": "gently.observability.snapshot",
+        "title": "Gently: Observability Snapshot",
+        "icon": "$(output)"
+      },
+      {
+        "command": "gently.observability.reset",
+        "title": "Gently: Reset Observability Buffers",
+        "icon": "$(trash)"
       }
     ],
     "menus": {
@@ -81,6 +91,14 @@
       "commandPalette": [
         {
           "command": "gently.openChat",
+          "when": "true"
+        },
+        {
+          "command": "gently.observability.snapshot",
+          "when": "true"
+        },
+        {
+          "command": "gently.observability.reset",
           "when": "true"
         }
       ]
@@ -189,6 +207,16 @@
           "type": "string",
           "default": "",
           "description": "Optional default model slug applied when switching to code mode."
+        },
+        "gently.planning.requireApproval": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require explicit in-chat approval for newly created plans before handover_to_coder is allowed."
+        },
+        "gently.planning.autoApproveBeforeHandover": {
+          "type": "boolean",
+          "default": false,
+          "description": "If enabled, handover_to_coder auto-approves a pending plan immediately before handover."
         },
         "gently.pruning.strategy": {
           "type": "string",

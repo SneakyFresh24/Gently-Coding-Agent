@@ -90,9 +90,11 @@ export class StreamingService {
                     // Send start signal for UI consistency
                     this.sendMessageToWebview({ type: 'generatingStart' });
                     this.sendMessageToWebview({
-                        type: 'assistantMessageFull',
+                        type: 'assistantMessage',
+                        id: `msg_${Date.now()}`,
                         content: assistantMessage,
-                        messageId: `msg_${Date.now()}`
+                        timestamp: Date.now(),
+                        isStreaming: false
                     });
                 }
                 return { assistantMessage, toolCalls, incompleteToolCalls, usage, streamTerminated: true };

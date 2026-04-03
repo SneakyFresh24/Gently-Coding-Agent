@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { FollowUpHandler } from './SequenceManagers';
+import { ArchitectHandoverHandler, FollowUpHandler } from './SequenceManagers';
 import { ChatViewContext } from '../types/ChatTypes';
 
 vi.mock('vscode', () => ({}));
@@ -86,3 +86,47 @@ describe('FollowUpHandler.sendFollowUpMessage', () => {
   });
 });
 
+describe('ArchitectHandoverHandler.handlePlanEvent', () => {
+  it('forwards planCardCreated to webview so approval card can render', () => {
+    const sendMessageToWebview = vi.fn();
+    const handler = new ArchitectHandoverHandler(sendMessageToWebview);
+
+    handler.handlePlanEvent(
+      {
+        type: 'planCardCreated',
+        plan: {
+          schemaVersion: 2,
+          id: 'plan_1',
+          goal: 'Test plan',
+          steps: [],
+          status: 'created',
+          createdAt: Date.now(),
+          currentStepIndex: 0,
+          totalSteps: 0,
+          completedSteps: 0,
+          failedSteps: 0
+        },
+        timestamp: 123
+      },
+      {
+        agentMode: false,
+        selectedModel: null,
+        selectedMode: 'architect',
+        conversationHistory: [],
+        shouldStopStream: false,
+        shouldAbortTools: false,
+        messageCheckpoints: new Map(),
+        toolExecutionStartSent: new Set()
+      } as ChatViewContext
+    );
+
+    expect(sendMessageToWebview).toHaveBeenCalledWith({
+      type: 'planCardCreated',
+      plan: expect.objectContaining({
+        id: 'plan_1',
+        goal: 'Test plan'
+      }),
+      timestamp: 123
+    });
+  });
+});

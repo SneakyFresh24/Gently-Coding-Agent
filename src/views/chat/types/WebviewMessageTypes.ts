@@ -467,6 +467,42 @@ export interface ToolApprovalResponseMessage {
 }
 
 /**
+ * Client-side approval countdown reached local timeout.
+ */
+export interface ToolApprovalLocalTimeoutMessage {
+  type: 'toolApprovalLocalTimeout';
+  approvalId: string;
+  toolName?: string;
+  timestamp: number;
+  expiresAt?: number;
+}
+
+/**
+ * Client reports an unhandled outbound message in the webview runtime.
+ */
+export interface WebviewUnhandledMessageReport {
+  type: 'webviewUnhandledMessage';
+  rawType: string;
+  correlationId: string;
+  count: number;
+  firstSeenAt: number;
+  lastSeenAt: number;
+  flowId?: string | null;
+}
+
+/**
+ * Response to a plan approval request rendered in the webview.
+ */
+export interface PlanApprovalResponseMessage {
+  type: 'planApprovalResponse';
+  planId: string;
+  approvalRequestId: string;
+  approved: boolean;
+  reason?: string;
+  source?: 'user' | 'system';
+}
+
+/**
  * Response to an ask_question request rendered in the webview.
  */
 export interface QuestionResponseMessage {
@@ -526,6 +562,21 @@ export interface ToolApprovalRequestMessage {
   approvalId: string;
   toolName: string;
   params: any;
+  timestamp: number;
+  timeoutMs: number;
+  expiresAt: number;
+}
+
+/**
+ * Tool approval resolved event.
+ */
+export interface ToolApprovalResolvedMessage {
+  type: 'toolApprovalResolved';
+  approvalId: string;
+  toolName: string;
+  status: 'approved' | 'rejected' | 'timeout';
+  reason?: string | null;
+  source: 'user' | 'timeout' | 'system';
   timestamp: number;
 }
 
@@ -929,6 +980,9 @@ export interface SystemMessageMessage {
   type: 'systemMessage';
   messageId?: string;
   content: string;
+  code?: string;
+  severity?: 'info' | 'warning' | 'error';
+  correlationId?: string;
 }
 
 /**
@@ -1161,11 +1215,21 @@ export interface MemoriesUpdateMessage {
 }
 
 /**
- * Plan created in Architect Mode
+ * Plan card created in chat timeline.
  */
-export interface PlanCreatedMessage {
-  type: 'planCreated';
-  plan: any; // Using any for large plan object for now
+export interface PlanCardCreatedMessage {
+  type: 'planCardCreated';
+  plan: any;
+  timestamp: number;
+}
+
+/**
+ * Plan card updated in chat timeline.
+ */
+export interface PlanCardUpdatedMessage {
+  type: 'planCardUpdated';
+  plan: any;
+  timestamp: number;
 }
 
 /**
@@ -1347,6 +1411,68 @@ export interface PlanUpdatedMessage {
   plan: any;
 }
 
+/**
+ * Plan approval requested in chat timeline.
+ */
+export interface PlanApprovalRequestedMessage {
+  type: 'planApprovalRequested';
+  planId: string;
+  approvalRequestId: string;
+  goal: string;
+  stepsCount: number;
+  timeoutMs: number;
+  expiresAt: number;
+  timestamp: number;
+}
+
+/**
+ * Plan approval resolved in chat timeline.
+ */
+export interface PlanApprovalResolvedMessage {
+  type: 'planApprovalResolved';
+  planId: string;
+  status: 'approved' | 'rejected' | 'timeout';
+  reason?: string;
+  reasonCode?: string;
+  resolution?: 'applied' | 'rejected' | 'stale' | 'mismatch';
+  approvalRequestId?: string;
+  expectedApprovalRequestId?: string;
+  source: 'user' | 'policy' | 'system';
+  timestamp: number;
+}
+
+/**
+ * Architect -> Code handover progress status.
+ */
+export interface HandoverProgressMessage {
+  type: 'handoverProgress';
+  flowId: string | null;
+  status: 'started' | 'completed' | 'aborted';
+  detail: string;
+  timestamp: number;
+}
+
+export interface RestoreSessionTasksShape {
+  currentPlan: any | null;
+  currentPlanId: string | null;
+  plans: any[];
+  pendingPlanApproval?: {
+    approvalRequestId: string;
+    requestedAt: number;
+    timeoutMs: number;
+    expiresAt: number;
+  } | null;
+}
+
+/**
+ * Session state restore payload.
+ */
+export interface RestoreSessionStateMessage {
+  type: 'restoreSessionState';
+  tasks?: RestoreSessionTasksShape | null;
+  context?: unknown;
+}
+
 // =====================================================
 // DISCRIMINATED UNIONS
 // =====================================================
@@ -1410,6 +1536,9 @@ export type InboundWebviewMessage =
   | SetAutoApproveSettingsMessage
   | ToggleYoloModeMessage
   | ToolApprovalResponseMessage
+  | ToolApprovalLocalTimeoutMessage
+  | WebviewUnhandledMessageReport
+  | PlanApprovalResponseMessage
   | QuestionResponseMessage
   | GetHistoryMessage
   | DeleteSessionMessage
@@ -1468,7 +1597,6 @@ export type OutboundWebviewMessage =
   | WorkspaceInfoMessage
   | MemoriesUpdateMessage
   | CurrentPlanResponseMessage
-  | PlanCreatedMessage
   | TaskStartMessage
   | TaskUpdateMessage
   | TaskCompleteMessage
@@ -1491,11 +1619,18 @@ export type OutboundWebviewMessage =
   | { type: 'activityUpdate'; label: string | null }
   | AutoApproveSettingsUpdateMessage
   | ToolApprovalRequestMessage
+  | ToolApprovalResolvedMessage
   | QuestionRequestMessage
   | QuestionResolvedMessage
   | PlanStatusUpdateMessage
   | StepStatusUpdateMessage
   | PlanUpdatedMessage
+  | PlanCardCreatedMessage
+  | PlanCardUpdatedMessage
+  | PlanApprovalRequestedMessage
+  | PlanApprovalResolvedMessage
+  | HandoverProgressMessage
+  | RestoreSessionStateMessage
   | TokenTrackerUpdateMessage;
 
 /**

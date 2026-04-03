@@ -1,3 +1,8 @@
+import {
+  computeRecoveryDelayMs,
+  getRecoveryPolicy
+} from '../../../core/resilience/RecoveryPolicyResolver';
+
 export type RetryCategory = 'context' | 'sequence' | 'empty' | 'rate_limit';
 
 export interface RetryBudgets {
@@ -26,10 +31,10 @@ export interface RetryPlanDecision {
 }
 
 const DEFAULT_BUDGETS: RetryBudgets = {
-  context: 4,
-  sequence: 3,
-  empty: 2,
-  rate_limit: 2
+  context: getRecoveryPolicy('context_recovery').maxAttempts,
+  sequence: getRecoveryPolicy('sequence_repair').maxAttempts,
+  empty: getRecoveryPolicy('empty_response').maxAttempts,
+  rate_limit: getRecoveryPolicy('rate_limit_429').maxAttempts
 };
 
 export class RetryPolicyEngine {
@@ -84,15 +89,15 @@ export class RetryPolicyEngine {
   }
 
   private computeDelayMs(category: RetryCategory, attempt: number, retryAfterMs?: number): number {
-    if (category === 'context') return 0;
-    if (category === 'sequence') return Math.min(8000, 2000 * (2 ** Math.max(0, attempt - 1)));
-    if (category === 'empty') return Math.min(2000, 1000 * (2 ** Math.max(0, attempt - 1)));
-
-    const expBackoff = Math.min(8000, 1000 * (2 ** Math.max(0, attempt - 1)));
-    if (typeof retryAfterMs === 'number' && Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
-      return Math.min(8000, Math.max(expBackoff, Math.floor(retryAfterMs)));
+    if (category === 'context') {
+      return computeRecoveryDelayMs('context_recovery', attempt, retryAfterMs);
     }
-    return expBackoff;
+    if (category === 'sequence') {
+      return computeRecoveryDelayMs('sequence_repair', attempt, retryAfterMs);
+    }
+    if (category === 'empty') {
+      return computeRecoveryDelayMs('empty_response', attempt, retryAfterMs);
+    }
+    return computeRecoveryDelayMs('rate_limit_429', attempt, retryAfterMs);
   }
 }
-

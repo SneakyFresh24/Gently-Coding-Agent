@@ -17,7 +17,8 @@
   import { chatStore, isStreaming } from '../../stores/chatStore';
   import { settingsStore } from '../../stores/settingsStore';
   import { historyStore } from '../../stores/historyStore';
-  import { init as initMessaging } from '../../lib/messaging';
+  import { init as initMessaging, messaging } from '../../lib/messaging';
+  import type { PlanCardState } from '../../lib/types';
 
 
   let { isHidden = false } = $props();
@@ -26,14 +27,151 @@
   let checkpointDiffFrom = $state('');
   let checkpointDiffTo = $state<string | undefined>(undefined);
   let resilienceContractActive = $state(false);
+  const UNHANDLED_SURFACE_WINDOW_MS = 60_000;
+  const unhandledStats = new Map<string, {
+    count: number;
+    firstSeenAt: number;
+    lastSeenAt: number;
+    lastSurfacedAt: number;
+  }>();
 
-  function inferPhase(label: string | null | undefined): 'idle' | 'sending' | 'thinking' | 'tooling' {
-    const normalized = (label || '').toLowerCase();
-    if (!normalized) return 'idle';
-    if (normalized.includes('sending')) return 'sending';
-    if (normalized.includes('reading') || normalized.includes('tool') || normalized.includes('preparing')) return 'tooling';
-    if (normalized.includes('thinking') || normalized.includes('denkt') || normalized.includes('analy')) return 'thinking';
-    return 'thinking';
+  function toPlanCard(plan: any): PlanCardState | null {
+    if (!plan || typeof plan !== 'object') return null;
+    const steps = Array.isArray(plan.steps)
+      ? plan.steps.map((step: any) => ({
+        id: String(step?.id || ''),
+        description: String(step?.description || ''),
+        status: String(step?.status || 'pending'),
+        dependencies: Array.isArray(step?.dependencies)
+          ? step.dependencies.map((dep: unknown) => String(dep))
+          : []
+      }))
+      : [];
+
+    const planId = String(plan.id || '');
+    if (!planId) return null;
+
+    const completedSteps = typeof plan.completedSteps === 'number'
+      ? Number(plan.completedSteps)
+      : steps.filter((step) => step.status === 'completed').length;
+
+    const pendingApprovalCandidate = plan?.pendingApproval && typeof plan.pendingApproval === 'object'
+      ? {
+        approvalRequestId: String(plan.pendingApproval.approvalRequestId || ''),
+        requestedAt: typeof plan.pendingApproval.requestedAt === 'number' ? Number(plan.pendingApproval.requestedAt) : undefined,
+        timeoutMs: typeof plan.pendingApproval.timeoutMs === 'number' ? Number(plan.pendingApproval.timeoutMs) : undefined,
+        expiresAt: typeof plan.pendingApproval.expiresAt === 'number' ? Number(plan.pendingApproval.expiresAt) : undefined
+      }
+      : null;
+    const pendingApproval = pendingApprovalCandidate?.approvalRequestId ? pendingApprovalCandidate : null;
+
+    return {
+      planId,
+      goal: String(plan.goal || ''),
+      status: String(plan.status || 'created'),
+      schemaVersion: typeof plan.schemaVersion === 'number' ? Number(plan.schemaVersion) : undefined,
+      createdAt: typeof plan.createdAt === 'number' ? Number(plan.createdAt) : undefined,
+      updatedAt: Date.now(),
+      steps,
+      completedSteps,
+      totalSteps: typeof plan.totalSteps === 'number' ? Number(plan.totalSteps) : steps.length,
+      awaitingApproval: String(plan.status || '') === 'awaiting_approval',
+      pendingApproval
+    };
+  }
+
+  function upsertPlanMessage(card: PlanCardState) {
+    const messageId = `plan_${card.planId}`;
+    const existing = get(chatStore).messages.find((msg) => msg.id === messageId);
+    if (existing) {
+      chatStore.updateMessage(messageId, {
+        role: 'system',
+        content: card.goal || 'Plan updated.',
+        timestamp: Date.now(),
+        isSystemMessage: false,
+        planCard: card
+      });
+      return;
+    }
+
+    chatStore.addMessage({
+      id: messageId,
+      role: 'system',
+      content: card.goal || 'Plan created.',
+      timestamp: Date.now(),
+      isSystemMessage: false,
+      planCard: card
+    });
+  }
+
+  function updatePlanCard(planId: string, updater: (card: PlanCardState) => PlanCardState) {
+    const messageId = `plan_${planId}`;
+    const existing = get(chatStore).messages.find((msg) => msg.id === messageId);
+    if (!existing?.planCard) return;
+    chatStore.updateMessage(messageId, {
+      planCard: updater(existing.planCard),
+      timestamp: Date.now(),
+      isSystemMessage: false
+    });
+  }
+
+  function ensurePlanCardForApproval(
+    planId: string,
+    goal: string,
+    stepsCount = 0,
+    pendingApproval?: { approvalRequestId?: string; requestedAt?: number; timeoutMs?: number; expiresAt?: number } | null
+  ): boolean {
+    const messageId = `plan_${planId}`;
+    const existing = get(chatStore).messages.find((msg) => msg.id === messageId);
+    if (existing?.planCard) return false;
+
+    chatStore.addMessage({
+      id: messageId,
+      role: 'system',
+      content: goal || 'Plan approval requested.',
+      timestamp: Date.now(),
+      isSystemMessage: false,
+      planCard: {
+        planId,
+        goal: goal || 'Plan approval requested.',
+        status: 'awaiting_approval',
+        schemaVersion: undefined,
+        createdAt: undefined,
+        updatedAt: Date.now(),
+        steps: [],
+        completedSteps: 0,
+        totalSteps: Math.max(0, Number(stepsCount || 0)),
+        awaitingApproval: true,
+        pendingApproval: pendingApproval?.approvalRequestId
+          ? {
+            approvalRequestId: String(pendingApproval.approvalRequestId),
+            requestedAt: typeof pendingApproval.requestedAt === 'number' ? pendingApproval.requestedAt : undefined,
+            timeoutMs: typeof pendingApproval.timeoutMs === 'number' ? pendingApproval.timeoutMs : undefined,
+            expiresAt: typeof pendingApproval.expiresAt === 'number' ? pendingApproval.expiresAt : undefined
+          }
+          : null
+      }
+    });
+
+    return true;
+  }
+
+  function extractPlanFromTasksPayload(tasks: any): any | null {
+    if (!tasks || typeof tasks !== 'object') return null;
+    if (tasks.currentPlan && typeof tasks.currentPlan === 'object') {
+      return tasks.currentPlan;
+    }
+
+    const plans = Array.isArray(tasks.plans) ? tasks.plans : [];
+    if (plans.length === 0) return null;
+
+    const currentPlanId = typeof tasks.currentPlanId === 'string' ? tasks.currentPlanId : '';
+    if (currentPlanId) {
+      const active = plans.find((plan: any) => String(plan?.id || '') === currentPlanId);
+      if (active) return active;
+    }
+
+    return plans[plans.length - 1] || null;
   }
 
   function getResilienceFallbackMessage(code: string): string {
@@ -128,6 +266,46 @@
       default:
         return 'Answered.';
     }
+  }
+
+  function trackUnhandledMessage(data: any): {
+    rawType: string;
+    correlationId: string;
+    count: number;
+    firstSeenAt: number;
+    lastSeenAt: number;
+    shouldSurface: boolean;
+  } {
+    const now = Date.now();
+    const rawType = String(data?.type || 'unknown');
+    const correlationId = String(data?.correlationId || `webview:${rawType}`);
+    const key = `${rawType}:${correlationId}`;
+    const existing = unhandledStats.get(key);
+    const next = existing
+      ? {
+        ...existing,
+        count: existing.count + 1,
+        lastSeenAt: now
+      }
+      : {
+        count: 1,
+        firstSeenAt: now,
+        lastSeenAt: now,
+        lastSurfacedAt: 0
+      };
+    const shouldSurface = next.count === 1 || now - next.lastSurfacedAt >= UNHANDLED_SURFACE_WINDOW_MS;
+    if (shouldSurface) {
+      next.lastSurfacedAt = now;
+    }
+    unhandledStats.set(key, next);
+    return {
+      rawType,
+      correlationId,
+      count: next.count,
+      firstSeenAt: next.firstSeenAt,
+      lastSeenAt: next.lastSeenAt,
+      shouldSurface
+    };
   }
 
   onMount(() => {
@@ -329,6 +507,16 @@
         extensionStore.clearActivityState();
         extensionStore.setProcessing(false);
       },
+      onInfo: (data) => {
+        if (!data?.message) return;
+        chatStore.addMessage({
+          id: `sys_info_${Date.now()}`,
+          role: 'system',
+          content: String(data.message),
+          timestamp: Date.now(),
+          isSystemMessage: true,
+        });
+      },
 
       // Messages
       onAssistantMessage: (data) => {
@@ -362,6 +550,11 @@
           content: data.content,
           timestamp: Date.now(),
           isSystemMessage: true,
+          diagnostic: {
+            code: typeof data.code === 'string' ? data.code : undefined,
+            severity: data.severity === 'warning' || data.severity === 'error' ? data.severity : 'info',
+            correlationId: typeof data.correlationId === 'string' ? data.correlationId : undefined
+          }
         });
       },
       onLoadMessages: (data) => chatStore.hydrateMessages(data.messages),
@@ -408,8 +601,12 @@
       // Context
       onContextUpdate: (_data) => {},
       onActivityUpdate: (data) => {
-        extensionStore.setActivityLabel(data.label ?? null);
-        extensionStore.setActivityPhase(inferPhase(data.label));
+        if (data?.label == null) {
+          const state = get(extensionStore);
+          if (!state.isStreaming && !state.isProcessing && state.activeToolCalls.length === 0) {
+            extensionStore.clearActivityState();
+          }
+        }
       },
 
       // Auto-approve
@@ -426,7 +623,89 @@
 
       // Tool Approvals
       onToolApprovalRequest: (data) => {
-        extensionStore.setPendingApproval(data);
+        const approvalId = String(data.approvalId || '');
+        const toolName = String(data.toolName || 'tool');
+        const timestamp = Number(data.timestamp || Date.now());
+        const timeoutMsRaw = Number(data.timeoutMs);
+        const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? timeoutMsRaw : 300000;
+        const expiresAtRaw = Number(data.expiresAt);
+        const expiresAt = Number.isFinite(expiresAtRaw) && expiresAtRaw > timestamp
+          ? expiresAtRaw
+          : timestamp + timeoutMs;
+        if (approvalId) {
+          const messageId = `approval_${approvalId}`;
+          const existing = get(chatStore).messages.find((msg) => msg.id === messageId);
+          const nextApprovalCard = {
+            approvalId,
+            toolName,
+            params: data.params ?? {},
+            status: 'pending' as const,
+            reason: null,
+            source: 'system' as const,
+            createdAt: timestamp,
+            timeoutMs,
+            expiresAt
+          };
+          if (existing) {
+            chatStore.updateMessage(messageId, {
+              content: `Approval required for ${toolName}`,
+              approvalCard: nextApprovalCard,
+              timestamp,
+              isSystemMessage: false
+            });
+          } else {
+            chatStore.addMessage({
+              id: messageId,
+              role: 'system',
+              content: `Approval required for ${toolName}`,
+              timestamp,
+              isSystemMessage: false,
+              approvalCard: nextApprovalCard
+            });
+          }
+        }
+
+        if (get(extensionStore).approvalOverlayFallbackEnabled) {
+          extensionStore.setPendingApproval({
+            approvalId,
+            toolName,
+            params: data.params ?? {},
+            timestamp,
+            timeoutMs,
+            expiresAt
+          });
+        }
+      },
+      onToolApprovalResolved: (data) => {
+        const approvalId = String(data.approvalId || '');
+        if (!approvalId) return;
+        const messageId = `approval_${approvalId}`;
+        const existing = get(chatStore).messages.find((msg) => msg.id === messageId);
+        if (!existing?.approvalCard) {
+          chatStore.addMessage({
+            id: `sys_approval_resolved_${Date.now()}`,
+            role: 'system',
+            content: `Approval ${String(data.status || 'resolved')} for ${String(data.toolName || 'tool')}.`,
+            timestamp: Number(data.timestamp || Date.now()),
+            isSystemMessage: true
+          });
+          extensionStore.setPendingApproval(null);
+          return;
+        }
+        chatStore.updateMessage(messageId, {
+          approvalCard: {
+            ...existing.approvalCard,
+            status: data.status === 'approved' || data.status === 'rejected' || data.status === 'timeout'
+              ? data.status
+              : 'rejected',
+            reason: data.reason ?? null,
+            source: data.source || 'system',
+            resolvedAt: Number(data.timestamp || Date.now())
+          },
+          content: `Approval ${String(data.status || 'resolved')} for ${existing.approvalCard.toolName}`,
+          timestamp: Number(data.timestamp || Date.now())
+        });
+        extensionStore.setPendingApproval(null);
       },
       onToolExecutionStart: (data) => {
         const toolName = data.toolName || 'tool';
@@ -446,11 +725,19 @@
         const exact = data.toolId && state.activeToolCalls.find((t) => t.toolId === data.toolId);
         if (exact) {
           extensionStore.removeActiveToolCall(exact.toolId);
+          const nextState = get(extensionStore);
+          if (!nextState.isStreaming && !nextState.isProcessing && nextState.activeToolCalls.length === 0) {
+            extensionStore.clearActivityState();
+          }
           return;
         }
         const candidate = [...state.activeToolCalls].reverse().find((t) => t.toolName === toolName);
         if (candidate) {
           extensionStore.removeActiveToolCall(candidate.toolId);
+          const nextState = get(extensionStore);
+          if (!nextState.isStreaming && !nextState.isProcessing && nextState.activeToolCalls.length === 0) {
+            extensionStore.clearActivityState();
+          }
         }
       },
 
@@ -463,6 +750,144 @@
       },
       onTaskComplete: (msg) => {
         extensionStore.setCurrentTask(null);
+      },
+
+      onPlanCardCreated: (data) => {
+        const card = toPlanCard(data.plan);
+        if (!card) return;
+        upsertPlanMessage(card);
+      },
+      onPlanCardUpdated: (data) => {
+        const card = toPlanCard(data.plan);
+        if (!card) return;
+        upsertPlanMessage(card);
+      },
+      onPlanUpdated: (data) => {
+        const card = toPlanCard(data.plan);
+        if (!card) return;
+        upsertPlanMessage(card);
+      },
+      onPlanLoaded: (data) => {
+        const card = toPlanCard(data.plan);
+        if (!card) return;
+        upsertPlanMessage(card);
+      },
+      onCurrentPlanResponse: (data) => {
+        const card = toPlanCard(data.plan);
+        if (!card) return;
+        upsertPlanMessage(card);
+      },
+      onPlanStatusUpdate: (data) => {
+        const planId = String(data.planId || '');
+        if (!planId) return;
+        updatePlanCard(planId, (card) => ({
+          ...card,
+          status: String(data.status || card.status),
+          completedSteps: typeof data.completedSteps === 'number' ? Number(data.completedSteps) : card.completedSteps,
+          awaitingApproval: String(data.status || '') === 'awaiting_approval'
+        }));
+      },
+      onStepStatusUpdate: (data) => {
+        const planId = String(data.planId || '');
+        const stepId = String(data.stepId || '');
+        if (!planId || !stepId) return;
+        updatePlanCard(planId, (card) => {
+          const steps = card.steps.map((step) => step.id === stepId
+            ? { ...step, status: String(data.status || step.status) }
+            : step);
+          return {
+            ...card,
+            steps,
+            completedSteps: steps.filter((step) => step.status === 'completed').length
+          };
+        });
+      },
+      onPlanApprovalRequested: (data) => {
+        const planId = String(data.planId || '');
+        if (!planId) return;
+        const pendingApproval = {
+          approvalRequestId: String(data.approvalRequestId || ''),
+          requestedAt: Number(data.timestamp || Date.now()),
+          timeoutMs: Number(data.timeoutMs || 300000),
+          expiresAt: Number(data.expiresAt || (Date.now() + 300000))
+        };
+        const createdFallback = ensurePlanCardForApproval(
+          planId,
+          String(data.goal || 'Plan approval requested.'),
+          Number(data.stepsCount || 0),
+          pendingApproval
+        );
+        if (createdFallback) {
+          messaging.send('requestCurrentPlan');
+        }
+        updatePlanCard(planId, (card) => ({
+          ...card,
+          status: 'awaiting_approval',
+          awaitingApproval: true,
+          pendingApproval
+        }));
+      },
+      onPlanApprovalResolved: (data) => {
+        const planId = String(data.planId || '');
+        if (!planId) return;
+        const resolution = String(data.resolution || 'applied');
+        const nextStatus = data.status === 'approved' || data.status === 'rejected' || data.status === 'timeout'
+          ? data.status
+          : 'rejected';
+        const createdFallback = ensurePlanCardForApproval(planId, 'Plan approval updated.');
+        if (createdFallback) {
+          messaging.send('requestCurrentPlan');
+        }
+        if (resolution !== 'applied') {
+          chatStore.addMessage({
+            id: `sys_plan_approval_${Date.now()}`,
+            role: 'system',
+            content: `[Warning:PLAN_APPROVAL_${resolution.toUpperCase()}] ${String(data.reasonCode || data.reason || 'approval_not_applied')}`,
+            timestamp: Number(data.timestamp || Date.now()),
+            isSystemMessage: true
+          });
+        }
+        updatePlanCard(planId, (card) => ({
+          ...card,
+          status: resolution === 'applied'
+            ? (nextStatus === 'timeout' ? 'awaiting_approval' : nextStatus)
+            : card.status,
+          awaitingApproval: resolution === 'applied'
+            ? nextStatus !== 'approved' && nextStatus !== 'rejected'
+            : true,
+          pendingApproval: resolution === 'applied'
+            ? (nextStatus === 'timeout' ? card.pendingApproval : null)
+            : card.pendingApproval
+        }));
+      },
+      onHandoverProgress: (data) => {
+        const detail = String(data.detail || 'Handover update.');
+        if (data.status === 'started') {
+          extensionStore.setActivityLabel('Architect -> Code handover...');
+          extensionStore.setActivityPhase('tooling');
+        } else if (data.status === 'completed' || data.status === 'aborted') {
+          extensionStore.clearActivityState();
+        }
+        chatStore.addMessage({
+          id: `sys_handover_${Date.now()}`,
+          role: 'system',
+          content: detail,
+          timestamp: Number(data.timestamp || Date.now()),
+          isSystemMessage: true
+        });
+      },
+      onTokenTrackerUpdate: (_data) => {
+        // Consumed in App.svelte header token widget.
+      },
+      onRestoreSessionState: (_data) => {
+        const restoredPlan = extractPlanFromTasksPayload(_data?.tasks);
+        if (!restoredPlan) return;
+        if (_data?.tasks?.pendingPlanApproval && typeof _data.tasks.pendingPlanApproval === 'object') {
+          restoredPlan.pendingApproval = _data.tasks.pendingPlanApproval;
+        }
+        const card = toPlanCard(restoredPlan);
+        if (!card) return;
+        upsertPlanMessage(card);
       },
 
       onTaskProgress: (msg) => {
@@ -519,13 +944,57 @@
           isSystemMessage: true
         });
       },
+      onCheckpointCreated: (data) => {
+        const checkpointNumber = Number(data?.checkpointNumber || 0);
+        const filesTracked = Number(data?.filesTracked || 0);
+        const messageId = `sys_checkpoint_created_${Date.now()}_${checkpointNumber || 0}`;
+        const summary = checkpointNumber > 0
+          ? `Checkpoint #${checkpointNumber} created (${filesTracked} files tracked).`
+          : `Checkpoint created (${filesTracked} files tracked).`;
+        chatStore.addMessage({
+          id: messageId,
+          role: 'system',
+          content: summary,
+          timestamp: Date.now(),
+          isSystemMessage: true
+        });
+      },
 
       // Unhandled
 
       onUnhandled: (data) => {
-        console.log('[ChatView] Unhandled message:', data.type);
+        const tracked = trackUnhandledMessage(data);
+        messaging.send('webviewUnhandledMessage', {
+          rawType: tracked.rawType,
+          correlationId: tracked.correlationId,
+          count: tracked.count,
+          firstSeenAt: tracked.firstSeenAt,
+          lastSeenAt: tracked.lastSeenAt,
+          flowId: typeof data?.flowId === 'string' ? data.flowId : null
+        });
+        console.warn(
+          '[ChatView] Unhandled message:',
+          tracked.rawType,
+          tracked.correlationId,
+          `count=${tracked.count}`
+        );
+        if (!tracked.shouldSurface) return;
+        chatStore.addMessage({
+          id: `sys_unhandled_${Date.now()}`,
+          role: 'system',
+          content: `[Warning:UNKNOWN_WEBVIEW_MESSAGE] ${tracked.rawType} count=${tracked.count} [correlationId=${tracked.correlationId}]`,
+          timestamp: Date.now(),
+          isSystemMessage: true,
+          diagnostic: {
+            code: 'UNKNOWN_WEBVIEW_MESSAGE',
+            severity: 'warning',
+            correlationId: tracked.correlationId
+          }
+        });
       },
     });
+
+    messaging.send('requestCurrentPlan');
   });
 </script>
 
@@ -566,7 +1035,9 @@
   </footer>
 </ChatLayout>
 
-<ToolApprovalModal />
+{#if $extensionStore.approvalOverlayFallbackEnabled}
+  <ToolApprovalModal />
+{/if}
 <Modal
   isOpen={checkpointDiffModalOpen}
   title="Checkpoint Diff"

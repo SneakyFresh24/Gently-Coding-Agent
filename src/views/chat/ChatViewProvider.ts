@@ -18,6 +18,7 @@ import { WebviewMessageHandler } from './handlers/WebviewMessageHandler';
 import { FileHandler } from './handlers/FileHandler';
 import { SystemHandler } from './handlers/SystemHandler';
 import { normalizeModeAlias } from '../../modes/ModeContractV2';
+import { DiagnosticService } from '../../services/DiagnosticService';
 
 import { ChatViewContext, WebviewMessage } from './types/ChatTypes';
 
@@ -38,6 +39,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private terminalManager?: TerminalManager;
   private historyManager: HistoryManager;
   private fileReferenceManager: FileReferenceManager;
+  private readonly diagnosticService: DiagnosticService | null;
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -53,12 +55,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     );
 
     this.historyManager = new HistoryManager(this.context!);
+    this.diagnosticService = DiagnosticService.getInstance();
 
     this.initializeHandlersAndCallbacks();
   }
 
   private initializeHandlersAndCallbacks(): void {
     this.initializeHandlers();
+
+    this.diagnosticService?.setSystemWarningEmitter((warning) => {
+      this.sendMessageToWebview({
+        type: 'systemMessage',
+        messageId: `sys_diag_${Date.now()}`,
+        content: warning.content,
+        code: warning.code,
+        severity: warning.severity,
+        correlationId: warning.correlationId
+      } as any);
+    });
 
     if (this.context) {
       this.initializeTerminalManager(this.context);
@@ -167,14 +181,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   private setupEventCallbacks(): void {
     this.agentManager.setEventCallback((event: any) => {
+      const enrichedEvent = this.enrichOutboundMessage(event);
+      void this.syncPlanMetadataFromEvent(enrichedEvent);
       // If the webview is not ready, buffer the message
       if (!this._view) {
-        console.log('[ChatViewProvider] Webview not ready, queuing event:', event.type);
-        this.pendingMessages.push(event);
+        this.diagnosticService?.captureOutboundMessage(enrichedEvent);
+        console.log('[ChatViewProvider] Webview not ready, queuing event:', enrichedEvent.type);
+        this.pendingMessages.push(enrichedEvent);
         return;
       }
 
-      this.sendMessageToWebview(event);
+      this.sendMessageToWebview(enrichedEvent);
 
     });
 
@@ -339,7 +356,50 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   private sendMessageToWebview(message: any): void {
-    if (this._view) this._view.webview.postMessage(message);
+    const enrichedMessage = this.enrichOutboundMessage(message);
+    this.diagnosticService?.captureOutboundMessage(enrichedMessage);
+    if (this._view) this._view.webview.postMessage(enrichedMessage);
+  }
+
+  private enrichOutboundMessage(message: any): any {
+    if (!message || typeof message !== 'object') return message;
+    const mode = this.modeService.getCurrentMode()?.id || this.messageHandler?.getContext?.()?.selectedMode || 'unknown';
+    const model = this.messageHandler?.getContext?.()?.selectedModel || 'unknown';
+    return {
+      ...message,
+      mode: typeof message.mode === 'string' && message.mode.trim().length > 0 ? message.mode : mode,
+      model: typeof message.model === 'string' && message.model.trim().length > 0 ? message.model : model
+    };
+  }
+
+  private async syncPlanMetadataFromEvent(event: any): Promise<void> {
+    if (!event || typeof event.type !== 'string') return;
+    const trackedEvents = new Set([
+      'planCardCreated',
+      'planCardUpdated',
+      'planStatusUpdate',
+      'planApprovalRequested',
+      'planApprovalResolved'
+    ]);
+    if (!trackedEvents.has(event.type)) return;
+
+    try {
+      const currentPlan = this.agentManager.getPlanningManager()?.getCurrentPlan?.() || null;
+      const currentPlanId = currentPlan?.id || null;
+      const pendingPlanApproval = currentPlan?.pendingApproval || null;
+      await this.sessionHandler.updateSessionMetadata({
+        activePlanId: currentPlanId,
+        lastPlanUpdate: new Date().toISOString(),
+        tasks: {
+          currentPlan,
+          currentPlanId,
+          plans: currentPlan ? [currentPlan] : [],
+          pendingPlanApproval
+        }
+      });
+    } catch (error) {
+      console.warn('[ChatViewProvider] Failed to persist plan metadata:', error);
+    }
   }
 
   // ── Public API ──────────────────────────────────────────────────────────────

@@ -16,6 +16,7 @@ import { PluginManager, PluginLoader } from './plugins';
 import { ModeService } from './modes';
 import { ApiKeyManager } from './services/ApiKeyManager';
 import { OpenRouterService } from './services/OpenRouterService';
+import { DiagnosticService } from './services/DiagnosticService';
 
 let chatViewProvider: ChatViewProvider;
 let agentManager: AgentManager;
@@ -52,6 +53,11 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // ── Mode service ──────────────────────────────────────────────────────────
   modeService = new ModeService(context);
+
+  // ── Diagnostics / observability ──────────────────────────────────────────
+  DiagnosticService.initialize({
+    workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+  });
 
   // ── Agent initialization ──────────────────────────────────────────────────
   try {

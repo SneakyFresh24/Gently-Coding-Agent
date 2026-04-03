@@ -4,7 +4,21 @@
  * Implements Planner-Executor architecture for autonomous task execution
  */
 
-export type TaskStatus = 'pending' | 'in-progress' | 'completed' | 'failed' | 'skipped';
+export type TaskStatus = 'pending' | 'in_progress' | 'in-progress' | 'completed' | 'failed' | 'skipped';
+
+export type PlanLifecycleStatus =
+  | 'draft'
+  | 'created'
+  | 'awaiting_approval'
+  | 'approved'
+  | 'rejected'
+  | 'handed_over'
+  | 'executing'
+  | 'completed'
+  | 'failed'
+  | 'paused'
+  // Legacy aliases kept for backward compatibility in restored sessions.
+  | 'pending';
 
 export interface PlanStep {
   id: string;
@@ -17,11 +31,31 @@ export interface PlanStep {
   dependencies?: string[]; // IDs of steps that must complete first
 }
 
+export interface PlanApprovalRequestState {
+  approvalRequestId: string;
+  requestedAt: number;
+  expiresAt: number;
+  timeoutMs: number;
+  statusAtRequest: PlanLifecycleStatus;
+}
+
+export type PlanApprovalResolution = 'applied' | 'rejected' | 'stale' | 'mismatch';
+
+export interface PlanApprovalResolutionResult {
+  resolution: PlanApprovalResolution;
+  reasonCode: string;
+  planId: string;
+  planStatus: PlanLifecycleStatus;
+  approvalRequestId?: string;
+  expectedApprovalRequestId?: string;
+}
+
 export interface ExecutionPlan {
+  schemaVersion: number;
   id: string;
   goal: string;
   steps: PlanStep[];
-  status: 'pending' | 'executing' | 'completed' | 'failed' | 'paused';
+  status: PlanLifecycleStatus;
   createdAt: number;
   startedAt?: number;
   completedAt?: number;
@@ -29,6 +63,14 @@ export interface ExecutionPlan {
   totalSteps: number;
   completedSteps: number;
   failedSteps: number;
+  pendingApproval?: PlanApprovalRequestState | null;
+}
+
+export interface PlanStepStatusUpdate {
+  stepId: string;
+  status: TaskStatus;
+  reason?: string;
+  result?: unknown;
 }
 
 export interface PlanExecutionResult {
@@ -42,6 +84,7 @@ export interface PlanExecutionResult {
 export interface CreatePlanParams {
   goal: string;
   steps: Array<{
+    id?: string;
     description: string;
     tool: string;
     parameters: Record<string, unknown>;
@@ -73,7 +116,23 @@ export interface TaskProgressEvent {
 }
 
 export interface PlanEvent {
-  type: 'stepStatusUpdate' | 'planStatusUpdate' | 'iterativePlanStarted' | 'iterativePlanCompleted' | 'iterativePlanFailed' | 'iterativeStepCompleted' | 'iterativeStepFailed' | 'planCreated' | 'planUpdated' | 'planStepCompleted' | 'handover_to_coder' | 'taskProgress' | 'planLoaded';
+  type:
+    | 'stepStatusUpdate'
+    | 'planStatusUpdate'
+    | 'iterativePlanStarted'
+    | 'iterativePlanCompleted'
+    | 'iterativePlanFailed'
+    | 'iterativeStepCompleted'
+    | 'iterativeStepFailed'
+    | 'planUpdated'
+    | 'planCardCreated'
+    | 'planCardUpdated'
+    | 'planApprovalRequested'
+    | 'planApprovalResolved'
+    | 'planStepCompleted'
+    | 'handoverProgress'
+    | 'taskProgress'
+    | 'planLoaded';
   planId?: string;
   goal?: string;
   stepId?: string;
@@ -85,6 +144,12 @@ export interface PlanEvent {
   totalSteps?: number;
   completedSteps?: number;
   totalTime?: number;
+  approvalRequestId?: string;
+  timeoutMs?: number;
+  expiresAt?: number;
+  reasonCode?: string;
+  resolution?: PlanApprovalResolution;
+  expectedApprovalRequestId?: string;
   plan?: any;
   message?: string;
   progress?: number;

@@ -1,6 +1,11 @@
 import { EventEmitter } from 'events';
 import { TaskState } from './TaskState';
-import { PlanEvent, TaskStatus } from '../../agent/planning/types';
+import {
+    PlanApprovalRequestState,
+    PlanApprovalResolution,
+    PlanEvent,
+    TaskStatus
+} from '../../agent/planning/types';
 import { OutboundWebviewMessage } from '../../views/chat/types/WebviewMessageTypes';
 import { Mutex } from '../state/Mutex';
 import { PartialMessageUpdate } from '../streaming/types';
@@ -62,6 +67,15 @@ export class MessageStateHandler extends EventEmitter {
                 ...event,
                 type: 'stepStatusUpdate'
             } as any);
+
+            const currentPlan = this.taskState.getPlan();
+            if (currentPlan && currentPlan.id === planId) {
+                this.sendMessageToWebview({
+                    type: 'planCardUpdated',
+                    plan: currentPlan,
+                    timestamp: Date.now()
+                } as any);
+            }
         });
     }
 
@@ -85,6 +99,15 @@ export class MessageStateHandler extends EventEmitter {
                 ...event,
                 type: 'planStatusUpdate'
             } as any);
+
+            const currentPlan = this.taskState.getPlan();
+            if (currentPlan && currentPlan.id === planId) {
+                this.sendMessageToWebview({
+                    type: 'planCardUpdated',
+                    plan: currentPlan,
+                    timestamp: Date.now()
+                } as any);
+            }
         });
     }
 
@@ -123,17 +146,22 @@ export class MessageStateHandler extends EventEmitter {
     public async handoverToCoder(planId: string, message: string) {
         await this.mutex.runExclusive(async () => {
             const event = {
-                type: 'handover_to_coder' as const,
+                type: 'handoverProgress' as const,
                 planId,
-                message,
+                flowId: null,
+                status: 'started' as const,
+                detail: message,
                 timestamp: Date.now()
             };
 
-            this.emitPlanEvent(event);
+            this.emitPlanEvent(event as any);
 
             this.sendMessageToWebview({
-                ...event,
-                type: 'handover_to_coder'
+                type: 'handoverProgress',
+                flowId: event.flowId,
+                status: event.status,
+                detail: event.detail,
+                timestamp: event.timestamp
             } as any);
         });
     }
@@ -141,14 +169,87 @@ export class MessageStateHandler extends EventEmitter {
     public async announcePlanCreated(plan: ExecutionPlan) {
         await this.mutex.runExclusive(async () => {
             const event = {
-                type: 'planCreated' as const,
-                plan
+                type: 'planCardCreated' as const,
+                plan,
+                timestamp: Date.now()
             };
 
             this.emitPlanEvent(event as any);
             this.sendMessageToWebview({
-                type: 'planCreated',
-                plan
+                type: 'planCardCreated',
+                plan,
+                timestamp: event.timestamp
+            } as any);
+        });
+    }
+
+    public async announcePlanApprovalRequested(plan: ExecutionPlan, pendingApproval: PlanApprovalRequestState) {
+        await this.mutex.runExclusive(async () => {
+            const event = {
+                type: 'planApprovalRequested' as const,
+                planId: plan.id,
+                approvalRequestId: pendingApproval.approvalRequestId,
+                goal: plan.goal,
+                stepsCount: plan.steps.length,
+                timeoutMs: pendingApproval.timeoutMs,
+                expiresAt: pendingApproval.expiresAt,
+                timestamp: Date.now()
+            };
+            this.emitPlanEvent(event as any);
+            this.sendMessageToWebview(event as any);
+            this.sendMessageToWebview({
+                type: 'planCardUpdated',
+                plan,
+                timestamp: Date.now()
+            } as any);
+        });
+    }
+
+    public async announcePlanApprovalResolved(payload: {
+        plan: ExecutionPlan;
+        status: 'approved' | 'rejected' | 'timeout';
+        reason?: string;
+        reasonCode?: string;
+        source: 'user' | 'policy' | 'system';
+        resolution?: PlanApprovalResolution;
+        approvalRequestId?: string;
+        expectedApprovalRequestId?: string;
+    }) {
+        await this.mutex.runExclusive(async () => {
+            const event = {
+                type: 'planApprovalResolved' as const,
+                planId: payload.plan.id,
+                status: payload.status,
+                reason: payload.reason,
+                reasonCode: payload.reasonCode,
+                source: payload.source,
+                resolution: payload.resolution || 'applied',
+                approvalRequestId: payload.approvalRequestId,
+                expectedApprovalRequestId: payload.expectedApprovalRequestId,
+                timestamp: Date.now()
+            };
+            this.emitPlanEvent(event as any);
+            this.sendMessageToWebview(event as any);
+            this.sendMessageToWebview({
+                type: 'planCardUpdated',
+                plan: payload.plan,
+                timestamp: Date.now()
+            } as any);
+        });
+    }
+
+    public async announceHandoverProgress(payload: {
+        flowId: string | null;
+        status: 'started' | 'completed' | 'aborted';
+        detail: string;
+    }) {
+        await this.mutex.runExclusive(async () => {
+            this.sendMessageToWebview({
+                type: 'handoverProgress',
+                flowId: payload.flowId,
+                status: payload.status,
+                detail: payload.detail,
+                timestamp: Date.now()
             } as any);
         });
     }

@@ -47,16 +47,33 @@ export const TOOL_DEFINITIONS = {
 
 IMPORTANT: Always provide parameters in this exact order:
 1. path (required) - Provide this FIRST
-2. content (required) - Max 50KB per call; split larger files
+2. content (required) - Large payloads are auto-chunked by runtime when needed
 
 Example: {"path": "src/file.ts", "content": "..."}`,
         parameters: {
             type: 'object',
             properties: {
                 path: { type: 'string', description: 'Path to the file (relative to workspace root). ALWAYS provide this FIRST.' },
-                content: { type: 'string', description: 'File content. MAXIMUM 50,000 characters. For larger files, split into multiple write_file calls.', maxLength: 50000 }
+                content: { type: 'string', description: 'File content. Large payloads are split internally into deterministic chunks.' }
             },
             required: ['path', 'content']
+        }
+    },
+    write_file_chunk: {
+        name: 'write_file_chunk',
+        category: 'file',
+        description: 'Internal runtime tool for deterministic chunked writes. Not intended for direct user prompting.',
+        parameters: {
+            type: 'object',
+            properties: {
+                path: { type: 'string', description: 'Path to the target file.' },
+                writeSessionId: { type: 'string', description: 'Chunked write session identifier.' },
+                chunkIndex: { type: 'number', description: 'Zero-based chunk index.' },
+                chunkCount: { type: 'number', description: 'Total chunk count in this session.' },
+                chunkContent: { type: 'string', description: 'Chunk payload content.' },
+                checksum: { type: 'string', description: 'Optional checksum for integrity.' }
+            },
+            required: ['path', 'writeSessionId', 'chunkIndex', 'chunkCount', 'chunkContent']
         }
     },
 
@@ -504,6 +521,48 @@ IMPORTANT:
                 }
             },
             required: ['goal', 'steps']
+        }
+    },
+    update_plan_steps: {
+        name: 'update_plan_steps',
+        category: 'planning',
+        description: 'Update plan step statuses deterministically during execution. Use this after each meaningful step transition.',
+        parameters: {
+            type: 'object',
+            properties: {
+                planId: {
+                    type: 'string',
+                    description: 'Target plan ID. If omitted, runtime uses the current active plan.'
+                },
+                updates: {
+                    type: 'array',
+                    description: 'Step updates to apply in-order.',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            stepId: { type: 'string', description: 'Step ID from the plan.' },
+                            status: {
+                                type: 'string',
+                                enum: ['pending', 'in_progress', 'completed', 'failed', 'skipped'],
+                                description: 'New canonical status for this step.'
+                            },
+                            reason: { type: 'string', description: 'Optional reason or error summary.' },
+                            result: { type: 'object', description: 'Optional structured result payload.' }
+                        },
+                        required: ['stepId', 'status']
+                    }
+                },
+                source: {
+                    type: 'string',
+                    enum: ['architect', 'code', 'system', 'user'],
+                    description: 'Origin of this update.'
+                },
+                timestamp: {
+                    type: 'number',
+                    description: 'Optional unix epoch milliseconds for deterministic replay.'
+                }
+            },
+            required: ['updates']
         }
     },
     handover_to_coder: {

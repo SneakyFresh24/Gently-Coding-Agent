@@ -12,6 +12,7 @@ import { SessionType } from '../../../services/HistoryManager';
 import { MessageValidator } from '../validation';
 import { ApiKeyManager } from '../../../services/ApiKeyManager';
 import { OpenRouterService } from '../../../services/OpenRouterService';
+import { DiagnosticService } from '../../../services/DiagnosticService';
 
 import { OutboundWebviewMessage } from '../types/WebviewMessageTypes';
 
@@ -68,6 +69,9 @@ export class WebviewMessageHandler {
         break;
 
       case 'sendMessage':
+        if (await this.tryResolvePlanApprovalFromChatText(data.message)) {
+          break;
+        }
         await this.messageHandler.sendMessage(data.message, false, data.fileReferences);
         break;
 
@@ -354,6 +358,93 @@ export class WebviewMessageHandler {
         break;
       }
 
+      case 'planApprovalResponse': {
+        const agentManager = (this.systemHandler as any).agentManager;
+        if (agentManager && data.planId) {
+          const planningManager = agentManager.getPlanningManager();
+          const outcome = await planningManager.resolvePlanApproval(
+            data.planId,
+            data.approved ? 'approved' : 'rejected',
+            data.reason,
+            data.source === 'user' ? 'user' : 'system',
+            {
+              approvalRequestId: data.approvalRequestId
+            }
+          );
+          if (outcome?.resolution && outcome.resolution !== 'applied') {
+            this.sendMessageToWebview({
+              type: 'systemMessage',
+              messageId: `sys_plan_approval_${Date.now()}`,
+              content: `[Warning:PLAN_APPROVAL_${String(outcome.resolution).toUpperCase()}] ${outcome.reasonCode} [correlationId=plan:${data.planId}:${outcome.reasonCode}]`,
+              code: `PLAN_APPROVAL_${String(outcome.resolution).toUpperCase()}`,
+              severity: 'warning',
+              correlationId: `plan:${data.planId}:${outcome.reasonCode}`
+            } as any);
+          }
+          const plan = planningManager.getPlan(data.planId);
+          if (plan) {
+            this.sendMessageToWebview({
+              type: 'planCardUpdated',
+              plan,
+              timestamp: Date.now()
+            } as any);
+          }
+        }
+        break;
+      }
+
+      case 'toolApprovalLocalTimeout': {
+        const approvalId = String((data as any).approvalId || '').trim();
+        const toolName = String((data as any).toolName || 'unknown').trim();
+        const expiresAt = Number((data as any).expiresAt || 0);
+        const timestamp = Number((data as any).timestamp || Date.now());
+        const correlationId = approvalId ? `approval:${approvalId}` : `approval:local-timeout:${timestamp}`;
+        const diagnosticsContext = this.getDiagnosticsContext();
+        DiagnosticService.getInstance()?.record({
+          severity: 'warning',
+          code: 'APPROVAL_COUNTDOWN_EXPIRED_LOCAL',
+          category: 'approval',
+          flowId: null,
+          correlationId,
+          mode: diagnosticsContext.mode,
+          model: diagnosticsContext.model,
+          source: 'webview_message_handler',
+          payload: {
+            approvalId,
+            toolName,
+            expiresAt,
+            timestamp
+          }
+        });
+        break;
+      }
+
+      case 'webviewUnhandledMessage': {
+        const rawType = String((data as any).rawType || 'unknown');
+        const correlationId = String((data as any).correlationId || `unknown:webview_message:${rawType}`);
+        const count = Number((data as any).count || 1);
+        const firstSeenAt = Number((data as any).firstSeenAt || Date.now());
+        const lastSeenAt = Number((data as any).lastSeenAt || Date.now());
+        const flowId = typeof (data as any).flowId === 'string' ? String((data as any).flowId) : null;
+        const diagnosticsContext = this.getDiagnosticsContext();
+        DiagnosticService.getInstance()?.recordUnknownEvent({
+          kind: 'webview_message',
+          origin: 'webview_runtime',
+          rawType,
+          correlationId,
+          flowId,
+          mode: diagnosticsContext.mode,
+          model: diagnosticsContext.model,
+          payload: {
+            count,
+            firstSeenAt,
+            lastSeenAt,
+            flowId
+          }
+        });
+        break;
+      }
+
       case 'enhancePrompt':
         await this.systemHandler.handleEnhancePrompt(data.prompt);
         break;
@@ -441,8 +532,23 @@ export class WebviewMessageHandler {
         break;
       }
 
-      default:
-        console.warn(`[WebviewMessageHandler] Unknown message type: ${(data as any).type}`);
+      default: {
+        const rawType = String((data as any)?.type || 'unknown');
+        const correlationId = `unknown:webview_message:${rawType}`;
+        const diagnosticsContext = this.getDiagnosticsContext();
+        console.warn(`[WebviewMessageHandler] Unknown message type: ${rawType} (correlationId=${correlationId})`);
+        DiagnosticService.getInstance()?.recordUnknownEvent({
+          kind: 'webview_message',
+          origin: 'webview_message_handler',
+          rawType,
+          correlationId,
+          mode: diagnosticsContext.mode,
+          model: diagnosticsContext.model,
+          payload: {
+            keys: Object.keys((data as any) || {})
+          }
+        });
+      }
     }
   }
 
@@ -517,5 +623,83 @@ export class WebviewMessageHandler {
         );
       }
     }
+  }
+
+  private getDiagnosticsContext(): { mode: string; model: string } {
+    const context = this.messageHandler?.getContext?.();
+    const mode =
+      typeof context?.selectedMode === 'string' && context.selectedMode.trim().length > 0
+        ? context.selectedMode
+        : 'unknown';
+    const model =
+      typeof context?.selectedModel === 'string' && context.selectedModel.trim().length > 0
+        ? context.selectedModel
+        : 'unknown';
+    return { mode, model };
+  }
+
+  private async tryResolvePlanApprovalFromChatText(rawMessage: unknown): Promise<boolean> {
+    const message = String(rawMessage || '').trim();
+    if (!message) return false;
+
+    const agentManager = (this.systemHandler as any).agentManager;
+    const planningManager = agentManager?.getPlanningManager?.();
+    const currentPlan = planningManager?.getCurrentPlan?.();
+
+    if (!currentPlan || String(currentPlan.status) !== 'awaiting_approval') {
+      return false;
+    }
+
+    const intent = this.detectPlanApprovalIntent(message);
+    if (!intent) return false;
+
+    const pendingApprovalRequestId = String(currentPlan?.pendingApproval?.approvalRequestId || '').trim();
+    const outcome = await planningManager.resolvePlanApproval(
+      currentPlan.id,
+      intent.decision,
+      intent.reason,
+      'user',
+      {
+        approvalRequestId: pendingApprovalRequestId
+      }
+    );
+
+    if (outcome?.resolution !== 'applied') {
+      this.sendMessageToWebview({
+        type: 'info',
+        message: `Plan-Freigabe konnte nicht übernommen werden (${outcome?.reasonCode || 'unknown'}).`
+      });
+      return true;
+    }
+
+    this.sendMessageToWebview({
+      type: 'info',
+      message:
+        intent.decision === 'approved'
+          ? 'Plan wurde im Chat als genehmigt markiert.'
+          : 'Plan wurde im Chat als abgelehnt markiert.'
+    });
+
+    return true;
+  }
+
+  private detectPlanApprovalIntent(message: string): { decision: 'approved' | 'rejected'; reason: string } | null {
+    const text = message.trim().toLowerCase();
+    if (!text || text.length > 220) return null;
+
+    const hasPlanWord = /\b(plan|planung)\b/i.test(text);
+    const hasApprovalWord = /\b(genehmige|genehmigt|freigegeben|freigeben|approve|approved|ok)\b/i.test(text);
+    const hasRejectWord = /\b(abgelehnt|ablehnen|reject|rejected)\b/i.test(text);
+    const hasNegationApproval = /\b(nicht|kein|keine|no|not)\b.{0,12}\b(genehmigt|freigegeben|approved|approve)\b/i.test(text);
+
+    if (hasPlanWord && hasRejectWord) {
+      return { decision: 'rejected', reason: 'rejected_via_chat_text' };
+    }
+
+    if (hasPlanWord && hasApprovalWord && !hasNegationApproval) {
+      return { decision: 'approved', reason: 'approved_via_chat_text' };
+    }
+
+    return null;
   }
 }

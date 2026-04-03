@@ -27,6 +27,7 @@ import { filterToolsForModeContract } from '../../../modes/ModeContractV2';
 import { RetryPolicyEngine } from '../runtime/RetryPolicyEngine';
 import { StreamContractEngine, StreamContractViolationError } from '../runtime/StreamContractEngine';
 import { TurnEngine } from '../runtime/TurnEngine';
+import { sleepWithAbort } from '../../../core/resilience/RetryDelayUtils';
 
 const log = new LogService('ChatFlowManager');
 
@@ -542,6 +543,7 @@ export class ChatFlowManager {
         transitionTurn('STREAMING', 'stream_loop_start');
 
         context.shouldStopStream = false;
+        context.shouldAbortTools = false;
         let assistantMessage = '';
         let toolCalls: any[] = [];
         let incompleteToolCalls: IncompleteToolCall[] = [];
@@ -1991,13 +1993,7 @@ export class ChatFlowManager {
     }
 
     private async sleepWithStop(delayMs: number, context: ChatViewContext): Promise<void> {
-        const step = 100;
-        let elapsed = 0;
-        while (elapsed < delayMs) {
-            if (context.shouldStopStream) return;
-            await new Promise((resolve) => setTimeout(resolve, Math.min(step, delayMs - elapsed)));
-            elapsed += step;
-        }
+        await sleepWithAbort(delayMs, () => context.shouldStopStream === true);
     }
 
     private logCompressionEvent(event: string, details: string, throttled: boolean, scope?: string): void {

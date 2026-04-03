@@ -25,9 +25,10 @@ CORE RULES:
 - DEFAULT TOOL: Use apply_block_edit for edits to existing files whenever possible.
 - FALLBACK TOOL: Use safe_edit_file only when apply_block_edit is not suitable for a simple single edit.
 - NEW FILES ONLY: Use write_file only for creating new files.
+- STEP ENGINE: Keep plan step states deterministic with update_plan_steps when explicit step transitions happen.
 - MULTI-FILE EDITS: For edits across different files, call apply_block_edit multiple times in the same function_calls block.
 - For write_file/safe_edit_file: ALWAYS place path/file_path before content/new_content.
-- Keep each content payload under 50KB; split larger writes into multiple calls.
+- Large writes are auto-chunked in the tool pipeline; keep payloads valid JSON and deterministic.
 - NEVER create a plan. You ARE the coder.
 
 WORKFLOW:
@@ -52,7 +53,8 @@ You are the Implementation Expert. You bridge the gap between architectural desi
     'create_checkpoint',
     'restore_checkpoint',
     'show_checkpoint_diff',
-    'analyze_project_structure'
+    'analyze_project_structure',
+    'update_plan_steps'
   ];
 
   readonly maxTokens = 4096;

@@ -1,3 +1,8 @@
+import {
+  computeRecoveryDelayMs,
+  getRecoveryPolicy
+} from '../../../core/resilience/RecoveryPolicyResolver';
+
 export type SubagentRetryCategory = 'mode_switch_recoverable' | 'worker_start_recoverable';
 
 export interface SubagentRetryBudgets {
@@ -25,8 +30,8 @@ export interface SubagentRetryPlanDecision {
 }
 
 const DEFAULT_BUDGETS: SubagentRetryBudgets = {
-  mode_switch_recoverable: 2, // 1 initial + 1 retry
-  worker_start_recoverable: 2 // 1 initial + 1 retry
+  mode_switch_recoverable: getRecoveryPolicy('subagent_mode_switch').maxAttempts,
+  worker_start_recoverable: getRecoveryPolicy('subagent_worker_start').maxAttempts
 };
 
 export class SubagentRetryPolicyEngine {
@@ -84,14 +89,15 @@ export class SubagentRetryPolicyEngine {
       shouldRetry: true,
       nextAttempt,
       maxAttempts,
-      delayMs: this.computeDelayMs(nextAttempt),
+      delayMs: this.computeDelayMs(category, nextAttempt),
       reason: 'retry_allowed'
     };
   }
 
-  private computeDelayMs(attempt: number): number {
+  private computeDelayMs(category: SubagentRetryCategory, attempt: number): number {
     if (attempt <= 1) return 0;
-    return 1000;
+    return category === 'worker_start_recoverable'
+      ? computeRecoveryDelayMs('subagent_worker_start', attempt)
+      : computeRecoveryDelayMs('subagent_mode_switch', attempt);
   }
 }
-

@@ -28,6 +28,7 @@ interface StoreState {
   isStreaming: boolean;
   isProcessing: boolean;
   pendingApproval: PendingApproval | null;
+  approvalOverlayFallbackEnabled: boolean;
   activityLabel: string | null;
   activityPhase: 'idle' | 'sending' | 'thinking' | 'tooling';
   activeToolCalls: ToolCallInfo[];
@@ -59,6 +60,7 @@ const initialState: StoreState = {
   isStreaming: false,
   isProcessing: false,
   pendingApproval: null,
+  approvalOverlayFallbackEnabled: false,
   activityLabel: null,
   activityPhase: 'idle',
   activeToolCalls: [],

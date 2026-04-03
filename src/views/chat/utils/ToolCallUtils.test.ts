@@ -83,7 +83,7 @@ describe('ToolCallUtils.validateAndRepairToolCalls', () => {
     expect(result.warnings.some((w) => w.includes('claude_tool_call_id_normalized'))).toBe(true);
   });
 
-  it('rejects oversized write_file content with standardized code', () => {
+  it('auto-chunks oversized write_file content into write_file_chunk calls', () => {
     const calls = [
       {
         id: 'call_oversize',
@@ -98,9 +98,18 @@ describe('ToolCallUtils.validateAndRepairToolCalls', () => {
     ];
 
     const result = ToolCallUtils.validateAndRepairToolCalls(calls, { model: 'openai/gpt-4.1' });
-    expect(result.validToolCalls).toHaveLength(0);
-    expect(result.invalidToolCalls).toHaveLength(1);
-    expect(result.invalidToolCalls[0].code).toBe('TOOL_ARGS_TOO_LARGE');
+    expect(result.invalidToolCalls).toHaveLength(0);
+    expect(result.validToolCalls.length).toBeGreaterThan(1);
+    expect(result.validToolCalls.every((call) => call.function.name === 'write_file_chunk')).toBe(true);
+
+    const firstArgs = JSON.parse(result.validToolCalls[0].function.arguments);
+    const lastArgs = JSON.parse(result.validToolCalls[result.validToolCalls.length - 1].function.arguments);
+    expect(firstArgs.path).toBe('src/huge.ts');
+    expect(firstArgs.chunkIndex).toBe(0);
+    expect(firstArgs.chunkCount).toBe(result.validToolCalls.length);
+    expect(typeof firstArgs.writeSessionId).toBe('string');
+    expect(lastArgs.chunkIndex).toBe(result.validToolCalls.length - 1);
+    expect(lastArgs.chunkCount).toBe(result.validToolCalls.length);
   });
 
   it('marks truncated tool args with TOOL_ARGS_TRUNCATED code', () => {

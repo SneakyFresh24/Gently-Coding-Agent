@@ -134,6 +134,7 @@ export class PlanPersistenceService {
             this.startWatching(planId);
 
             return {
+                schemaVersion: 2,
                 id: planId,
                 goal,
                 steps,

@@ -15,12 +15,13 @@ const ARCHITECT_MODE_CONTRACT = `MODE CONTRACT (PLAN_STRICT):
 const CODE_IDENTITY = `You are "Gently" in Code mode. Your goal is to implement the approved plan deterministically.`;
 const CODE_OBJECTIVE = `WORKFLOW:
 1. READ PLAN: Follow architect plan from conversation context.
-2. IMPLEMENT: Execute changes in small verifiable steps.
+2. EXECUTE + TRACK: Execute changes in small verifiable steps and keep step status deterministic with update_plan_steps.
 3. VERIFY: Re-check edits and summarize outcomes and residual risk.`;
 
 const CODE_MODE_CONTRACT = `MODE CONTRACT (ACT_STRICT):
 - Allowed classes: implementation and verification tools.
 - Forbidden planning tools: create_plan, handover_to_coder, ask_question.
+- update_plan_steps is allowed for deterministic progress tracking.
 - Do not re-plan unless user explicitly switches back to architect mode.`;
 
 const SHARED_TOOL_POLICY = `TOOL POLICY:
@@ -48,7 +49,7 @@ const SHARED_EXAMPLES = `EXAMPLES:
 const SHARED_RUNTIME_HINTS = `RUNTIME HINTS:
 - Keep tool payloads complete and valid JSON.
 - Place path/file_path before content/new_content for file-writing tools.
-- Split large writes into smaller edits.`;
+- Large writes are auto-chunked by the runtime write pipeline when needed.`;
 
 export type PromptTextBlocks = {
   identity: string;
@@ -154,4 +155,3 @@ export class PromptRegistry {
     return PROMPT_TEXT_BY_MODE[mode] || PROMPT_TEXT_BY_MODE.architect;
   }
 }
-

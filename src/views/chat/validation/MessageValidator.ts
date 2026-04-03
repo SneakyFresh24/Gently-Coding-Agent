@@ -563,6 +563,36 @@ const MessageSchemas: Record<string, any> = {
       source: { type: 'string', enum: ['user', 'stopped'], optional: true }
     }
   },
+  'planApprovalResponse': {
+    required: ['planId', 'approvalRequestId', 'approved'],
+    fields: {
+      planId: { type: 'string', maxLength: 120 },
+      approvalRequestId: { type: 'string', maxLength: 180 },
+      approved: { type: 'boolean' },
+      reason: { type: 'string', maxLength: 500, optional: true },
+      source: { type: 'string', enum: ['user', 'system'], optional: true }
+    }
+  },
+  'toolApprovalLocalTimeout': {
+    required: ['approvalId', 'timestamp'],
+    fields: {
+      approvalId: { type: 'string', maxLength: 140 },
+      toolName: { type: 'string', maxLength: 120, optional: true },
+      timestamp: { type: 'number', min: 0 },
+      expiresAt: { type: 'number', min: 0, optional: true }
+    }
+  },
+  'webviewUnhandledMessage': {
+    required: ['rawType', 'correlationId', 'count', 'firstSeenAt', 'lastSeenAt'],
+    fields: {
+      rawType: { type: 'string', maxLength: 120 },
+      correlationId: { type: 'string', maxLength: 200 },
+      count: { type: 'number', min: 1 },
+      firstSeenAt: { type: 'number', min: 0 },
+      lastSeenAt: { type: 'number', min: 0 },
+      flowId: { type: 'string', maxLength: 120, optional: true, nullable: true }
+    }
+  },
 
   // BYOK mode: no auth message types.
 };

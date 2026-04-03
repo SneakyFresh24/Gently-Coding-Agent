@@ -45,6 +45,10 @@ export class TaskState {
         return this.data.plan;
     }
 
+    public setPlan(plan: ExecutionPlan | null): void {
+        this.data.plan = plan;
+    }
+
     public getStep(stepId: string): PlanStep | undefined {
         return this.data.plan?.steps.find(s => s.id === stepId);
     }

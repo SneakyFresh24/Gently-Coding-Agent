@@ -3,7 +3,7 @@ import { ChatViewContext, Message } from '../types/ChatTypes';
 import { ToolCallManager } from '../toolcall';
 import { LogService } from '../../../services/LogService';
 import { OutboundWebviewMessage } from '../types/WebviewMessageTypes';
-import { ExecutionPlan, PlanStep } from '../../../agent/planning/types';
+import { ExecutionPlan } from '../../../agent/planning/types';
 
 interface PlanEvent {
     type: string;
@@ -26,6 +26,22 @@ export class ArchitectHandoverHandler {
         // Step/Plan status events — ALWAYS forward to webview (all modes!)
         // These are needed for the TaskView UI to mark steps as completed.
         switch (event.type) {
+            case 'planCardCreated':
+                this.sendMessageToWebview({
+                    type: 'planCardCreated',
+                    plan: event.plan,
+                    timestamp: event.timestamp || Date.now()
+                } as any);
+                return;
+
+            case 'planCardUpdated':
+                this.sendMessageToWebview({
+                    type: 'planCardUpdated',
+                    plan: event.plan,
+                    timestamp: event.timestamp || Date.now()
+                } as any);
+                return;
+
             case 'stepStatusUpdate':
                 this.sendMessageToWebview({
                     type: 'stepStatusUpdate',
@@ -74,35 +90,32 @@ export class ArchitectHandoverHandler {
         if (context.selectedMode !== 'architect') return;
 
         switch (event.type) {
-            case 'planCreated':
-                log.info('Plan created in Architect Mode - Sending to Webview');
-                if (event.plan) {
-                    this.sendMessageToWebview({
-                        type: 'planCreated',
-                        plan: {
-                            ...event.plan,
-                            phase: 'created',
-                            stepStatuses: event.plan.steps.map((step: PlanStep) => ({
-                                id: step.id,
-                                status: 'pending',
-                                description: step.description
-                            }))
-                        }
-                    });
-                    // Set activity label for plan creation
-                    this.sendMessageToWebview({
-                        type: 'activityUpdate',
-                        label: 'Erstellt Plan...'
-                    } as any);
-                }
+            case 'planApprovalRequested':
+                this.sendMessageToWebview({
+                    type: 'planApprovalRequested',
+                    planId: event.planId,
+                    approvalRequestId: event.approvalRequestId,
+                    goal: event.goal,
+                    stepsCount: event.totalSteps || event.stepsCount || 0,
+                    timeoutMs: event.timeoutMs,
+                    expiresAt: event.expiresAt,
+                    timestamp: event.timestamp || Date.now()
+                } as any);
                 break;
 
-            case 'handover_to_coder':
-                log.info('Handover to Coder initiated');
+            case 'planApprovalResolved':
                 this.sendMessageToWebview({
-                    type: 'systemMessage',
-                    content: '🔄 Architect has finished planning. Switching to Code Mode...'
-                });
+                    type: 'planApprovalResolved',
+                    planId: event.planId,
+                    status: event.status,
+                    reason: event.reason,
+                    reasonCode: event.reasonCode,
+                    resolution: event.resolution,
+                    approvalRequestId: event.approvalRequestId,
+                    expectedApprovalRequestId: event.expectedApprovalRequestId,
+                    source: event.source || 'system',
+                    timestamp: event.timestamp || Date.now()
+                } as any);
                 break;
         }
     }
@@ -111,9 +124,10 @@ export class ArchitectHandoverHandler {
         return '\n\n⚠️ ARCHITECT MODE TOOLS REMINDER:\n' +
             'You are the Architect. Use your tools to analyze, plan, and persist decisions.\n' +
             '- create_plan: Create the implementation roadmap.\n' +
+            '- planApprovalResponse (user): Approve/reject the plan directly in chat cards.\n' +
             '- ask_question: Offer handover/refinement options with optional mode switch.\n' +
             '- update_memory_bank: Persist architectural decisions.\n' +
-            '- handover_to_coder: Legacy fallback handover tool.\n' +
+            '- handover_to_coder: Trigger Architect -> Code handover after approval.\n' +
             'Do NOT implement code changes yourself.';
     }
 }

@@ -7,8 +7,20 @@ import { CodebaseIndexer } from '../CodebaseIndexer';
 import { ContextManager } from '../contextManager';
 import { RegexSearchService } from '../retrieval/RegexSearchService';
 import { ToolRegistry } from './ToolRegistry';
+import { createHash } from 'crypto';
 
 export class FileTools {
+  private readonly chunkedWriteSessions = new Map<
+    string,
+    {
+      path: string;
+      chunkCount: number;
+      checksum?: string;
+      chunks: Map<number, string>;
+      createdAt: number;
+    }
+  >();
+
   constructor(
     private fileOps: FileOperations,
     private indexer: CodebaseIndexer,
@@ -22,10 +34,121 @@ export class FileTools {
   registerTools(registry: ToolRegistry): void {
     registry.register('read_file', this.readFile.bind(this));
     registry.register('write_file', this.writeFile.bind(this));
+    registry.register('write_file_chunk', this.writeFileChunk.bind(this));
     registry.register('list_files', this.listFiles.bind(this));
     registry.register('find_files', this.findFiles.bind(this));
     registry.register('regex_search', this.regexSearch.bind(this));
     // text_editor_20250728 and replace_file_content were removed in favor of safe_edit_file
+  }
+
+  private async writeFileChunk(params: any): Promise<any> {
+    try {
+      const filePath = String(params.path || params.file_path || '').trim();
+      const writeSessionId = String(params.writeSessionId || '').trim();
+      const chunkIndex = Number(params.chunkIndex);
+      const chunkCount = Number(params.chunkCount);
+      const chunkContent = typeof params.chunkContent === 'string' ? params.chunkContent : '';
+      const checksum = typeof params.checksum === 'string' ? params.checksum : undefined;
+
+      if (!filePath || !writeSessionId) {
+        return {
+          success: false,
+          message: 'write_file_chunk requires path and writeSessionId.'
+        };
+      }
+      if (!Number.isInteger(chunkIndex) || chunkIndex < 0) {
+        return {
+          success: false,
+          message: `Invalid chunkIndex for ${writeSessionId}: ${chunkIndex}`
+        };
+      }
+      if (!Number.isInteger(chunkCount) || chunkCount <= 0) {
+        return {
+          success: false,
+          message: `Invalid chunkCount for ${writeSessionId}: ${chunkCount}`
+        };
+      }
+      if (chunkIndex >= chunkCount) {
+        return {
+          success: false,
+          message: `chunkIndex (${chunkIndex}) must be smaller than chunkCount (${chunkCount}).`
+        };
+      }
+
+      const existing = this.chunkedWriteSessions.get(writeSessionId);
+      const session = existing || {
+        path: filePath,
+        chunkCount,
+        checksum,
+        chunks: new Map<number, string>(),
+        createdAt: Date.now()
+      };
+
+      if (session.path !== filePath) {
+        return {
+          success: false,
+          message: `writeSessionId "${writeSessionId}" is already bound to "${session.path}", not "${filePath}".`
+        };
+      }
+      if (session.chunkCount !== chunkCount) {
+        return {
+          success: false,
+          message: `chunkCount mismatch for writeSessionId "${writeSessionId}". Expected ${session.chunkCount}, received ${chunkCount}.`
+        };
+      }
+
+      session.chunks.set(chunkIndex, chunkContent);
+      if (checksum && !session.checksum) {
+        session.checksum = checksum;
+      }
+      this.chunkedWriteSessions.set(writeSessionId, session);
+
+      if (session.chunks.size < session.chunkCount) {
+        return {
+          success: true,
+          pending: true,
+          writeSessionId,
+          chunkIndex,
+          chunkCount,
+          receivedChunks: session.chunks.size
+        };
+      }
+
+      const content = Array.from({ length: session.chunkCount })
+        .map((_, index) => session.chunks.get(index) || '')
+        .join('');
+
+      if (session.checksum) {
+        const calculated = createHash('sha256').update(content).digest('hex');
+        if (calculated !== session.checksum) {
+          this.chunkedWriteSessions.delete(writeSessionId);
+          return {
+            success: false,
+            message: `Checksum mismatch for writeSessionId "${writeSessionId}".`
+          };
+        }
+      }
+
+      await this.fileOps.writeFile(filePath, content);
+      this.contextManager.trackFileAccess(
+        filePath,
+        content,
+        this.fileOps.getLanguageFromPath(filePath),
+        content.length
+      );
+      this.chunkedWriteSessions.delete(writeSessionId);
+
+      return {
+        success: true,
+        path: filePath,
+        writeSessionId,
+        chunkCount,
+        bytes: content.length,
+        message: `Chunked write completed for ${filePath}.`
+      };
+    } catch (error) {
+      return { success: false, message: String(error) };
+    }
   }
 
   private async readFile(params: any): Promise<any> {

@@ -7,6 +7,7 @@ import {
   CommandEvaluation,
   AutoApprovalActions
 } from '../types/approval';
+import { DiagnosticService } from '../services/DiagnosticService';
 
 /**
  * Minimal stub for ApprovalManager to fix backend compilation errors.
@@ -127,6 +128,7 @@ export class AutoApproveManager {
     'check_dev_server',
     'check_memory_conflicts',
     'check_pattern_suggestions',
+    'create_plan',
     'handover_to_coder',
     'ask_question',
     'create_checkpoint'
@@ -184,6 +186,15 @@ export class AutoApproveManager {
     const action = this.mapToolToAction(toolName, params);
     if (!action) {
       console.warn(`[AutoApproveManager] Unknown tool "${toolName}" - requiring explicit approval.`);
+      DiagnosticService.getInstance()?.recordUnknownEvent({
+        kind: 'tool',
+        origin: 'auto_approve_manager',
+        rawType: normalizedToolName,
+        correlationId: `unknown:tool:${normalizedToolName}`,
+        payload: {
+          toolName: normalizedToolName
+        }
+      });
       this.logDecision(toolName, 'unknown', false);
       return false;
     }

@@ -45,6 +45,8 @@ export interface PendingApproval {
   toolName: string;
   params: any;
   timestamp: number;
+  timeoutMs: number;
+  expiresAt: number;
 }
 
 export interface QuestionOption {
@@ -64,6 +66,45 @@ export interface QuestionCardState {
   status: 'pending' | 'resolved';
   selectedOptionIndexes: number[];
   resolutionSource?: 'user' | 'timeout_default' | 'stopped';
+}
+
+export interface PlanCardStepState {
+  id: string;
+  description: string;
+  status: string;
+  dependencies?: string[];
+}
+
+export interface PlanCardState {
+  planId: string;
+  goal: string;
+  status: string;
+  schemaVersion?: number;
+  createdAt?: number;
+  updatedAt?: number;
+  steps: PlanCardStepState[];
+  completedSteps: number;
+  totalSteps: number;
+  awaitingApproval?: boolean;
+  pendingApproval?: {
+    approvalRequestId: string;
+    requestedAt?: number;
+    timeoutMs?: number;
+    expiresAt?: number;
+  } | null;
+}
+
+export interface ToolApprovalCardState {
+  approvalId: string;
+  toolName: string;
+  params: any;
+  status: 'pending' | 'approved' | 'rejected' | 'timeout';
+  reason?: string | null;
+  source?: 'user' | 'timeout' | 'system';
+  createdAt: number;
+  timeoutMs: number;
+  expiresAt: number;
+  resolvedAt?: number;
 }
 
 export interface ToolCallInfo {
@@ -101,6 +142,13 @@ export interface Message {
   commandApproval?: CommandApproval;
   toolExecution?: ToolExecution;
   questionCard?: QuestionCardState;
+  planCard?: PlanCardState;
+  approvalCard?: ToolApprovalCardState;
+  diagnostic?: {
+    code?: string;
+    severity?: 'info' | 'warning' | 'error';
+    correlationId?: string;
+  };
 }
 
 // ── Extension State ──────────────────────────────────
@@ -169,6 +217,7 @@ export interface ExtensionState {
   mode: 'architect' | 'code' | 'ask' | 'agent' | 'debug';
   isStreaming: boolean;
   isProcessing: boolean;
+  approvalOverlayFallbackEnabled?: boolean;
   activityLabel?: string | null;
   activityPhase?: 'idle' | 'sending' | 'thinking' | 'tooling';
   activeToolCalls?: ToolCallInfo[];
@@ -236,6 +285,9 @@ export type InboundMessageType =
   | 'setAutoApproveSettings'
   | 'toggleYoloMode'
   | 'toolApprovalResponse'
+  | 'toolApprovalLocalTimeout'
+  | 'webviewUnhandledMessage'
+  | 'planApprovalResponse'
   | 'questionResponse'
   | 'syncTasks'
   | 'syncContext'
@@ -288,7 +340,6 @@ export type OutboundMessageType =
   | 'generatingEnd'
   | 'processingStart'
   | 'processingEnd'
-  | 'planCreated'
   | 'planUpdated'
   | 'planLoaded'
   | 'planStatusUpdate'
@@ -296,8 +347,15 @@ export type OutboundMessageType =
   | 'planStepCompleted'
   | 'autoApproveSettingsUpdate'
   | 'toolApprovalRequest'
+  | 'toolApprovalResolved'
   | 'questionRequest'
   | 'questionResolved'
+  | 'planApprovalRequested'
+  | 'planApprovalResolved'
+  | 'planCardCreated'
+  | 'planCardUpdated'
+  | 'handoverProgress'
+  | 'restoreSessionState'
   | 'setPromptFromGuardian'
   | 'workspaceInfo'
   | 'currentPlanResponse'
@@ -324,7 +382,6 @@ export type OutboundMessageType =
   | 'terminalModeChanged'
   | 'quickPatternsChanged'
   | 'terminalStatus'
-  | 'tokenTrackerUpdate'
   | 'refreshSessions'
   | 'thinking';
 

@@ -31,9 +31,11 @@ import { LogService } from '../../services/LogService';
 import { CircuitBreakerRegistry } from '../../core/resilience/CircuitBreakerRegistry';
 import { ToolRunPhase, ToolRunStateMachine } from './runtime/ToolRunStateMachine';
 import { ToolRetryPolicyEngine } from './runtime/ToolRetryPolicyEngine';
+import { sleepWithAbort } from '../../core/resilience/RetryDelayUtils';
 
 const log = new LogService('ToolManager');
 const QUESTION_TIMEOUT_MS = 60_000;
+const TOOL_APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
 
 type ToolResilienceCode =
   | 'TOOL_RETRY_SCHEDULED'
@@ -100,6 +102,8 @@ interface ExecuteToolCallInput {
 
 interface ApprovalDecision {
   status: 'approved' | 'rejected' | 'timeout';
+  reason?: string;
+  source: 'user' | 'timeout' | 'system';
 }
 
 class ToolExecutionError extends Error {
@@ -302,6 +306,7 @@ export class ToolManager implements IAgentService {
         };
 
         try {
+          await this.ensurePlanExecutionStarted(toolName, toolArgs);
           // 1. Resolve planning context if applicable
           const planCtx = this.resolvePlanContext(toolName, toolArgs);
           
@@ -319,7 +324,7 @@ export class ToolManager implements IAgentService {
 
           // 3. Mark plan step as in-progress
           if (planCtx && this.planningManager) {
-            this.planningManager.updateStepStatus(planCtx.planId, planCtx.stepId, 'in-progress');
+            await this.planningManager.updateStepStatus(planCtx.planId, planCtx.stepId, 'in_progress');
             toolArgs.planId = planCtx.planId;
             toolArgs.stepId = planCtx.stepId;
           }
@@ -330,7 +335,7 @@ export class ToolManager implements IAgentService {
 
           // 5. Handle success updates
           if (planCtx && this.planningManager) {
-            this.planningManager.updateStepStatus(planCtx.planId, planCtx.stepId, 'completed', result);
+            await this.planningManager.updateStepStatus(planCtx.planId, planCtx.stepId, 'completed', result);
             if (this.eventCallback) {
               this.eventCallback({ type: 'planStepCompleted', planId: planCtx.planId, stepId: planCtx.stepId, result });
             }
@@ -357,7 +362,7 @@ export class ToolManager implements IAgentService {
           // Handle plan failure
           const planCtx = this.resolvePlanContext(toolName, toolArgs);
           if (planCtx && this.planningManager) {
-             this.planningManager.updateStepStatus(planCtx.planId, planCtx.stepId, 'failed', undefined, String(error));
+             await this.planningManager.updateStepStatus(planCtx.planId, planCtx.stepId, 'failed', undefined, String(error));
           }
         }
       }
@@ -378,17 +383,84 @@ export class ToolManager implements IAgentService {
     if (!targetPlanId) return null;
     
     const plan = this.planningManager.getPlan(targetPlanId);
-    if (!plan || (plan.status !== 'executing' && plan.status !== 'pending')) return null;
+    if (!plan || !['executing', 'pending', 'handed_over'].includes(String(plan.status))) return null;
 
-    const step = params.stepId 
-      ? plan.steps.find((s: any) => s.id === params.stepId) 
-      : plan.steps.find((s: any) => s.tool === toolName && (s.status === 'in-progress' || s.status === 'pending'));
+    const requestedStepId = String(params?.stepId || '').trim();
+    const normalizedToolName = this.normalizeToolAlias(toolName);
+    const targetPath = this.extractTargetPath(params);
+
+    const isOpenStep = (status: string): boolean => {
+      const normalized = this.normalizeTaskStatus(status);
+      return normalized === 'pending' || normalized === 'in_progress';
+    };
+
+    const step = requestedStepId
+      ? plan.steps.find((s: any) => s.id === requestedStepId)
+      : plan.steps.find((s: any) => {
+          if (!isOpenStep(String(s.status || ''))) return false;
+          const stepTool = this.normalizeToolAlias(String(s.tool || ''));
+          if (stepTool !== normalizedToolName) return false;
+          if (!targetPath) return true;
+          const stepPath = this.extractTargetPath(s.parameters || {});
+          if (!stepPath) return true;
+          return this.isSamePath(stepPath, targetPath);
+        });
 
     if (step) {
       return { planId: targetPlanId, stepId: step.id };
     }
     
     return null;
+  }
+
+  private normalizeToolAlias(toolName: string): string {
+    const normalized = String(toolName || '').trim().toLowerCase();
+    if (normalized === 'create_file') return 'write_file';
+    if (normalized === 'write_file_chunk') return 'write_file';
+    if (normalized === 'update_file' || normalized === 'modify_file') return 'safe_edit_file';
+    return normalized;
+  }
+
+  private normalizeTaskStatus(status: string): 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped' {
+    const normalized = String(status || '').trim().toLowerCase();
+    if (normalized === 'in_progress' || normalized === 'in-progress') return 'in_progress';
+    if (normalized === 'completed') return 'completed';
+    if (normalized === 'failed') return 'failed';
+    if (normalized === 'skipped') return 'skipped';
+    return 'pending';
+  }
+
+  private extractTargetPath(params: any): string | null {
+    if (!params || typeof params !== 'object') return null;
+    const raw = params.path || params.file_path;
+    if (typeof raw !== 'string' || raw.trim().length === 0) return null;
+    return path.normalize(raw.trim());
+  }
+
+  private isSamePath(left: string, right: string): boolean {
+    return path.normalize(left).toLowerCase() === path.normalize(right).toLowerCase();
+  }
+
+  private isPlanningControlTool(toolName: string): boolean {
+    const normalized = this.normalizeToolAlias(toolName);
+    return ['create_plan', 'update_plan_steps', 'handover_to_coder', 'ask_question'].includes(normalized);
+  }
+
+  private async ensurePlanExecutionStarted(toolName: string, params: any): Promise<void> {
+    if (!this.planningManager) return;
+    if (this.isPlanningControlTool(toolName)) return;
+    const currentPlan = this.planningManager.getCurrentPlan();
+    if (!currentPlan || !currentPlan.id) return;
+
+    const targetPlanId = String(params?.planId || currentPlan.id).trim();
+    if (!targetPlanId) return;
+    const plan = this.planningManager.getPlan(targetPlanId);
+    if (!plan) return;
+
+    if (plan.status === 'handed_over' || plan.status === 'approved' || plan.status === 'pending') {
+      await this.planningManager.beginExecution(targetPlanId);
+      params.planId = targetPlanId;
+    }
   }
 
   /**
@@ -566,14 +638,6 @@ export class ToolManager implements IAgentService {
           const isWriteTool = toolName === 'write_file';
           const writePath = params?.path || params?.file_path;
           const contentLength = typeof params?.content === 'string' ? params.content.length : 0;
-          if (isWriteTool && this.eventCallback) {
-            this.eventCallback({
-              type: 'write_started',
-              path: writePath,
-              bytes: contentLength,
-              timestamp: Date.now()
-            });
-          }
           const result = await tool.execute(params);
           const successUpdate = this.circuitBreakers.recordSuccess('tool.execute', toolName);
           if (successUpdate.transition === 'closed') {
@@ -585,16 +649,6 @@ export class ToolManager implements IAgentService {
             };
             await this.hookManager.executeNotification(payload);
             log.event('INFO', 'circuit.closed', `Circuit breaker closed for ${toolName}`, payload.metadata);
-          }
-          if (isWriteTool && this.eventCallback) {
-            this.eventCallback({
-              type: 'write_finished',
-              path: writePath,
-              bytes: contentLength,
-              success: result?.success !== false,
-              durationMs: Date.now() - executionStart,
-              timestamp: Date.now()
-            });
           }
           if (isWriteTool) {
             log.event('INFO', 'tool.write_file.completed', 'write_file completed', {
@@ -630,17 +684,6 @@ export class ToolManager implements IAgentService {
         log.event('ERROR', 'circuit.opened', `Circuit breaker opened for ${toolName}`, {
           toolName,
           circuitKey: breaker.key
-        });
-      }
-      if (toolName === 'write_file' && this.eventCallback) {
-        this.eventCallback({
-          type: 'write_finished',
-          path: params?.path || params?.file_path,
-          bytes: typeof params?.content === 'string' ? params.content.length : 0,
-          success: false,
-          error: String(error),
-          durationMs: 0,
-          timestamp: Date.now()
         });
       }
       log.error(`Error executing tool ${toolName}:`, error);
@@ -803,7 +846,7 @@ export class ToolManager implements IAgentService {
           if (decision.status === 'timeout') {
             throw new ToolExecutionError({
               code: 'TOOL_APPROVAL_TIMEOUT',
-              message: `Tool approval timed out for "${toolName}".`,
+              message: `Tool approval timed out for "${toolName}". Please approve again to continue.`,
               retryable: false
             });
           }
@@ -812,25 +855,12 @@ export class ToolManager implements IAgentService {
               code: 'TOOL_APPROVAL_REJECTED',
               message: 'Tool execution rejected by user',
               retryable: false,
-              stoppedByUser: true
+              stoppedByUser: decision.source === 'user'
             });
           }
         }
 
         stateMachine.transition('EXECUTE', 'tool_execute');
-        const executionStart = Date.now();
-        const isWriteTool = toolName === 'write_file';
-        const writePath = params?.path || params?.file_path;
-        const contentLength = typeof params?.content === 'string' ? params.content.length : 0;
-        if (isWriteTool && this.eventCallback) {
-          this.eventCallback({
-            type: 'write_started',
-            path: writePath,
-            bytes: contentLength,
-            timestamp: Date.now()
-          });
-        }
-
         let result: any;
         try {
           if (toolName === 'ask_question') {
@@ -866,17 +896,6 @@ export class ToolManager implements IAgentService {
           });
           this.emitHookFailures(settings, notificationResult.failures, runContext, attempt, correlationId);
         }
-        if (isWriteTool && this.eventCallback) {
-          this.eventCallback({
-            type: 'write_finished',
-            path: writePath,
-            bytes: contentLength,
-            success: result?.success !== false,
-            durationMs: Date.now() - executionStart,
-            timestamp: Date.now()
-          });
-        }
-
         stateMachine.transition('POST_HOOK', 'post_hook');
         const postHookResult = await this.hookManager.executePostHooks(toolName, params, result, {
           flowId: runContext.flowId || undefined,
@@ -1369,8 +1388,7 @@ export class ToolManager implements IAgentService {
   }
 
   private async sleep(ms: number): Promise<void> {
-    if (!Number.isFinite(ms) || ms <= 0) return;
-    await new Promise((resolve) => setTimeout(resolve, ms));
+    await sleepWithAbort(ms);
   }
 
   private isRecoverableToolError(error: unknown): boolean {
@@ -1393,29 +1411,45 @@ export class ToolManager implements IAgentService {
   private async requestApprovalDecision(toolName: string, params: any): Promise<ApprovalDecision> {
     return new Promise((resolve) => {
       const approvalId = `tool_approval_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const timestamp = Date.now();
+      const timeoutMs = TOOL_APPROVAL_TIMEOUT_MS;
+      const expiresAt = timestamp + timeoutMs;
 
       if (!this.eventCallback) {
-        resolve({ status: 'rejected' });
+        resolve({
+          status: 'rejected',
+          reason: 'approval_callback_unavailable',
+          source: 'system'
+        });
         return;
       }
 
       const timeout = setTimeout(() => {
         this.pendingApprovals.delete(approvalId);
-        resolve({ status: 'timeout' });
-      }, 5 * 60 * 1000);
+        const decision: ApprovalDecision = {
+          status: 'timeout',
+          reason: 'approval_timeout',
+          source: 'timeout'
+        };
+        this.emitToolApprovalResolved(approvalId, toolName, decision);
+        resolve(decision);
+      }, timeoutMs);
 
       this.eventCallback({
         type: 'toolApprovalRequest',
         approvalId,
         toolName,
         params,
-        timestamp: Date.now()
+        timestamp,
+        timeoutMs,
+        expiresAt
       });
 
       this.pendingApprovals.set(approvalId, {
-        resolve: (approved: boolean) => {
+        resolve: (decision: ApprovalDecision) => {
           clearTimeout(timeout);
-          resolve({ status: approved ? 'approved' : 'rejected' });
+          this.emitToolApprovalResolved(approvalId, toolName, decision);
+          resolve(decision);
         },
         toolName
       });
@@ -1429,6 +1463,9 @@ export class ToolManager implements IAgentService {
   private async requestApproval(toolName: string, params: any): Promise<boolean> {
     return new Promise((resolve) => {
       const approvalId = `tool_approval_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const timestamp = Date.now();
+      const timeoutMs = TOOL_APPROVAL_TIMEOUT_MS;
+      const expiresAt = timestamp + timeoutMs;
       
       console.log(`[ToolManager] ═════════════════════════════════════`);
       console.log(`[ToolManager] APPROVAL REQUEST START`);
@@ -1447,31 +1484,39 @@ export class ToolManager implements IAgentService {
       const timeout = setTimeout(() => {
         console.warn(`[ToolManager] ⏱️ Approval TIMEOUT for ${toolName} (ID: ${approvalId}) after 5 minutes`);
         this.pendingApprovals.delete(approvalId);
+        this.emitToolApprovalResolved(approvalId, toolName, {
+          status: 'timeout',
+          reason: 'approval_timeout',
+          source: 'timeout'
+        });
         resolve(false);
-      }, 5 * 60 * 1000);
+      }, timeoutMs);
 
       this.eventCallback({
           type: 'toolApprovalRequest',
           approvalId,
           toolName,
           params,
-          timestamp: Date.now()
+          timestamp,
+          timeoutMs,
+          expiresAt
       });
       
       console.log(`[ToolManager] ✅ Approval request sent to webview (ID: ${approvalId})`);
 
       this.pendingApprovals.set(approvalId, {
-        resolve: (approved: boolean) => {
+        resolve: (decision: ApprovalDecision) => {
           clearTimeout(timeout);
-          console.log(`[ToolManager] 📩 Response received for ${approvalId}: ${approved ? '✅ APPROVED' : '❌ REJECTED'}`);
-          resolve(approved);
+          console.log(`[ToolManager] 📩 Response received for ${approvalId}: ${decision.status === 'approved' ? '✅ APPROVED' : decision.status === 'timeout' ? '⏱️ TIMEOUT' : '❌ REJECTED'}`);
+          this.emitToolApprovalResolved(approvalId, toolName, decision);
+          resolve(decision.status === 'approved');
         },
         toolName
       });
     });
   }
 
-  private pendingApprovals: Map<string, { resolve: (approved: boolean) => void, toolName: string }> = new Map();
+  private pendingApprovals: Map<string, { resolve: (decision: ApprovalDecision) => void, toolName: string }> = new Map();
 
   public handleApprovalResponse(approvalId: string, approved: boolean, alwaysApprove: boolean = false): void {
     const entry = this.pendingApprovals.get(approvalId);
@@ -1479,7 +1524,11 @@ export class ToolManager implements IAgentService {
       if (alwaysApprove && approved) {
         this.autoApproveManager.addAutoApproval(entry.toolName);
       }
-      entry.resolve(approved);
+      entry.resolve({
+        status: approved ? 'approved' : 'rejected',
+        reason: alwaysApprove && approved ? 'approved_and_remembered' : approved ? 'approved' : 'rejected_by_user',
+        source: 'user'
+      });
       this.pendingApprovals.delete(approvalId);
     }
   }
@@ -1520,7 +1569,11 @@ export class ToolManager implements IAgentService {
     
     // 1. Resolve all pending approvals with 'false'
     for (const [approvalId, entry] of this.pendingApprovals.entries()) {
-      entry.resolve(false);
+      entry.resolve({
+        status: 'rejected',
+        reason: 'aborted_by_user_stop',
+        source: 'system'
+      });
       this.pendingApprovals.delete(approvalId);
     }
 
@@ -1573,6 +1626,7 @@ export class ToolManager implements IAgentService {
     // Whitelist: Only these tools are allowed in Architect mode
     const allowedToolNames = [
       'create_plan',
+      'update_plan_steps',
       'handover_to_coder',
       'ask_question',
       'read_file',
@@ -1605,6 +1659,19 @@ export class ToolManager implements IAgentService {
    */
   getToolsForPrompt(): string {
     return this.toolRegistry.getToolsForPrompt();
+  }
+
+  private emitToolApprovalResolved(approvalId: string, toolName: string, decision: ApprovalDecision): void {
+    if (!this.eventCallback) return;
+    this.eventCallback({
+      type: 'toolApprovalResolved',
+      approvalId,
+      toolName,
+      status: decision.status,
+      reason: decision.reason || null,
+      source: decision.source,
+      timestamp: Date.now()
+    });
   }
 
   /**

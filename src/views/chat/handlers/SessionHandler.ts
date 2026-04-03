@@ -61,6 +61,65 @@ export class SessionHandler {
     return this.normalizeSessionModel(sessionModel) || this.getGlobalSelectedModel();
   }
 
+  private normalizeRestoreTasksPayload(tasks: unknown): {
+    currentPlan: any | null;
+    currentPlanId: string | null;
+    plans: any[];
+    pendingPlanApproval: any | null;
+  } {
+    if (!tasks || typeof tasks !== 'object') {
+      return { currentPlan: null, currentPlanId: null, plans: [], pendingPlanApproval: null };
+    }
+
+    const source = tasks as Record<string, unknown>;
+    const plans = Array.isArray(source.plans)
+      ? source.plans.filter((plan) => !!plan && typeof plan === 'object')
+      : [];
+
+    let currentPlan = source.currentPlan && typeof source.currentPlan === 'object'
+      ? source.currentPlan as any
+      : null;
+
+    let currentPlanId = typeof source.currentPlanId === 'string' && source.currentPlanId.trim().length > 0
+      ? source.currentPlanId
+      : null;
+
+    if (!currentPlan && currentPlanId) {
+      currentPlan = plans.find((plan: any) => String(plan?.id || '') === currentPlanId) || null;
+    }
+
+    if (!currentPlan && plans.length > 0) {
+      currentPlan = plans[plans.length - 1] || null;
+    }
+
+    if (!currentPlanId && currentPlan && typeof currentPlan.id === 'string' && currentPlan.id.trim().length > 0) {
+      currentPlanId = currentPlan.id;
+    }
+
+    if (currentPlan && currentPlanId) {
+      const existingIndex = plans.findIndex((plan: any) => String(plan?.id || '') === currentPlanId);
+      if (existingIndex >= 0) {
+        plans[existingIndex] = currentPlan;
+      } else {
+        plans.push(currentPlan);
+      }
+    }
+
+    const pendingPlanApproval =
+      source.pendingPlanApproval && typeof source.pendingPlanApproval === 'object'
+        ? source.pendingPlanApproval
+        : currentPlan?.pendingApproval && typeof currentPlan.pendingApproval === 'object'
+          ? currentPlan.pendingApproval
+          : null;
+
+    return {
+      currentPlan,
+      currentPlanId,
+      plans,
+      pendingPlanApproval
+    };
+  }
+
   async handleGetSessions(options?: { suppressActiveMessagesLoad?: boolean }): Promise<void> {
     try {
       console.log('[SessionHandler] Getting sessions...');
@@ -154,7 +213,7 @@ export class SessionHandler {
       if (activeSession) {
         this.sendMessageToWebview({
           type: 'restoreSessionState',
-          tasks: activeSession.metadata.tasks,
+          tasks: this.normalizeRestoreTasksPayload(activeSession.metadata.tasks),
           context: activeSession.metadata.context
         });
       }
@@ -206,7 +265,7 @@ export class SessionHandler {
 
         this.sendMessageToWebview({
           type: 'restoreSessionState',
-          tasks: null,
+          tasks: this.normalizeRestoreTasksPayload(null),
           context: null
         });
 
@@ -279,7 +338,7 @@ export class SessionHandler {
 
     this.sendMessageToWebview({
       type: 'restoreSessionState',
-      tasks: session.metadata.tasks,
+      tasks: this.normalizeRestoreTasksPayload(session.metadata.tasks),
       context: session.metadata.context
     });
 
@@ -713,9 +772,15 @@ export class SessionHandler {
   }
 
   async updateSessionWithPlan(planId: string): Promise<void> {
+    const activeSession = await this.sessionManager.getActiveSession(SessionType.CHAT);
+    const existingTasks = this.normalizeRestoreTasksPayload(activeSession?.metadata?.tasks);
     await this.updateSessionMetadata({
       activePlanId: planId,
-      lastPlanUpdate: new Date().toISOString()
+      lastPlanUpdate: new Date().toISOString(),
+      tasks: {
+        ...existingTasks,
+        currentPlanId: planId
+      }
     });
   }
 

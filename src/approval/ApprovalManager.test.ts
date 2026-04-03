@@ -78,8 +78,10 @@ describe('AutoApproveManager', () => {
       },
     });
 
-    const result = await manager.shouldAutoApprove('handover_to_coder', {});
-    expect(result).toBe(true);
+    const handoverResult = await manager.shouldAutoApprove('handover_to_coder', {});
+    const createPlanResult = await manager.shouldAutoApprove('create_plan', {});
+    expect(handoverResult).toBe(true);
+    expect(createPlanResult).toBe(true);
   });
 
   it('maps restore_checkpoint to editFiles policy', async () => {

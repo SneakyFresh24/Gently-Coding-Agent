@@ -47,6 +47,7 @@ export interface MessageHandlers {
   onCommandKilled?: (data: any) => void;
   onAutoApproveSettingsUpdate?: (data: any) => void;
   onToolApprovalRequest?: (data: any) => void;
+  onToolApprovalResolved?: (data: any) => void;
   onQuestionRequest?: (data: any) => void;
   onQuestionResolved?: (data: any) => void;
 
@@ -59,12 +60,16 @@ export interface MessageHandlers {
   onCheckpointDiffReady?: (data: any) => void;
 
   // Plans
-  onPlanCreated?: (data: any) => void;
+  onPlanCardCreated?: (data: any) => void;
+  onPlanCardUpdated?: (data: any) => void;
   onPlanUpdated?: (data: any) => void;
   onPlanLoaded?: (data: any) => void;
   onPlanStatusUpdate?: (data: any) => void;
   onStepStatusUpdate?: (data: any) => void;
   onPlanStepCompleted?: (data: any) => void;
+  onPlanApprovalRequested?: (data: any) => void;
+  onPlanApprovalResolved?: (data: any) => void;
+  onHandoverProgress?: (data: any) => void;
   onCurrentPlanResponse?: (data: any) => void;
 
   // Terminal
@@ -90,6 +95,7 @@ export interface MessageHandlers {
   onWorkspaceInfo?: (data: any) => void;
   onThinking?: (data: any) => void;
   onTokenTrackerUpdate?: (data: any) => void;
+  onRestoreSessionState?: (data: any) => void;
 
   // Catch-all for unhandled types
   onUnhandled?: (data: any) => void;
@@ -136,6 +142,7 @@ const TYPE_TO_HANDLER: Record<string, keyof MessageHandlers> = {
   commandKilled: 'onCommandKilled',
   autoApproveSettingsUpdate: 'onAutoApproveSettingsUpdate',
   toolApprovalRequest: 'onToolApprovalRequest',
+  toolApprovalResolved: 'onToolApprovalResolved',
   questionRequest: 'onQuestionRequest',
   questionResolved: 'onQuestionResolved',
   checkpointRestored: 'onCheckpointRestored',
@@ -144,12 +151,16 @@ const TYPE_TO_HANDLER: Record<string, keyof MessageHandlers> = {
   checkpoints: 'onCheckpoints',
   checkpointCreated: 'onCheckpointCreated',
   checkpointDiffReady: 'onCheckpointDiffReady',
-  planCreated: 'onPlanCreated',
+  planCardCreated: 'onPlanCardCreated',
+  planCardUpdated: 'onPlanCardUpdated',
   planUpdated: 'onPlanUpdated',
   planLoaded: 'onPlanLoaded',
   planStatusUpdate: 'onPlanStatusUpdate',
   stepStatusUpdate: 'onStepStatusUpdate',
   planStepCompleted: 'onPlanStepCompleted',
+  planApprovalRequested: 'onPlanApprovalRequested',
+  planApprovalResolved: 'onPlanApprovalResolved',
+  handoverProgress: 'onHandoverProgress',
   currentPlanResponse: 'onCurrentPlanResponse',
   terminalOutputChunk: 'onTerminalOutputChunk',
   terminalModeChanged: 'onTerminalModeChanged',
@@ -170,6 +181,7 @@ const TYPE_TO_HANDLER: Record<string, keyof MessageHandlers> = {
   taskProgress: 'onTaskProgress',
   refreshSessions: 'onRefreshSessions',
   tokenTrackerUpdate: 'onTokenTrackerUpdate',
+  restoreSessionState: 'onRestoreSessionState',
 };
 
 
