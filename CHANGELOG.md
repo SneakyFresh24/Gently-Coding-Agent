@@ -2,6 +2,36 @@
 
 All notable changes to the "Gently" extension will be documented in this file.
 
+## [0.10.3] - 2026-04-05
+
+### Added
+- **Question Response Integration Coverage**:
+  - Added `src/views/chat/ChatViewProvider.questionResponse.integration.test.ts` to verify end-to-end `questionResponse` routing and immediate runtime progression after submit.
+- **Question Response Outcome Signaling**:
+  - Added explicit resilience/runtime codes for question-response handling:
+    - `QUESTION_RESPONSE_ACCEPTED`
+    - `QUESTION_RESPONSE_REJECTED`
+    - `QUESTION_RESPONSE_DISPATCH_FAILED`
+
+### Changed
+- **Question Card Submit Flow Hardening**:
+  - `questionResponse.selectedOptionIndexes` is now sent as a plain array to prevent proxy/state-object serialization issues.
+  - Submit uses a transient `submitting` state instead of finalizing `responded` before dispatch, avoiding stuck disabled controls.
+  - Duplicate-submit behavior is now idempotent and locally guarded.
+- **Question Dispatch/Error Visibility**:
+  - `ChatViewProvider` now emits structured failure status when `questionResponse` dispatch fails instead of only logging silently.
+  - `ToolManager.handleQuestionResponse` now reports deterministic reject reasons for stale/unknown/already-settled question IDs.
+- **UI Status Mapping Alignment**:
+  - Chat resilience rendering includes dedicated fallback copy for the new question-response status codes.
+
+### Fixed
+- **Submit Hanger in `ask_question` Cards**:
+  - Fixed the flow where selecting an option and clicking submit could leave radio controls/buttons greyed out until timeout fallback.
+- **Silent Drop on Question Responses**:
+  - Removed silent return paths for invalid/stale responses and replaced them with explicit reject telemetry/status events.
+- **PostMessage Failure Handling**:
+  - `webview-ui` messaging send path now surfaces `postMessage` failures and restores interactive controls for immediate retry.
+
 ## [0.10.1] - 2026-04-03
 
 ### Added

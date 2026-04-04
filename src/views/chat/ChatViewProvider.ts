@@ -252,11 +252,60 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             return;
           }
           if (data.type === 'questionResponse') {
-            this.agentManager.getToolManager().handleQuestionResponse(
-              data.questionId,
-              Array.isArray(data.selectedOptionIndexes) ? data.selectedOptionIndexes : [],
-              data.source
-            );
+            const questionId = String(data.questionId || '').trim();
+            const selectedOptionIndexes = Array.isArray(data.selectedOptionIndexes)
+              ? data.selectedOptionIndexes
+                .map((value: unknown) => Number(value))
+                .filter((value: number) => Number.isInteger(value) && value >= 0)
+              : [];
+            const source = data.source === 'stopped' ? 'stopped' : 'user';
+            try {
+              this.agentManager.getToolManager().handleQuestionResponse(
+                questionId,
+                selectedOptionIndexes,
+                source
+              );
+            } catch (error: any) {
+              const correlationId = `question:${questionId || 'unknown'}:QUESTION_RESPONSE_DISPATCH_FAILED:${Date.now()}`;
+              const context = this.messageHandler?.getContext?.();
+              const mode = typeof context?.selectedMode === 'string' ? context.selectedMode : 'unknown';
+              const model = typeof context?.selectedModel === 'string' ? context.selectedModel : 'unknown';
+              const errorMessage = error instanceof Error ? error.message : String(error);
+              console.error('[ChatViewProvider] Failed to dispatch question response:', {
+                questionId: questionId || null,
+                selectedCount: selectedOptionIndexes.length,
+                source,
+                correlationId,
+                error: errorMessage
+              });
+              this.sendMessageToWebview({
+                type: 'resilienceStatus',
+                code: 'QUESTION_RESPONSE_DISPATCH_FAILED',
+                category: 'tool',
+                severity: 'error',
+                retryable: false,
+                attempt: 1,
+                maxAttempts: 1,
+                model,
+                flowId: context?.currentFlowId || null,
+                userMessage: 'Question response could not be dispatched. Please retry.',
+                action: 'none',
+                phase: 'runtime',
+                decision: 'abort',
+                reason: 'dispatch_exception',
+                correlationId
+              } as any);
+              this.sendMessageToWebview({
+                type: 'systemMessage',
+                messageId: `sys_question_dispatch_${Date.now()}`,
+                content: `Question response dispatch failed (questionId=${questionId || 'unknown'}, source=${source}, selected=${selectedOptionIndexes.length}).`,
+                code: 'QUESTION_RESPONSE_DISPATCH_FAILED',
+                severity: 'error',
+                correlationId,
+                mode,
+                model
+              } as any);
+            }
             return;
           }
           if (data.type === 'getTokenUsage') {

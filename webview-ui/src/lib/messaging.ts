@@ -219,8 +219,17 @@ export function init(handlers: MessageHandlers): void {
 /**
  * Send a message to the extension backend.
  */
-export function send(type: string, payload: Record<string, any> = {}): void {
-  vscodeApi.postMessage({ type, ...payload });
+export function send(type: string, payload: Record<string, any> = {}): boolean {
+  try {
+    vscodeApi.postMessage({ type, ...payload });
+    return true;
+  } catch (error) {
+    console.error('[messaging] Failed to post message to extension host:', {
+      type,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return false;
+  }
 }
 
 /**

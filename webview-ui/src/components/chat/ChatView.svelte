@@ -202,6 +202,12 @@
         return 'Tool call blocked by current mode contract.';
       case 'TOOL_STOPPED_BY_USER':
         return 'Tool execution stopped by user.';
+      case 'QUESTION_RESPONSE_ACCEPTED':
+        return 'Question response accepted.';
+      case 'QUESTION_RESPONSE_REJECTED':
+        return 'Question response was rejected by runtime.';
+      case 'QUESTION_RESPONSE_DISPATCH_FAILED':
+        return 'Question response could not be dispatched.';
       case 'REQUEST_STOPPED':
         return 'Request stopped.';
       default:

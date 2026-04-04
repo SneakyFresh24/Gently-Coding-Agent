@@ -7,6 +7,7 @@ const postMessageSpy = vi.fn();
 
 let initMessaging: ((handlers: Record<string, any>) => void) | undefined;
 let destroyMessaging: (() => void) | undefined;
+let sendMessageToExtension: ((type: string, payload?: Record<string, any>) => boolean) | undefined;
 
 function dispatchMessage(data: any): void {
   const messageListeners = listeners.get('message');
@@ -39,6 +40,7 @@ beforeAll(async () => {
   const module = await import('./messaging');
   initMessaging = module.init;
   destroyMessaging = module.destroy;
+  sendMessageToExtension = module.send;
 });
 
 beforeEach(() => {
@@ -94,5 +96,18 @@ describe('messaging plan/handover contract mapping', () => {
       expect.objectContaining({ type: 'totallyUnknownMessage' })
     );
   });
-});
 
+  it('returns false when postMessage throws during send', () => {
+    postMessageSpy.mockImplementation(() => {
+      throw new Error('DataCloneError');
+    });
+
+    const ok = sendMessageToExtension?.('questionResponse', {
+      questionId: 'q_1',
+      selectedOptionIndexes: [0],
+      source: 'user'
+    });
+
+    expect(ok).toBe(false);
+  });
+});

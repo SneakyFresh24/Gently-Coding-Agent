@@ -11,6 +11,10 @@
   const card = $derived((message.questionCard || null) as QuestionCardState | null);
   let selectedOptionIndexes = $state<number[]>([]);
   let responded = $state(false);
+  let submitting = $state(false);
+  let submitError = $state<string | null>(null);
+  let lastSubmissionKey = $state<string | null>(null);
+  let lastSubmissionAt = $state(0);
 
   $effect(() => {
     if (!card) return;
@@ -19,6 +23,10 @@
       : [Math.max(0, Number(card.defaultOptionIndex || 0))];
     selectedOptionIndexes = [...incomingSelection];
     responded = card.status !== 'pending';
+    if (card.status !== 'pending') {
+      submitting = false;
+      submitError = null;
+    }
   });
 
   function selectSingle(index: number) {
@@ -34,24 +42,60 @@
   }
 
   function submitSelection() {
-    if (!card || responded || card.status !== 'pending') return;
+    if (!card || responded || card.status !== 'pending' || submitting) return;
     if (selectedOptionIndexes.length === 0) return;
-    responded = true;
-    messaging.send('questionResponse', {
+    submitError = null;
+
+    const plainSelection = Array.from(selectedOptionIndexes)
+      .map((value) => Number(value))
+      .filter((value) => Number.isInteger(value) && value >= 0);
+    const submissionKey = `user:${card.questionId}:${JSON.stringify(plainSelection)}`;
+    const now = Date.now();
+    if (lastSubmissionKey === submissionKey && (now - lastSubmissionAt) < 1500) {
+      return;
+    }
+
+    submitting = true;
+    const sent = messaging.send('questionResponse', {
       questionId: card.questionId,
-      selectedOptionIndexes,
+      selectedOptionIndexes: plainSelection,
       source: 'user'
     });
+    if (!sent) {
+      submitting = false;
+      submitError = 'Antwort konnte nicht gesendet werden. Bitte erneut versuchen.';
+      return;
+    }
+
+    lastSubmissionKey = submissionKey;
+    lastSubmissionAt = now;
+    submitting = false;
   }
 
   function cancelQuestion() {
-    if (!card || responded || card.status !== 'pending') return;
-    responded = true;
-    messaging.send('questionResponse', {
+    if (!card || responded || card.status !== 'pending' || submitting) return;
+    submitError = null;
+    const submissionKey = `stopped:${card.questionId}`;
+    const now = Date.now();
+    if (lastSubmissionKey === submissionKey && (now - lastSubmissionAt) < 1500) {
+      return;
+    }
+
+    submitting = true;
+    const sent = messaging.send('questionResponse', {
       questionId: card.questionId,
       selectedOptionIndexes: [],
       source: 'stopped'
     });
+    if (!sent) {
+      submitting = false;
+      submitError = 'Abbruch konnte nicht gesendet werden. Bitte erneut versuchen.';
+      return;
+    }
+
+    lastSubmissionKey = submissionKey;
+    lastSubmissionAt = now;
+    submitting = false;
   }
 
   function getResolutionLabel(source?: string): string {
@@ -93,7 +137,7 @@
             <input
               type="checkbox"
               checked={card.status === 'pending' ? selectedOptionIndexes.includes(index) : card.selectedOptionIndexes.includes(index)}
-              disabled={card.status !== 'pending' || responded}
+              disabled={card.status !== 'pending' || responded || submitting}
               onchange={() => toggleMultiple(index)}
             />
           {:else}
@@ -101,7 +145,7 @@
               type="radio"
               name={card.questionId}
               checked={card.status === 'pending' ? selectedOptionIndexes.includes(index) : card.selectedOptionIndexes.includes(index)}
-              disabled={card.status !== 'pending' || responded}
+              disabled={card.status !== 'pending' || responded || submitting}
               onchange={() => selectSingle(index)}
             />
           {/if}
@@ -115,10 +159,17 @@
 
     {#if card.status === 'pending'}
       <div class="question-actions">
-        <button class="btn ghost" onclick={cancelQuestion} disabled={responded}>Cancel</button>
-        <button class="btn primary" onclick={submitSelection} disabled={responded || selectedOptionIndexes.length === 0}>Submit</button>
+        <button class="btn ghost" onclick={cancelQuestion} disabled={responded || submitting}>Cancel</button>
+        <button class="btn primary" onclick={submitSelection} disabled={responded || submitting || selectedOptionIndexes.length === 0}>Submit</button>
       </div>
-      <div class="question-hint">Auto-default in {Math.ceil(card.timeoutMs / 1000)}s if unanswered.</div>
+      {#if submitting}
+        <div class="question-hint">Submitting response...</div>
+      {:else}
+        <div class="question-hint">Auto-default in {Math.ceil(card.timeoutMs / 1000)}s if unanswered.</div>
+      {/if}
+      {#if submitError}
+        <div class="question-error">{submitError}</div>
+      {/if}
     {:else}
       <div class="question-result">
         <div>{getResolutionLabel(card.resolutionSource)}</div>
@@ -243,6 +294,11 @@
     color: var(--vscode-descriptionForeground);
     display: grid;
     gap: 4px;
+  }
+
+  .question-error {
+    font-size: 11px;
+    color: var(--vscode-errorForeground);
   }
 
   .result-selection {

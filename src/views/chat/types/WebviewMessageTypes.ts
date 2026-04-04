@@ -498,6 +498,7 @@ export interface PlanApprovalResponseMessage {
 export interface QuestionResponseMessage {
   type: 'questionResponse';
   questionId: string;
+  // Must be a plain JSON array of numeric indexes (no proxy/state objects).
   selectedOptionIndexes: number[];
   source?: 'user' | 'stopped';
 }
@@ -700,6 +701,9 @@ export type ResilienceStatusCode =
   | 'HOOK_POST_FAILED'
   | 'HOOK_NOTIFICATION_FAILED'
   | 'TOOL_STOPPED_BY_USER'
+  | 'QUESTION_RESPONSE_ACCEPTED'
+  | 'QUESTION_RESPONSE_REJECTED'
+  | 'QUESTION_RESPONSE_DISPATCH_FAILED'
   | 'STREAM_CONTRACT_MISSING_STOP'
   | 'MODE_STATE_DESYNC_DETECTED'
   | 'MODE_TRANSITION_BLOCKED'

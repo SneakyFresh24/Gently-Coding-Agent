@@ -86,6 +86,10 @@ function getQuestionRequest(events: any[]) {
   return events.find((event) => event.type === 'questionRequest');
 }
 
+function getResilienceEvents(events: any[], code: string) {
+  return events.filter((event) => event.type === 'resilienceStatus' && event.code === code);
+}
+
 describe('ToolManager ask_question webview orchestration', () => {
   beforeEach(() => {
     for (const key of Object.keys(configValues)) {
@@ -209,6 +213,44 @@ describe('ToolManager ask_question webview orchestration', () => {
     const resolvedEvents = events.filter((event) => event.type === 'questionResolved');
     expect(resolvedEvents).toHaveLength(1);
     expect(resolvedEvents[0].source).toBe('stopped');
+  });
+
+  it('emits deterministic rejection when question response is unknown', async () => {
+    const { manager, events } = createToolManager();
+
+    manager.handleQuestionResponse('question_missing', [0], 'user');
+
+    const rejected = getResilienceEvents(events, 'QUESTION_RESPONSE_REJECTED');
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0].reason).toBe('not_found');
+  });
+
+  it('emits deterministic rejection when question is already settled', async () => {
+    const { manager, events } = createToolManager();
+    const pending = manager.executeTool(
+      'ask_question',
+      {
+        question: 'Proceed?',
+        options: [
+          { label: 'Yes' },
+          { label: 'No' }
+        ]
+      },
+      { flowId: 'flow-q-5', toolCallId: 'tc-q-5' }
+    );
+
+    await vi.waitFor(() => {
+      expect(getQuestionRequest(events)).toBeTruthy();
+    });
+    const request = getQuestionRequest(events);
+
+    manager.handleQuestionResponse(request.questionId, [0], 'user');
+    await pending;
+    manager.handleQuestionResponse(request.questionId, [1], 'user');
+
+    const rejected = getResilienceEvents(events, 'QUESTION_RESPONSE_REJECTED');
+    expect(rejected.length).toBeGreaterThanOrEqual(1);
+    expect(rejected[rejected.length - 1].reason).toBe('not_found');
   });
 
 });

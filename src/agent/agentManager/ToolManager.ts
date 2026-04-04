@@ -40,6 +40,8 @@ type ToolResilienceCode =
   | 'TOOL_RETRY_SCHEDULED'
   | 'TOOL_RETRY_EXHAUSTED'
   | 'TOOL_STOPPED_BY_USER'
+  | 'QUESTION_RESPONSE_ACCEPTED'
+  | 'QUESTION_RESPONSE_REJECTED'
   | 'HOOK_PRE_BLOCKED'
   | 'HOOK_PRE_FAILED'
   | 'HOOK_POST_FAILED'
@@ -1510,8 +1512,42 @@ export class ToolManager implements IAgentService {
     selectedOptionIndexes: number[],
     source: 'user' | 'stopped' = 'user'
   ): void {
-    const entry = this.pendingQuestions.get(questionId);
-    if (!entry || entry.settled) return;
+    const normalizedQuestionId = String(questionId || '').trim();
+    const correlationId = `question:${normalizedQuestionId || 'unknown'}:${Date.now()}`;
+    const entry = this.pendingQuestions.get(normalizedQuestionId);
+    if (!entry) {
+      this.emitQuestionResponseStatus({
+        code: 'QUESTION_RESPONSE_REJECTED',
+        severity: 'warning',
+        userMessage: 'Question response ignored: no pending question found.',
+        reason: 'not_found',
+        correlationId
+      });
+      log.event('WARN', 'QUESTION_RESPONSE_REJECTED', 'QUESTION_RESPONSE_REJECTED', {
+        questionId: normalizedQuestionId || null,
+        reason: 'not_found',
+        source,
+        correlationId
+      });
+      return;
+    }
+
+    if (entry.settled) {
+      this.emitQuestionResponseStatus({
+        code: 'QUESTION_RESPONSE_REJECTED',
+        severity: 'warning',
+        userMessage: 'Question response ignored: question already settled.',
+        reason: 'already_settled',
+        correlationId
+      });
+      log.event('WARN', 'QUESTION_RESPONSE_REJECTED', 'QUESTION_RESPONSE_REJECTED', {
+        questionId: normalizedQuestionId || null,
+        reason: 'already_settled',
+        source,
+        correlationId
+      });
+      return;
+    }
 
     const sanitizedSelection = this.sanitizeQuestionSelection(
       selectedOptionIndexes,
@@ -1520,6 +1556,19 @@ export class ToolManager implements IAgentService {
     );
 
     if (source === 'stopped') {
+      this.emitQuestionResponseStatus({
+        code: 'QUESTION_RESPONSE_ACCEPTED',
+        severity: 'info',
+        userMessage: 'Question response accepted (stopped).',
+        reason: 'stopped',
+        correlationId
+      });
+      log.event('INFO', 'QUESTION_RESPONSE_ACCEPTED', 'QUESTION_RESPONSE_ACCEPTED', {
+        questionId: normalizedQuestionId || null,
+        reason: 'stopped',
+        source,
+        correlationId
+      });
       entry.resolve({
         selectedOptionIndexes: [],
         source: 'stopped'
@@ -1527,9 +1576,49 @@ export class ToolManager implements IAgentService {
       return;
     }
 
+    this.emitQuestionResponseStatus({
+      code: 'QUESTION_RESPONSE_ACCEPTED',
+      severity: 'info',
+      userMessage: 'Question response accepted.',
+      reason: 'user',
+      correlationId
+    });
+    log.event('INFO', 'QUESTION_RESPONSE_ACCEPTED', 'QUESTION_RESPONSE_ACCEPTED', {
+      questionId: normalizedQuestionId || null,
+      selectedCount: sanitizedSelection.length,
+      source,
+      correlationId
+    });
     entry.resolve({
       selectedOptionIndexes: sanitizedSelection,
       source: 'user'
+    });
+  }
+
+  private emitQuestionResponseStatus(payload: {
+    code: 'QUESTION_RESPONSE_ACCEPTED' | 'QUESTION_RESPONSE_REJECTED';
+    severity: 'info' | 'warning';
+    userMessage: string;
+    reason: string;
+    correlationId: string;
+  }): void {
+    if (!this.eventCallback) return;
+    this.eventCallback({
+      type: 'resilienceStatus',
+      code: payload.code,
+      category: 'tool',
+      severity: payload.severity,
+      retryable: false,
+      attempt: 1,
+      maxAttempts: 1,
+      model: 'unknown',
+      flowId: null,
+      userMessage: payload.userMessage,
+      action: 'none',
+      phase: 'runtime',
+      decision: 'report',
+      reason: payload.reason,
+      correlationId: payload.correlationId
     });
   }
 
