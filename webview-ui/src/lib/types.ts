@@ -45,8 +45,8 @@ export interface PendingApproval {
   toolName: string;
   params: any;
   timestamp: number;
-  timeoutMs: number;
-  expiresAt: number;
+  timeoutMs?: number;
+  expiresAt?: number;
 }
 
 export interface QuestionOption {
@@ -98,12 +98,12 @@ export interface ToolApprovalCardState {
   approvalId: string;
   toolName: string;
   params: any;
-  status: 'pending' | 'approved' | 'rejected' | 'timeout';
+  status: 'pending' | 'approved' | 'rejected';
   reason?: string | null;
-  source?: 'user' | 'timeout' | 'system';
+  source?: 'user' | 'system';
   createdAt: number;
-  timeoutMs: number;
-  expiresAt: number;
+  timeoutMs?: number;
+  expiresAt?: number;
   resolvedAt?: number;
 }
 
@@ -285,7 +285,6 @@ export type InboundMessageType =
   | 'setAutoApproveSettings'
   | 'toggleYoloMode'
   | 'toolApprovalResponse'
-  | 'toolApprovalLocalTimeout'
   | 'webviewUnhandledMessage'
   | 'planApprovalResponse'
   | 'questionResponse'
@@ -309,9 +308,7 @@ export type OutboundMessageType =
   | 'apiKeyStatus'
   | 'modelsList'
   | 'modelChanged'
-  | 'retryingWithReducedTokens'
-  | 'retryingRateLimit'
-  | 'retryStatus'
+  | 'queryRuntimeEvent'
   | 'resilienceStatus'
   | 'subagentStatus'
   | 'error'

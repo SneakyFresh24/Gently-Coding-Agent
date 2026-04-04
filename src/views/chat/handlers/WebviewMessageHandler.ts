@@ -393,32 +393,6 @@ export class WebviewMessageHandler {
         break;
       }
 
-      case 'toolApprovalLocalTimeout': {
-        const approvalId = String((data as any).approvalId || '').trim();
-        const toolName = String((data as any).toolName || 'unknown').trim();
-        const expiresAt = Number((data as any).expiresAt || 0);
-        const timestamp = Number((data as any).timestamp || Date.now());
-        const correlationId = approvalId ? `approval:${approvalId}` : `approval:local-timeout:${timestamp}`;
-        const diagnosticsContext = this.getDiagnosticsContext();
-        DiagnosticService.getInstance()?.record({
-          severity: 'warning',
-          code: 'APPROVAL_COUNTDOWN_EXPIRED_LOCAL',
-          category: 'approval',
-          flowId: null,
-          correlationId,
-          mode: diagnosticsContext.mode,
-          model: diagnosticsContext.model,
-          source: 'webview_message_handler',
-          payload: {
-            approvalId,
-            toolName,
-            expiresAt,
-            timestamp
-          }
-        });
-        break;
-      }
-
       case 'webviewUnhandledMessage': {
         const rawType = String((data as any).rawType || 'unknown');
         const correlationId = String((data as any).correlationId || `unknown:webview_message:${rawType}`);

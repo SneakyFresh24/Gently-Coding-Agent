@@ -17,9 +17,7 @@ describe('ChatViewProvider mode transition hardening', () => {
     const getConfiguration = vi.mocked(vscode.workspace.getConfiguration);
     getConfiguration.mockReturnValue({
       get: vi.fn((key: string, fallback?: unknown) => {
-        if (key === 'modeStateMachineV2') return true;
-        if (key === 'resilience.killSwitch') return false;
-        if (key === 'agentMode') return true;
+        if (key === 'modeStateMachineV2') return true;        if (key === 'agentMode') return true;
         return fallback;
       }),
       update: configUpdate

@@ -88,8 +88,6 @@ describe('ToolManager R2 orchestration', () => {
     for (const key of Object.keys(configValues)) {
       delete configValues[key];
     }
-    configValues['resilience.killSwitch'] = false;
-    configValues['resilience.errorContractV1'] = true;
     configValues['resilience.toolOrchestratorV2'] = true;
     configValues['resilience.hookContractV2'] = true;
     configValues['resilience.toolTelemetryV2'] = true;
@@ -149,14 +147,4 @@ describe('ToolManager R2 orchestration', () => {
     expect(postFailureStatus.category).toBe('hook');
   });
 
-  it('falls back to legacy tool path when killSwitch is enabled', async () => {
-    configValues['resilience.killSwitch'] = true;
-    const { manager, hookManager } = createToolManager();
-
-    const result = await manager.executeTool('read_file', { path: 'README.md' }, { flowId: 'flow-legacy', toolCallId: 'tc-legacy' });
-
-    expect(result).toEqual({ ok: true });
-    expect(hookManager.executePreHooks).toHaveBeenCalledTimes(1);
-    expect(hookManager.executePreHooks.mock.calls[0]).toHaveLength(2);
-  });
 });

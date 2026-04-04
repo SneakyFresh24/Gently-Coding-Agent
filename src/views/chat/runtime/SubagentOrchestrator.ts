@@ -17,7 +17,6 @@ import { sleepWithAbort } from '../../../core/resilience/RetryDelayUtils';
 const log = new LogService('SubagentOrchestrator');
 
 export interface SubagentResilienceSettings {
-  killSwitch: boolean;
   subagentOrchestratorV1: boolean;
   subagentErrorContractV1: boolean;
   subagentTelemetryV1: boolean;
@@ -69,7 +68,7 @@ export class SubagentOrchestrator {
     }
 
     const settings = this.deps.getSettings();
-    if (settings.killSwitch || !settings.subagentOrchestratorV1) {
+    if (!settings.subagentOrchestratorV1) {
       return false;
     }
 

@@ -509,7 +509,6 @@ export class TraditionalToolExecutor {
     private getSubagentResilienceSettings(): SubagentResilienceSettings {
         const config = vscode.workspace.getConfiguration('gently');
         return {
-            killSwitch: config.get<boolean>('resilience.killSwitch', false),
             subagentOrchestratorV1: config.get<boolean>('resilience.subagentOrchestratorV1', true),
             subagentErrorContractV1: config.get<boolean>('resilience.subagentErrorContractV1', true),
             subagentTelemetryV1: config.get<boolean>('resilience.subagentTelemetryV1', true)

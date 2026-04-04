@@ -526,7 +526,7 @@ IMPORTANT:
     update_plan_steps: {
         name: 'update_plan_steps',
         category: 'planning',
-        description: 'Update plan step statuses deterministically during execution. Use this after each meaningful step transition.',
+        description: 'Update plan step statuses deterministically during execution. Use this only after handover_to_coder has succeeded.',
         parameters: {
             type: 'object',
             properties: {
@@ -568,7 +568,7 @@ IMPORTANT:
     handover_to_coder: {
         name: 'handover_to_coder',
         category: 'planning',
-        description: 'Switch to Code mode. Call this ONLY after finishing the implementation plan in chat.',
+        description: 'Switch to Code mode. Call this ONLY after finishing the implementation plan and receiving explicit user approval.',
         parameters: {
             type: 'object',
             properties: {

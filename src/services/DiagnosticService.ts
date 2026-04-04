@@ -194,6 +194,44 @@ export class DiagnosticService {
         ? message.mode
         : 'unknown';
 
+    if (type === 'queryRuntimeEvent') {
+      const runtimeEvent = message.event && typeof message.event === 'object' ? message.event : null;
+      const runtimeType = String(runtimeEvent?.type || 'unknown');
+      const runtimeFlowId =
+        typeof runtimeEvent?.flowId === 'string' && runtimeEvent.flowId.trim() !== ''
+          ? runtimeEvent.flowId
+          : flowId;
+      if (runtimeType === 'status') {
+        this.record({
+          severity: this.normalizeSeverity(runtimeEvent?.severity),
+          code: String(runtimeEvent?.code || 'QUERY_RUNTIME_STATUS'),
+          category: 'resilience',
+          flowId: runtimeFlowId,
+          correlationId: String(runtimeEvent?.correlationId || this.makeCorrelationId(runtimeType, runtimeFlowId)),
+          mode,
+          model: String(runtimeEvent?.model || model),
+          source: 'extension:webview',
+          payload: runtimeEvent as Record<string, unknown>,
+        });
+        return;
+      }
+      if (runtimeType === 'result_error' || runtimeType === 'result_success') {
+        const result = runtimeEvent?.result && typeof runtimeEvent.result === 'object' ? runtimeEvent.result : {};
+        this.record({
+          severity: runtimeType === 'result_error' ? 'warning' : 'info',
+          code: String((result as Record<string, unknown>).code || `QUERY_RUNTIME_${runtimeType.toUpperCase()}`),
+          category: 'resilience',
+          flowId: runtimeFlowId,
+          correlationId: this.makeCorrelationId(runtimeType, runtimeFlowId),
+          mode,
+          model,
+          source: 'extension:webview',
+          payload: runtimeEvent as Record<string, unknown>,
+        });
+        return;
+      }
+    }
+
     if (type === 'resilienceStatus') {
       this.record({
         severity: this.normalizeSeverity(message.severity),

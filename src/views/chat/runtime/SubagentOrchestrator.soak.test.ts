@@ -9,9 +9,7 @@ import {
   writeR4SuiteReport
 } from '../../../core/resilience/R4SoakHarness';
 
-const settings: SubagentResilienceSettings = {
-  killSwitch: false,
-  subagentOrchestratorV1: true,
+const settings: SubagentResilienceSettings = {  subagentOrchestratorV1: true,
   subagentErrorContractV1: true,
   subagentTelemetryV1: false
 };

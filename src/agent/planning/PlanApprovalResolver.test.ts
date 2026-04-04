@@ -17,8 +17,6 @@ function makePlan(overrides: Partial<ExecutionPlan> = {}): ExecutionPlan {
     pendingApproval: {
       approvalRequestId: 'req_1',
       requestedAt: 1,
-      timeoutMs: 300000,
-      expiresAt: 300001,
       statusAtRequest: 'awaiting_approval'
     },
     ...overrides
@@ -77,11 +75,10 @@ describe('PlanApprovalResolver', () => {
     expect(result.reasonCode).toBe('missing_approval_request_id');
   });
 
-  it('creates deterministic request metadata', () => {
-    const request = resolver.createRequest(makePlan({ id: 'plan_abc' }), 1000, 5000);
+  it('creates deterministic request metadata without timeout fields', () => {
+    const request = resolver.createRequest(makePlan({ id: 'plan_abc' }), 1000);
     expect(request.approvalRequestId).toBe('plan_approval_plan_abc_1000');
-    expect(request.timeoutMs).toBe(5000);
-    expect(request.expiresAt).toBe(6000);
+    expect(request.timeoutMs).toBeUndefined();
+    expect(request.expiresAt).toBeUndefined();
   });
 });
-

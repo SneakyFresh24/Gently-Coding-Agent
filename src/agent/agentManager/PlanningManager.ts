@@ -26,12 +26,11 @@ const log = new LogService('PlanningManager');
 
 export class PlanningManager implements IAgentService {
   private static readonly PLAN_SCHEMA_VERSION = 2;
-  private static readonly DEFAULT_APPROVAL_TIMEOUT_MS = 300_000;
   private static readonly PLAN_STATUS_TRANSITIONS: Record<PlanLifecycleStatus, PlanLifecycleStatus[]> = {
     draft: ['created'],
-    created: ['awaiting_approval', 'approved', 'rejected', 'executing'],
+    created: ['awaiting_approval', 'approved', 'rejected'],
     awaiting_approval: ['approved', 'rejected'],
-    approved: ['handed_over', 'executing', 'rejected'],
+    approved: ['handed_over', 'rejected'],
     rejected: ['draft', 'created'],
     handed_over: ['executing', 'failed'],
     executing: ['completed', 'failed', 'paused'],
@@ -47,7 +46,6 @@ export class PlanningManager implements IAgentService {
   private currentTask: Task | null = null;
   private persistPlanFn?: (plan: ExecutionPlan) => Promise<void>;
   private readonly approvalResolver = new PlanApprovalResolver();
-  private readonly approvalTimeouts = new Map<string, NodeJS.Timeout>();
 
   constructor() {
     this.taskState = new TaskState();
@@ -67,10 +65,6 @@ export class PlanningManager implements IAgentService {
     if (this.currentTask) {
       this.currentTask.cancel();
     }
-    for (const timeout of this.approvalTimeouts.values()) {
-      clearTimeout(timeout);
-    }
-    this.approvalTimeouts.clear();
   }
 
   /**
@@ -246,11 +240,9 @@ export class PlanningManager implements IAgentService {
     }
     const pendingApproval = this.approvalResolver.createRequest(
       plan,
-      Date.now(),
-      PlanningManager.DEFAULT_APPROVAL_TIMEOUT_MS
+      Date.now()
     );
     await this.setPendingApproval(planId, pendingApproval);
-    this.schedulePlanApprovalTimeout(planId, pendingApproval);
     const updatedPlan = this.getPlan(planId);
     if (!updatedPlan) {
       throw new Error(`Plan ${planId} not found.`);
@@ -296,8 +288,6 @@ export class PlanningManager implements IAgentService {
       return resolution;
     }
 
-    this.clearPlanApprovalTimeout(planId);
-
     if (decision === 'approved') {
       await this.updatePlanStatus(planId, 'approved');
     } else if (decision === 'rejected') {
@@ -330,7 +320,7 @@ export class PlanningManager implements IAgentService {
     if (!plan) return;
     if (plan.status === 'executing' || plan.status === 'completed' || plan.status === 'failed') return;
 
-    if (plan.status === 'handed_over' || plan.status === 'approved' || plan.status === 'pending') {
+    if (plan.status === 'handed_over' || plan.status === 'pending') {
       await this.updatePlanStatus(planId, 'executing');
     }
   }
@@ -340,6 +330,8 @@ export class PlanningManager implements IAgentService {
     updates: PlanStepStatusUpdate[]
   ): Promise<{
     success: boolean;
+    code?: string;
+    error?: string;
     planId: string;
     updated: Array<{ stepId: string; status: TaskStatus }>;
     skipped: Array<{ stepId: string; reason: string }>;
@@ -350,6 +342,8 @@ export class PlanningManager implements IAgentService {
     if (!plan) {
       return {
         success: false,
+        code: 'PLAN_NOT_FOUND',
+        error: `Plan "${planId}" not found.`,
         planId,
         updated: [],
         skipped: [],
@@ -357,8 +351,27 @@ export class PlanningManager implements IAgentService {
       };
     }
 
+    const preHandoverBlockedStatuses: PlanLifecycleStatus[] = ['created', 'awaiting_approval', 'approved'];
+    if (preHandoverBlockedStatuses.includes(plan.status)) {
+      const blockingCode =
+        plan.status === 'approved'
+          ? 'PLAN_PRE_HANDOVER_STEP_UPDATES_BLOCKED'
+          : 'PLAN_APPROVAL_PENDING_EXPLICIT';
+      return {
+        success: false,
+        code: blockingCode,
+        error:
+          plan.status === 'approved'
+            ? 'Pre-handover step updates are blocked. Handover to coder first.'
+            : `Plan step updates are blocked while plan is "${plan.status}".`,
+        planId,
+        updated: [],
+        skipped: [],
+        planStatus: plan.status
+      };
+    }
+
     if (
-      plan.status === 'approved' ||
       plan.status === 'handed_over' ||
       plan.status === 'pending'
     ) {
@@ -421,19 +434,41 @@ export class PlanningManager implements IAgentService {
     await this.updatePlanStatus(planId, 'handed_over');
   }
 
-  public canHandover(planId: string): { ok: boolean; reason?: string } {
+  public canHandover(planId: string): { ok: boolean; reason?: string; code?: string } {
     const plan = this.getPlan(planId);
     if (!plan) {
-      return { ok: false, reason: 'Plan not found.' };
+      return { ok: false, code: 'PLAN_NOT_FOUND', reason: 'Plan not found.' };
     }
     if (!Array.isArray(plan.steps) || plan.steps.length === 0) {
-      return { ok: false, reason: 'Plan contains no steps.' };
-    }
-    if (plan.status !== 'approved') {
-      return { ok: false, reason: `Plan must be approved before handover (current: ${plan.status}).` };
+      return { ok: false, code: 'PLAN_EMPTY', reason: 'Plan contains no steps.' };
     }
     if (plan.pendingApproval?.approvalRequestId) {
-      return { ok: false, reason: `Plan still has pending approval request (${plan.pendingApproval.approvalRequestId}).` };
+      return {
+        ok: false,
+        code: 'PLAN_APPROVAL_PENDING_EXPLICIT',
+        reason: `Plan still has pending approval request (${plan.pendingApproval.approvalRequestId}).`
+      };
+    }
+    if (plan.status === 'awaiting_approval') {
+      return {
+        ok: false,
+        code: 'PLAN_APPROVAL_PENDING_EXPLICIT',
+        reason: 'Plan is awaiting explicit approval before handover.'
+      };
+    }
+    if (plan.status === 'executing') {
+      return {
+        ok: false,
+        code: 'PLAN_PRE_HANDOVER_STEP_UPDATES_BLOCKED',
+        reason: 'Plan is already executing. Pre-handover step updates are blocked; recreate or re-approve before handover.'
+      };
+    }
+    if (plan.status !== 'approved') {
+      return {
+        ok: false,
+        code: 'PLAN_HANDOVER_REQUIRES_APPROVED',
+        reason: `Plan must be approved before handover (current: ${plan.status}).`
+      };
     }
     return { ok: true };
   }
@@ -537,29 +572,6 @@ export class PlanningManager implements IAgentService {
 
   private async clearPendingApproval(planId: string): Promise<void> {
     await this.setPendingApproval(planId, null);
-  }
-
-  private schedulePlanApprovalTimeout(planId: string, pendingApproval: PlanApprovalRequestState): void {
-    this.clearPlanApprovalTimeout(planId);
-    const now = Date.now();
-    const delayMs = Math.max(0, pendingApproval.expiresAt - now);
-    const timeout = setTimeout(() => {
-      void this.resolvePlanApproval(
-        planId,
-        'timeout',
-        'approval_timeout',
-        'system',
-        { approvalRequestId: pendingApproval.approvalRequestId }
-      );
-    }, delayMs);
-    this.approvalTimeouts.set(planId, timeout);
-  }
-
-  private clearPlanApprovalTimeout(planId: string): void {
-    const existing = this.approvalTimeouts.get(planId);
-    if (!existing) return;
-    clearTimeout(existing);
-    this.approvalTimeouts.delete(planId);
   }
 
   private normalizeTaskStatus(status: string): TaskStatus {

@@ -442,7 +442,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const requestedMode = normalizeModeAlias(modeId) || modeId;
     const config = vscode.workspace.getConfiguration('gently');
     const modeStateMachineV2Enabled =
-      config.get<boolean>('modeStateMachineV2', true) && !config.get<boolean>('resilience.killSwitch', false);
+      config.get<boolean>('modeStateMachineV2', true);
     const previousMode = normalizeModeAlias(this.modeService.getCurrentMode()?.id || this.messageHandler.getContext()?.selectedMode) || 'architect';
     if (modeStateMachineV2Enabled && previousMode === 'architect' && requestedMode === 'code' && !this.hasPersistedPlanForCodeTransition()) {
       const message = 'MODE_TRANSITION_BLOCKED: PLAN -> ACT requires an existing persisted plan (create_plan).';

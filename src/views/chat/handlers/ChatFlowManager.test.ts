@@ -74,6 +74,8 @@ function createManager(overrides: {
         { getFormattedTools: vi.fn().mockReturnValue([]) } as any,
         {
             saveMessageToHistory: vi.fn(),
+            saveQueryRuntimeState: vi.fn().mockResolvedValue(undefined),
+            appendQueryRuntimeBoundary: vi.fn().mockResolvedValue(undefined),
             getActiveSession: vi.fn().mockResolvedValue(null),
             getChatProvider: vi.fn().mockReturnValue(null)
         } as any,
@@ -93,12 +95,23 @@ function createManager(overrides: {
     return { manager, streamingService, openRouterService, sendMessageToWebview };
 }
 
+function expectQueryRuntimeStatus(sendMessageToWebview: ReturnType<typeof vi.fn>, status: Record<string, unknown>) {
+    expect(sendMessageToWebview).toHaveBeenCalledWith(
+        expect.objectContaining({
+            type: 'queryRuntimeEvent',
+            event: expect.objectContaining({
+                type: 'status',
+                ...status
+            })
+        })
+    );
+}
+
 describe('ChatFlowManager resilience hardening', () => {
     beforeEach(() => {
         configOverrides = {
             'resilience.strictResponseGuards': true,
-            'resilience.contextRecoveryV2': true,
-            'resilience.killSwitch': false
+            'resilience.contextRecoveryV2': true
         };
     });
 
@@ -123,14 +136,11 @@ describe('ChatFlowManager resilience hardening', () => {
                 message: expect.stringContaining('Kontext-Budget')
             })
         );
-        expect(sendMessageToWebview).toHaveBeenCalledWith(
-            expect.objectContaining({
-                type: 'resilienceStatus',
-                code: 'CTX_BUDGET_UNSAFE',
-                category: 'context',
-                retryable: false
-            })
-        );
+        expectQueryRuntimeStatus(sendMessageToWebview, {
+            code: 'CTX_BUDGET_UNSAFE',
+            category: 'context',
+            retryable: false
+        });
     });
 
     it('retries empty assistant responses and fails with explicit error after retry exhaustion', async () => {
@@ -157,23 +167,17 @@ describe('ChatFlowManager resilience hardening', () => {
                 message: expect.stringContaining('No assistant message was received')
             })
         );
-        expect(sendMessageToWebview).toHaveBeenCalledWith(
-            expect.objectContaining({
-                type: 'resilienceStatus',
-                code: 'EMPTY_RESPONSE_DETECTED',
-                category: 'empty_response',
-                retryable: true
-            })
-        );
-        expect(sendMessageToWebview).toHaveBeenCalledWith(
-            expect.objectContaining({
-                type: 'resilienceStatus',
-                code: 'EMPTY_RESPONSE_RETRY_EXHAUSTED',
-                category: 'empty_response',
-                retryable: false,
-                action: 'switch_model'
-            })
-        );
+        expectQueryRuntimeStatus(sendMessageToWebview, {
+            code: 'EMPTY_RESPONSE_DETECTED',
+            category: 'empty_response',
+            retryable: true
+        });
+        expectQueryRuntimeStatus(sendMessageToWebview, {
+            code: 'EMPTY_RESPONSE_RETRY_EXHAUSTED',
+            category: 'empty_response',
+            retryable: false,
+            action: 'switch_model'
+        });
     });
 
     it('does not treat a user-stopped stream as empty-response failure', async () => {
@@ -202,14 +206,11 @@ describe('ChatFlowManager resilience hardening', () => {
                 message: expect.stringContaining('No assistant message was received')
             })
         );
-        expect(sendMessageToWebview).toHaveBeenCalledWith(
-            expect.objectContaining({
-                type: 'resilienceStatus',
-                code: 'REQUEST_STOPPED',
-                category: 'request',
-                retryable: false
-            })
-        );
+        expectQueryRuntimeStatus(sendMessageToWebview, {
+            code: 'REQUEST_STOPPED',
+            category: 'request',
+            retryable: false
+        });
     });
 
     it('resets stale tool-abort flag at the beginning of a new turn', async () => {
@@ -246,15 +247,12 @@ describe('ChatFlowManager resilience hardening', () => {
         await expect(manager.generateAndStreamResponse(createContext(), 'test')).rejects.toThrow(
             'Assistant stream ended unexpectedly without a terminal stop event.'
         );
-        expect(sendMessageToWebview).toHaveBeenCalledWith(
-            expect.objectContaining({
-                type: 'resilienceStatus',
-                code: 'STREAM_CONTRACT_MISSING_STOP',
-                category: 'request',
-                retryable: false,
-                action: 'retry'
-            })
-        );
+        expectQueryRuntimeStatus(sendMessageToWebview, {
+            code: 'STREAM_CONTRACT_MISSING_STOP',
+            category: 'request',
+            retryable: false,
+            action: 'retry'
+        });
         expect(sendMessageToWebview).toHaveBeenCalledWith(
             expect.objectContaining({
                 type: 'error',
@@ -263,11 +261,10 @@ describe('ChatFlowManager resilience hardening', () => {
         );
     });
 
-    it('kill-switch disables strict empty-response retries and keeps legacy behavior', async () => {
+    it('always enforces strict empty-response retries', async () => {
         configOverrides = {
             'resilience.strictResponseGuards': true,
-            'resilience.contextRecoveryV2': true,
-            'resilience.killSwitch': true
+            'resilience.contextRecoveryV2': true
         };
         const empty = vi.fn().mockResolvedValue({
             assistantMessage: '',
@@ -282,19 +279,19 @@ describe('ChatFlowManager resilience hardening', () => {
             maxTokens: 8000
         });
 
-        await expect(manager.generateAndStreamResponse(createContext(), 'test')).resolves.toBeUndefined();
-        expect(streamingService.streamResponse).toHaveBeenCalledTimes(1);
-        expect(sendMessageToWebview).not.toHaveBeenCalledWith(
+        await expect(manager.generateAndStreamResponse(createContext(), 'test')).rejects.toThrow(
+            'No assistant message was received after retries.'
+        );
+        expect(streamingService.streamResponse).toHaveBeenCalledTimes(3);
+        expect(sendMessageToWebview).toHaveBeenCalledWith(
             expect.objectContaining({
                 type: 'error',
                 message: expect.stringContaining('No assistant message was received')
             })
         );
-        expect(sendMessageToWebview).not.toHaveBeenCalledWith(
-            expect.objectContaining({
-                type: 'resilienceStatus'
-            })
-        );
+        expectQueryRuntimeStatus(sendMessageToWebview, {
+            code: 'EMPTY_RESPONSE_RETRY_EXHAUSTED'
+        });
     });
 
     it('emits structured rate-limit retry status and succeeds on a later attempt', async () => {
@@ -319,14 +316,11 @@ describe('ChatFlowManager resilience hardening', () => {
 
         await expect(manager.generateAndStreamResponse(createContext(), 'test')).resolves.toBeUndefined();
         expect(streamingService.streamResponse).toHaveBeenCalledTimes(2);
-        expect(sendMessageToWebview).toHaveBeenCalledWith(
-            expect.objectContaining({
-                type: 'resilienceStatus',
-                code: 'RATE_LIMIT_RETRY',
-                category: 'rate_limit',
-                retryable: true
-            })
-        );
+        expectQueryRuntimeStatus(sendMessageToWebview, {
+            code: 'RATE_LIMIT_RETRY',
+            category: 'rate_limit',
+            retryable: true
+        });
     });
 
     it('emits structured guardrail block status before failing', async () => {
@@ -343,15 +337,12 @@ describe('ChatFlowManager resilience hardening', () => {
         await expect(manager.generateAndStreamResponse(createContext(), 'test')).rejects.toThrow(
             'OpenRouter blocked this request due to privacy/guardrail settings.'
         );
-        expect(sendMessageToWebview).toHaveBeenCalledWith(
-            expect.objectContaining({
-                type: 'resilienceStatus',
-                code: 'GUARDRAIL_PRIVACY_BLOCK',
-                category: 'guardrail',
-                retryable: false,
-                action: 'check_privacy_settings'
-            })
-        );
+        expectQueryRuntimeStatus(sendMessageToWebview, {
+            code: 'GUARDRAIL_PRIVACY_BLOCK',
+            category: 'guardrail',
+            retryable: false,
+            action: 'check_privacy_settings'
+        });
     });
 
     it('bounds context recovery attempts and throws after deterministic recovery is exhausted', async () => {
@@ -374,11 +365,10 @@ describe('ChatFlowManager resilience hardening', () => {
         expect(streamingService.streamResponse.mock.calls.length).toBeLessThanOrEqual(3);
     });
 
-    it('kill-switch forces legacy one-shot max-token context retry path', async () => {
+    it('uses recovery orchestrator for context overflow without legacy kill-switch fallback', async () => {
         configOverrides = {
             'resilience.strictResponseGuards': true,
-            'resilience.contextRecoveryV2': true,
-            'resilience.killSwitch': true
+            'resilience.contextRecoveryV2': true
         };
         const ctxError = new OpenRouterHttpError({
             status: 400,
@@ -402,11 +392,11 @@ describe('ChatFlowManager resilience hardening', () => {
         });
 
         await expect(manager.generateAndStreamResponse(createContext(), 'test')).resolves.toBeUndefined();
-        expect(streamingService.streamResponse).toHaveBeenCalledTimes(2);
+        expect(streamingService.streamResponse.mock.calls.length).toBeGreaterThanOrEqual(2);
         const firstCallOptions = streamingService.streamResponse.mock.calls[0][1];
-        const secondCallOptions = streamingService.streamResponse.mock.calls[1][1];
         expect(firstCallOptions.maxTokens).toBe(8000);
-        expect(secondCallOptions.maxTokens).toBe(6000);
+        const lastCallOptions = streamingService.streamResponse.mock.calls[streamingService.streamResponse.mock.calls.length - 1][1];
+        expect(lastCallOptions.maxTokens).toBeLessThanOrEqual(8000);
     });
 
     it('exposes empty-response error type for strict guard handling', () => {

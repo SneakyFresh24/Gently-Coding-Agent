@@ -4,7 +4,6 @@ export type RecoveryPolicyKey =
   | 'empty_response'
   | 'rate_limit_429'
   | 'tool_recoverable'
-  | 'tool_approval_timeout'
   | 'stream_contract_violation'
   | 'stop_request'
   | 'subagent_mode_switch'
@@ -88,17 +87,6 @@ const POLICY_MATRIX: Record<RecoveryPolicyKey, RecoveryPolicy> = {
     terminalAction: 'abort',
     userFacingMessage: 'Tool execution failed and is being retried.',
     telemetryCode: 'TOOL_RETRY_SCHEDULED'
-  },
-  tool_approval_timeout: {
-    key: 'tool_approval_timeout',
-    retryable: false,
-    maxAttempts: 1,
-    delayStrategy: 'none',
-    baseDelayMs: 0,
-    maxDelayMs: 0,
-    terminalAction: 'report',
-    userFacingMessage: 'Tool approval timed out.',
-    telemetryCode: 'TOOL_APPROVAL_TIMEOUT'
   },
   stream_contract_violation: {
     key: 'stream_contract_violation',
@@ -192,4 +180,3 @@ export function computeRecoveryDelayMs(
 
   return Math.max(0, Math.floor(exponential));
 }
-

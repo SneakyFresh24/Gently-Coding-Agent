@@ -10,7 +10,6 @@ describe('RecoveryPolicyResolver', () => {
     const matrix = getRecoveryPolicyMatrix();
     expect(matrix.rate_limit_429.telemetryCode).toBe('RATE_LIMIT_RETRY');
     expect(matrix.sequence_repair.maxAttempts).toBe(3);
-    expect(matrix.tool_approval_timeout.retryable).toBe(false);
     expect(matrix.stream_contract_violation.retryable).toBe(false);
     expect(matrix.stop_request.terminalAction).toBe('none');
   });
@@ -34,4 +33,3 @@ describe('RecoveryPolicyResolver', () => {
     expect(getRecoveryPolicy('sequence_repair').maxAttempts).toBe(3);
   });
 });
-

@@ -12,6 +12,7 @@ import {
   AutoApprovalSettings as AutoApproveSettings
 } from '../../../types/approval';
 import { OutputChunk } from '../../../terminal/execution/types/ExecutionTypes';
+import type { QueryRuntimeEvent } from '../runtime/QueryEngineContract';
 
 // =====================================================
 // INBOUND MESSAGES (Webview → Extension)
@@ -467,17 +468,6 @@ export interface ToolApprovalResponseMessage {
 }
 
 /**
- * Client-side approval countdown reached local timeout.
- */
-export interface ToolApprovalLocalTimeoutMessage {
-  type: 'toolApprovalLocalTimeout';
-  approvalId: string;
-  toolName?: string;
-  timestamp: number;
-  expiresAt?: number;
-}
-
-/**
  * Client reports an unhandled outbound message in the webview runtime.
  */
 export interface WebviewUnhandledMessageReport {
@@ -563,8 +553,8 @@ export interface ToolApprovalRequestMessage {
   toolName: string;
   params: any;
   timestamp: number;
-  timeoutMs: number;
-  expiresAt: number;
+  timeoutMs?: number;
+  expiresAt?: number;
 }
 
 /**
@@ -574,9 +564,9 @@ export interface ToolApprovalResolvedMessage {
   type: 'toolApprovalResolved';
   approvalId: string;
   toolName: string;
-  status: 'approved' | 'rejected' | 'timeout';
+  status: 'approved' | 'rejected';
   reason?: string | null;
-  source: 'user' | 'timeout' | 'system';
+  source: 'user' | 'system';
   timestamp: number;
 }
 
@@ -635,40 +625,6 @@ export interface ModelsListMessage {
 export interface ActiveModelChangedMessage {
   type: 'modelChanged';
   model: string;
-}
-
-/**
- * Retry with reduced output tokens after context-length error
- */
-export interface RetryingWithReducedTokensMessage {
-  type: 'retryingWithReducedTokens';
-  originalMax: number;
-  newMax: number;
-  reason: 'context_length';
-}
-
-/**
- * Retry with backoff after provider rate-limit
- */
-export interface RetryingRateLimitMessage {
-  type: 'retryingRateLimit';
-  attempt: number;
-  maxAttempts: number;
-  delayMs: number;
-  model: string;
-}
-
-/**
- * Retry with backoff after tool-call sequence repair
- */
-export interface RetryStatusMessage {
-  type: 'retryStatus';
-  attempt: number;
-  maxAttempts: number;
-  delayMs: number;
-  reason: 'tool_call_sequence';
-  model: string;
-  fixes?: string[];
 }
 
 /**
@@ -743,7 +699,7 @@ export type ResilienceStatusCode =
   | 'HOOK_PRE_FAILED'
   | 'HOOK_POST_FAILED'
   | 'HOOK_NOTIFICATION_FAILED'
-  | 'TOOL_APPROVAL_TIMEOUT'
+  | 'TOOL_STOPPED_BY_USER'
   | 'STREAM_CONTRACT_MISSING_STOP'
   | 'MODE_STATE_DESYNC_DETECTED'
   | 'MODE_TRANSITION_BLOCKED'
@@ -863,6 +819,14 @@ export interface SubagentStatusMessage {
   decision: SubagentStatusDecision;
   reason: string;
   correlationId: string;
+}
+
+/**
+ * Canonical query runtime event stream.
+ */
+export interface QueryRuntimeEventMessage {
+  type: 'queryRuntimeEvent';
+  event: QueryRuntimeEvent;
 }
 
 /**
@@ -1420,8 +1384,8 @@ export interface PlanApprovalRequestedMessage {
   approvalRequestId: string;
   goal: string;
   stepsCount: number;
-  timeoutMs: number;
-  expiresAt: number;
+  timeoutMs?: number;
+  expiresAt?: number;
   timestamp: number;
 }
 
@@ -1459,8 +1423,8 @@ export interface RestoreSessionTasksShape {
   pendingPlanApproval?: {
     approvalRequestId: string;
     requestedAt: number;
-    timeoutMs: number;
-    expiresAt: number;
+    timeoutMs?: number;
+    expiresAt?: number;
   } | null;
 }
 
@@ -1536,7 +1500,6 @@ export type InboundWebviewMessage =
   | SetAutoApproveSettingsMessage
   | ToggleYoloModeMessage
   | ToolApprovalResponseMessage
-  | ToolApprovalLocalTimeoutMessage
   | WebviewUnhandledMessageReport
   | PlanApprovalResponseMessage
   | QuestionResponseMessage
@@ -1551,15 +1514,13 @@ export type InboundWebviewMessage =
 export type OutboundWebviewMessage =
   | ApiKeyStatusMessage
   | ActiveModelChangedMessage
-  | RetryingWithReducedTokensMessage
-  | RetryingRateLimitMessage
-  | RetryStatusMessage
   | ModelsListMessage
   | SessionsUpdateMessage
   | LoadMessagesMessage
   | ClearMessagesMessage
   | MessagesCompressedMessage
   | ResilienceStatusMessage
+  | QueryRuntimeEventMessage
   | SubagentStatusMessage
   | ErrorMessage
   | InfoMessage

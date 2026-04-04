@@ -10,9 +10,7 @@ export interface MessageHandlers {
   onApiKeyStatus?: (data: any) => void;
   onModelsList?: (data: any) => void;
   onModelChanged?: (data: any) => void;
-  onRetryingWithReducedTokens?: (data: any) => void;
-  onRetryingRateLimit?: (data: any) => void;
-  onRetryStatus?: (data: any) => void;
+  onQueryRuntimeEvent?: (data: any) => void;
   onResilienceStatus?: (data: any) => void;
   onSubagentStatus?: (data: any) => void;
   onModeChanged?: (data: any) => void;
@@ -115,9 +113,7 @@ const TYPE_TO_HANDLER: Record<string, keyof MessageHandlers> = {
   apiKeyStatus: 'onApiKeyStatus',
   modelsList: 'onModelsList',
   modelChanged: 'onModelChanged',
-  retryingWithReducedTokens: 'onRetryingWithReducedTokens',
-  retryingRateLimit: 'onRetryingRateLimit',
-  retryStatus: 'onRetryStatus',
+  queryRuntimeEvent: 'onQueryRuntimeEvent',
   resilienceStatus: 'onResilienceStatus',
   subagentStatus: 'onSubagentStatus',
   modeChanged: 'onModeChanged',

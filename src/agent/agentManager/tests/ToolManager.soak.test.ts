@@ -8,10 +8,7 @@ import {
   writeR4SuiteReport
 } from '../../../core/resilience/R4SoakHarness';
 
-const configValues: Record<string, unknown> = {
-  'resilience.killSwitch': false,
-  'resilience.errorContractV1': true,
-  'resilience.toolOrchestratorV2': true,
+const configValues: Record<string, unknown> = {  'resilience.toolOrchestratorV2': true,
   'resilience.hookContractV2': true,
   'resilience.toolTelemetryV2': false
 };

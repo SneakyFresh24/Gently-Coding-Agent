@@ -102,7 +102,7 @@ export class ToolCallManager {
   private isModeStateMachineV2Enabled(): boolean {
     try {
       const config = vscode.workspace.getConfiguration('gently');
-      return config.get<boolean>('modeStateMachineV2', true) && !config.get<boolean>('resilience.killSwitch', false);
+      return config.get<boolean>('modeStateMachineV2', true);
     } catch {
       return true;
     }

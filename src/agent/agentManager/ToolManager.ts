@@ -35,20 +35,17 @@ import { sleepWithAbort } from '../../core/resilience/RetryDelayUtils';
 
 const log = new LogService('ToolManager');
 const QUESTION_TIMEOUT_MS = 60_000;
-const TOOL_APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
 
 type ToolResilienceCode =
   | 'TOOL_RETRY_SCHEDULED'
   | 'TOOL_RETRY_EXHAUSTED'
+  | 'TOOL_STOPPED_BY_USER'
   | 'HOOK_PRE_BLOCKED'
   | 'HOOK_PRE_FAILED'
   | 'HOOK_POST_FAILED'
-  | 'HOOK_NOTIFICATION_FAILED'
-  | 'TOOL_APPROVAL_TIMEOUT';
+  | 'HOOK_NOTIFICATION_FAILED';
 
 interface ToolResilienceSettings {
-  killSwitch: boolean;
-  errorContractV1: boolean;
   toolOrchestratorV2: boolean;
   hookContractV2: boolean;
   toolTelemetryV2: boolean;
@@ -101,9 +98,9 @@ interface ExecuteToolCallInput {
 }
 
 interface ApprovalDecision {
-  status: 'approved' | 'rejected' | 'timeout';
+  status: 'approved' | 'rejected';
   reason?: string;
-  source: 'user' | 'timeout' | 'system';
+  source: 'user' | 'system';
 }
 
 class ToolExecutionError extends Error {
@@ -457,7 +454,7 @@ export class ToolManager implements IAgentService {
     const plan = this.planningManager.getPlan(targetPlanId);
     if (!plan) return;
 
-    if (plan.status === 'handed_over' || plan.status === 'approved' || plan.status === 'pending') {
+    if (plan.status === 'handed_over' || plan.status === 'pending') {
       await this.planningManager.beginExecution(targetPlanId);
       params.planId = targetPlanId;
     }
@@ -523,7 +520,7 @@ export class ToolManager implements IAgentService {
    */
   async executeTool(toolName: string, params: any, runContext: ToolRunContext = {}): Promise<any> {
     const settings = this.getResilienceSettings();
-    const v2Enabled = settings.toolOrchestratorV2 && !settings.killSwitch;
+    const v2Enabled = settings.toolOrchestratorV2;
     if (!v2Enabled) {
       return this.executeToolLegacy(toolName, params);
     }
@@ -843,19 +840,15 @@ export class ToolManager implements IAgentService {
         const autoApproved = await this.autoApproveManager.shouldAutoApprove(toolName, params);
         if (!autoApproved) {
           const decision = await this.requestApprovalDecision(toolName, params);
-          if (decision.status === 'timeout') {
-            throw new ToolExecutionError({
-              code: 'TOOL_APPROVAL_TIMEOUT',
-              message: `Tool approval timed out for "${toolName}". Please approve again to continue.`,
-              retryable: false
-            });
-          }
           if (decision.status === 'rejected') {
+            const stoppedByUser =
+              decision.source === 'user' ||
+              String(decision.reason || '').trim().toLowerCase() === 'aborted_by_user_stop';
             throw new ToolExecutionError({
               code: 'TOOL_APPROVAL_REJECTED',
-              message: 'Tool execution rejected by user',
+              message: stoppedByUser ? 'Tool execution aborted by user stop' : 'Tool execution rejected by user',
               retryable: false,
-              stoppedByUser: decision.source === 'user'
+              stoppedByUser
             });
           }
         }
@@ -939,8 +932,24 @@ export class ToolManager implements IAgentService {
           (normalized.code === 'TOOL_APPROVAL_REJECTED' && normalized.stoppedByUser)
           || normalized.code === 'QUESTION_STOPPED'
         ) {
+          this.emitToolResilienceStatus(settings, {
+            code: 'TOOL_STOPPED_BY_USER',
+            category: 'tool',
+            severity: 'info',
+            retryable: false,
+            attempt,
+            maxAttempts: retryConfig.recoverableRetries + 1,
+            model: runContext.model || 'unknown',
+            flowId: runContext.flowId || null,
+            userMessage: normalized.message,
+            action: 'none',
+            phase: 'stopped',
+            decision: 'abort',
+            reason: normalized.code,
+            correlationId
+          });
           this.emitToolTelemetryEvent(settings, 'TOOL_STOPPED_BY_USER', {
-            code: 'TOOL_APPROVAL_TIMEOUT',
+            code: 'TOOL_STOPPED_BY_USER',
             toolName,
             flowId: runContext.flowId || null,
             correlationId,
@@ -995,9 +1004,7 @@ export class ToolManager implements IAgentService {
             ? 'HOOK_PRE_BLOCKED'
             : normalized.code === 'HOOK_PRE_FAILED'
               ? 'HOOK_PRE_FAILED'
-              : normalized.code === 'TOOL_APPROVAL_TIMEOUT'
-                ? 'TOOL_APPROVAL_TIMEOUT'
-                : 'TOOL_RETRY_EXHAUSTED';
+              : 'TOOL_RETRY_EXHAUSTED';
 
         this.emitToolResilienceStatus(settings, {
           code: terminalCode,
@@ -1306,10 +1313,7 @@ export class ToolManager implements IAgentService {
 
   private getResilienceSettings(): ToolResilienceSettings {
     const config = vscode.workspace.getConfiguration('gently');
-    const killSwitch = config.get<boolean>('resilience.killSwitch', false);
     return {
-      killSwitch,
-      errorContractV1: config.get<boolean>('resilience.errorContractV1', true),
       toolOrchestratorV2: config.get<boolean>('resilience.toolOrchestratorV2', true),
       hookContractV2: config.get<boolean>('resilience.hookContractV2', true),
       toolTelemetryV2: config.get<boolean>('resilience.toolTelemetryV2', true)
@@ -1345,7 +1349,7 @@ export class ToolManager implements IAgentService {
       correlationId: string;
     }
   ): void {
-    if (!settings.errorContractV1 || !this.eventCallback) return;
+    if (!this.eventCallback) return;
     this.eventCallback({
       type: 'resilienceStatus',
       code: payload.code,
@@ -1412,8 +1416,6 @@ export class ToolManager implements IAgentService {
     return new Promise((resolve) => {
       const approvalId = `tool_approval_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       const timestamp = Date.now();
-      const timeoutMs = TOOL_APPROVAL_TIMEOUT_MS;
-      const expiresAt = timestamp + timeoutMs;
 
       if (!this.eventCallback) {
         resolve({
@@ -1424,30 +1426,16 @@ export class ToolManager implements IAgentService {
         return;
       }
 
-      const timeout = setTimeout(() => {
-        this.pendingApprovals.delete(approvalId);
-        const decision: ApprovalDecision = {
-          status: 'timeout',
-          reason: 'approval_timeout',
-          source: 'timeout'
-        };
-        this.emitToolApprovalResolved(approvalId, toolName, decision);
-        resolve(decision);
-      }, timeoutMs);
-
       this.eventCallback({
         type: 'toolApprovalRequest',
         approvalId,
         toolName,
         params,
-        timestamp,
-        timeoutMs,
-        expiresAt
+        timestamp
       });
 
       this.pendingApprovals.set(approvalId, {
         resolve: (decision: ApprovalDecision) => {
-          clearTimeout(timeout);
           this.emitToolApprovalResolved(approvalId, toolName, decision);
           resolve(decision);
         },
@@ -1464,8 +1452,6 @@ export class ToolManager implements IAgentService {
     return new Promise((resolve) => {
       const approvalId = `tool_approval_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       const timestamp = Date.now();
-      const timeoutMs = TOOL_APPROVAL_TIMEOUT_MS;
-      const expiresAt = timestamp + timeoutMs;
       
       console.log(`[ToolManager] ═════════════════════════════════════`);
       console.log(`[ToolManager] APPROVAL REQUEST START`);
@@ -1481,33 +1467,19 @@ export class ToolManager implements IAgentService {
         throw new Error('Tool approval system not initialized. Please restart the extension.');
       }
 
-      const timeout = setTimeout(() => {
-        console.warn(`[ToolManager] ⏱️ Approval TIMEOUT for ${toolName} (ID: ${approvalId}) after 5 minutes`);
-        this.pendingApprovals.delete(approvalId);
-        this.emitToolApprovalResolved(approvalId, toolName, {
-          status: 'timeout',
-          reason: 'approval_timeout',
-          source: 'timeout'
-        });
-        resolve(false);
-      }, timeoutMs);
-
       this.eventCallback({
           type: 'toolApprovalRequest',
           approvalId,
           toolName,
           params,
-          timestamp,
-          timeoutMs,
-          expiresAt
+          timestamp
       });
       
       console.log(`[ToolManager] ✅ Approval request sent to webview (ID: ${approvalId})`);
 
       this.pendingApprovals.set(approvalId, {
         resolve: (decision: ApprovalDecision) => {
-          clearTimeout(timeout);
-          console.log(`[ToolManager] 📩 Response received for ${approvalId}: ${decision.status === 'approved' ? '✅ APPROVED' : decision.status === 'timeout' ? '⏱️ TIMEOUT' : '❌ REJECTED'}`);
+          console.log(`[ToolManager] 📩 Response received for ${approvalId}: ${decision.status === 'approved' ? '✅ APPROVED' : '❌ REJECTED'}`);
           this.emitToolApprovalResolved(approvalId, toolName, decision);
           resolve(decision.status === 'approved');
         },

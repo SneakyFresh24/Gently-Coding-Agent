@@ -91,16 +91,21 @@ export class ArchitectHandoverHandler {
 
         switch (event.type) {
             case 'planApprovalRequested':
-                this.sendMessageToWebview({
+                const approvalRequestedMessage: any = {
                     type: 'planApprovalRequested',
                     planId: event.planId,
                     approvalRequestId: event.approvalRequestId,
                     goal: event.goal,
                     stepsCount: event.totalSteps || event.stepsCount || 0,
-                    timeoutMs: event.timeoutMs,
-                    expiresAt: event.expiresAt,
                     timestamp: event.timestamp || Date.now()
-                } as any);
+                };
+                if (typeof event.timeoutMs === 'number' && Number.isFinite(event.timeoutMs)) {
+                    approvalRequestedMessage.timeoutMs = event.timeoutMs;
+                }
+                if (typeof event.expiresAt === 'number' && Number.isFinite(event.expiresAt)) {
+                    approvalRequestedMessage.expiresAt = event.expiresAt;
+                }
+                this.sendMessageToWebview(approvalRequestedMessage as any);
                 break;
 
             case 'planApprovalResolved':

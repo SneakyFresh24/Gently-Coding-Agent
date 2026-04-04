@@ -26,7 +26,7 @@
   let checkpointDiffFiles = $state<any[]>([]);
   let checkpointDiffFrom = $state('');
   let checkpointDiffTo = $state<string | undefined>(undefined);
-  let resilienceContractActive = $state(false);
+  let queryRuntimeContractActive = $state(false);
   const UNHANDLED_SURFACE_WINDOW_MS = 60_000;
   const unhandledStats = new Map<string, {
     count: number;
@@ -200,6 +200,8 @@
         return 'Mode transition to Code/Act is blocked until a persisted plan exists.';
       case 'MODE_TOOL_BLOCKED':
         return 'Tool call blocked by current mode contract.';
+      case 'TOOL_STOPPED_BY_USER':
+        return 'Tool execution stopped by user.';
       case 'REQUEST_STOPPED':
         return 'Request stopped.';
       default:
@@ -268,6 +270,89 @@
     }
   }
 
+  function renderQueryRuntimeStatus(data: any): void {
+    const code = String(data.code || '');
+    const baseMessage = getResilienceFallbackMessage(code);
+    const userMessage = typeof data.userMessage === 'string' && data.userMessage.trim().length > 0
+      ? data.userMessage
+      : baseMessage;
+    const actionHint = getResilienceActionHint(String(data.action || 'none'));
+    const detailParts = [
+      String(data.phase || 'runtime'),
+      String(data.decision || 'report'),
+      String(data.reason || 'unspecified')
+    ];
+    const detail = `[${detailParts.join(' | ')}]`;
+    const content = [userMessage, actionHint, detail].filter((part) => part && part.trim().length > 0).join(' ');
+    chatStore.addMessage({
+      id: `sys_query_runtime_${Date.now()}`,
+      role: 'system',
+      content,
+      timestamp: Date.now(),
+      isSystemMessage: true,
+    });
+
+    if (data.retryable && typeof data.nextDelayMs === 'number' && data.nextDelayMs > 0) {
+      extensionStore.setActivityLabel(`${userMessage} (${Math.ceil(data.nextDelayMs / 1000)}s)`);
+      extensionStore.setActivityPhase('thinking');
+      return;
+    }
+
+    if (code === 'REQUEST_STOPPED') {
+      extensionStore.clearActivityState();
+    }
+  }
+
+  function handleQueryRuntimeEvent(data: any): void {
+    const event = data?.event;
+    if (!event || typeof event.type !== 'string') return;
+    queryRuntimeContractActive = true;
+
+    switch (event.type) {
+      case 'query_attempt':
+        extensionStore.setActivityLabel(`Attempt ${Number(event.attempt || 0)}/${Number(event.maxAttempts || 0)}...`);
+        extensionStore.setActivityPhase('thinking');
+        return;
+      case 'status':
+        renderQueryRuntimeStatus(event);
+        return;
+      case 'compaction_boundary':
+        chatStore.addMessage({
+          id: `sys_compaction_${Date.now()}`,
+          role: 'system',
+          content: `Conversation compacted (${String(event.reason || 'budget')}, dropped ${Number(event.droppedCount || 0)} messages).`,
+          timestamp: Date.now(),
+          isSystemMessage: true,
+        });
+        return;
+      case 'result_success':
+        extensionStore.clearActivityState();
+        return;
+      case 'result_error': {
+        const result = event.result || {};
+        const terminalMessage = typeof result.message === 'string' && result.message.trim().length > 0
+          ? result.message
+          : `Query failed with ${String(result.code || 'UNKNOWN_ERROR')}.`;
+        chatStore.addMessage({
+          id: `sys_query_result_error_${Date.now()}`,
+          role: 'system',
+          content: terminalMessage,
+          timestamp: Date.now(),
+          isSystemMessage: true,
+        });
+        extensionStore.clearActivityState();
+        return;
+      }
+      case 'turn_transition':
+        if (String(event.to || '') === 'TERMINAL') {
+          extensionStore.clearActivityState();
+        }
+        return;
+      default:
+        return;
+    }
+  }
+
   function trackUnhandledMessage(data: any): {
     rawType: string;
     correlationId: string;
@@ -314,41 +399,13 @@
       onApiKeyStatus: (data) => settingsStore.setApiKeyStatus(data.hasKey),
       onModelsList: (data) => settingsStore.setModels(data.models),
       onModelChanged: (data) => settingsStore.setSelectedModel(data.model || ''),
-      onRetryingWithReducedTokens: (data) => {
-        if (resilienceContractActive) return;
-        chatStore.addMessage({
-          id: `sys_retry_${Date.now()}`,
-          role: 'system',
-          content: `Retrying with reduced output tokens (${data.originalMax} -> ${data.newMax})...`,
-          timestamp: Date.now(),
-          isSystemMessage: true,
-        });
-      },
-      onRetryingRateLimit: (data) => {
-        if (resilienceContractActive) return;
-        chatStore.addMessage({
-          id: `sys_rate_retry_${Date.now()}`,
-          role: 'system',
-          content: `Provider busy, retrying (${data.attempt}/${data.maxAttempts}) in ${Math.ceil(data.delayMs / 1000)}s...`,
-          timestamp: Date.now(),
-          isSystemMessage: true,
-        });
-      },
-      onRetryStatus: (data) => {
-        if (resilienceContractActive) return;
-        const fixes = Array.isArray(data.fixes) && data.fixes.length > 0
-          ? ` Fixes: ${data.fixes.slice(0, 2).join('; ')}`
-          : '';
-        chatStore.addMessage({
-          id: `sys_sequence_retry_${Date.now()}`,
-          role: 'system',
-          content: `Repairing conversation (${data.attempt}/${data.maxAttempts}) in ${Math.ceil(data.delayMs / 1000)}s...${fixes}`,
-          timestamp: Date.now(),
-          isSystemMessage: true,
-        });
+      onQueryRuntimeEvent: (data) => {
+        handleQueryRuntimeEvent(data);
       },
       onResilienceStatus: (data) => {
-        resilienceContractActive = true;
+        if (queryRuntimeContractActive && ['context', 'empty_response', 'rate_limit', 'sequence', 'request', 'guardrail'].includes(String(data.category || ''))) {
+          return;
+        }
         const code = String(data.code || '');
         const baseMessage = getResilienceFallbackMessage(code);
         const userMessage = typeof data.userMessage === 'string' && data.userMessage.trim().length > 0
@@ -627,11 +684,11 @@
         const toolName = String(data.toolName || 'tool');
         const timestamp = Number(data.timestamp || Date.now());
         const timeoutMsRaw = Number(data.timeoutMs);
-        const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? timeoutMsRaw : 300000;
+        const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? timeoutMsRaw : undefined;
         const expiresAtRaw = Number(data.expiresAt);
         const expiresAt = Number.isFinite(expiresAtRaw) && expiresAtRaw > timestamp
           ? expiresAtRaw
-          : timestamp + timeoutMs;
+          : undefined;
         if (approvalId) {
           const messageId = `approval_${approvalId}`;
           const existing = get(chatStore).messages.find((msg) => msg.id === messageId);
@@ -648,7 +705,7 @@
           };
           if (existing) {
             chatStore.updateMessage(messageId, {
-              content: `Approval required for ${toolName}`,
+              content: `Tool approval required for ${toolName}`,
               approvalCard: nextApprovalCard,
               timestamp,
               isSystemMessage: false
@@ -657,7 +714,7 @@
             chatStore.addMessage({
               id: messageId,
               role: 'system',
-              content: `Approval required for ${toolName}`,
+              content: `Tool approval required for ${toolName}`,
               timestamp,
               isSystemMessage: false,
               approvalCard: nextApprovalCard
@@ -695,7 +752,7 @@
         chatStore.updateMessage(messageId, {
           approvalCard: {
             ...existing.approvalCard,
-            status: data.status === 'approved' || data.status === 'rejected' || data.status === 'timeout'
+            status: data.status === 'approved' || data.status === 'rejected'
               ? data.status
               : 'rejected',
             reason: data.reason ?? null,
@@ -808,8 +865,8 @@
         const pendingApproval = {
           approvalRequestId: String(data.approvalRequestId || ''),
           requestedAt: Number(data.timestamp || Date.now()),
-          timeoutMs: Number(data.timeoutMs || 300000),
-          expiresAt: Number(data.expiresAt || (Date.now() + 300000))
+          timeoutMs: typeof data.timeoutMs === 'number' && Number.isFinite(data.timeoutMs) ? Number(data.timeoutMs) : undefined,
+          expiresAt: typeof data.expiresAt === 'number' && Number.isFinite(data.expiresAt) ? Number(data.expiresAt) : undefined
         };
         const createdFallback = ensurePlanCardForApproval(
           planId,

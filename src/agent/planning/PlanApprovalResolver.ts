@@ -4,15 +4,11 @@ import {
   PlanApprovalRequestState
 } from './types';
 
-const DEFAULT_APPROVAL_TIMEOUT_MS = 300_000;
-
 export class PlanApprovalResolver {
-  public createRequest(plan: ExecutionPlan, now = Date.now(), timeoutMs = DEFAULT_APPROVAL_TIMEOUT_MS): PlanApprovalRequestState {
+  public createRequest(plan: ExecutionPlan, now = Date.now()): PlanApprovalRequestState {
     return {
       approvalRequestId: `plan_approval_${plan.id}_${now}`,
       requestedAt: now,
-      timeoutMs,
-      expiresAt: now + timeoutMs,
       statusAtRequest: plan.status
     };
   }
@@ -86,4 +82,3 @@ export class PlanApprovalResolver {
     };
   }
 }
-

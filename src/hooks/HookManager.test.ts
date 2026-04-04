@@ -34,7 +34,6 @@ describe('HookManager R2 contract', () => {
     configValues['hooks.maxMemoryMB'] = 64;
     configValues['hooks.catchErrors'] = true;
     configValues['hooks.logFailures'] = false;
-    configValues['resilience.killSwitch'] = false;
     configValues['resilience.hookContractV2'] = true;
   });
 

@@ -106,6 +106,8 @@ function createManager() {
     { getFormattedTools: vi.fn().mockReturnValue([]) } as any,
     {
       saveMessageToHistory: vi.fn(),
+      saveQueryRuntimeState: vi.fn().mockResolvedValue(undefined),
+      appendQueryRuntimeBoundary: vi.fn().mockResolvedValue(undefined),
       getActiveSession: vi.fn().mockResolvedValue(null),
       getChatProvider: vi.fn().mockReturnValue(null)
     } as any,
@@ -279,16 +281,29 @@ function configureScenario(
 }
 
 function getTerminalStatus(events: any[]): { code: string | null; action: string | null } {
+  let fallbackResultCode: string | null = null;
   for (let i = events.length - 1; i >= 0; i -= 1) {
     const event = events[i];
-    if ((event?.type === 'resilienceStatus' || event?.type === 'error') && typeof event?.code === 'string') {
+    if (event?.type === 'queryRuntimeEvent' && event?.event?.type === 'status' && typeof event?.event?.code === 'string') {
+      return {
+        code: event.event.code,
+        action: typeof event.event.action === 'string' ? event.event.action : null
+      };
+    }
+    if (event?.type === 'queryRuntimeEvent' && event?.event?.type === 'result_error' && typeof event?.event?.result?.code === 'string') {
+      if (!fallbackResultCode) {
+        fallbackResultCode = event.event.result.code;
+      }
+      continue;
+    }
+    if (event?.type === 'error' && typeof event?.code === 'string') {
       return {
         code: event.code,
         action: typeof event.action === 'string' ? event.action : null
       };
     }
   }
-  return { code: null, action: null };
+  return { code: fallbackResultCode, action: null };
 }
 
 function hasStuckBusyState(events: any[]): boolean {
@@ -394,11 +409,7 @@ describe('ChatFlowManager R4 hardening soak gate', () => {
   it('enforces R4 SLOs with deterministic chaos replay over 1000 flows', async () => {
     configOverrides = {
       'resilience.strictResponseGuards': true,
-      'resilience.contextRecoveryV2': true,
-      'resilience.killSwitch': false,
-      'resilience.errorContractV1': true,
-      'resilience.retryOrchestratorV1': true,
-      'resilience.telemetryV1': false
+      'resilience.contextRecoveryV2': true
     };
 
     const faultPlan = createDeterministicFaultPlan(TOTAL_FLOWS, [...CHAT_FAULT_CATALOG], CHAT_FAULT_SEED) as ChatFaultScenario[];

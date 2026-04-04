@@ -8,30 +8,25 @@
   const card = $derived((message.approvalCard || null) as ToolApprovalCardState | null);
   let now = $state(Date.now());
   let timerHandle: ReturnType<typeof setInterval> | null = null;
-  let localTimeoutReportedForApprovalId = $state<string | null>(null);
 
+  const hasExpiry = $derived(
+    Boolean(
+      card &&
+      card.status === 'pending' &&
+      Number.isFinite(Number(card.expiresAt)) &&
+      Number(card.expiresAt) > 0
+    )
+  );
   const remainingMs = $derived(
-    card && card.status === 'pending' && Number.isFinite(Number(card.expiresAt || 0)) && Number(card.expiresAt || 0) > 0
-      ? Math.max(0, Number(card.expiresAt || 0) - now)
+    hasExpiry
+      ? Math.max(0, Number(card?.expiresAt) - now)
       : 0
   );
-  const locallyTimedOut = $derived(Boolean(card && card.status === 'pending' && remainingMs <= 0));
+  const locallyTimedOut = $derived(Boolean(card && card.status === 'pending' && hasExpiry && remainingMs <= 0));
   const actionDisabled = $derived(Boolean(!card || card.status !== 'pending' || locallyTimedOut));
 
   $effect(() => {
-    if (!card || card.status !== 'pending' || !locallyTimedOut) return;
-    if (localTimeoutReportedForApprovalId === card.approvalId) return;
-    localTimeoutReportedForApprovalId = card.approvalId;
-    messaging.send('toolApprovalLocalTimeout', {
-      approvalId: card.approvalId,
-      toolName: card.toolName,
-      timestamp: Date.now(),
-      expiresAt: card.expiresAt
-    });
-  });
-
-  $effect(() => {
-    if (!card || card.status !== 'pending') {
+    if (!card || card.status !== 'pending' || !hasExpiry) {
       if (timerHandle) {
         clearInterval(timerHandle);
         timerHandle = null;
@@ -86,7 +81,6 @@
 
   function displayStatus(): string {
     if (!card) return 'pending';
-    if (card.status === 'pending' && locallyTimedOut) return 'timeout';
     return card.status;
   }
 </script>
@@ -94,13 +88,15 @@
 {#if card}
   <div class="approval-card" data-status={displayStatus()}>
     <div class="approval-header">
-      <span class="approval-chip">Approval</span>
+      <span class="approval-chip">Tool Approval</span>
       <span class="approval-status">{displayStatus()}</span>
     </div>
     <div class="approval-tool">{card.toolName}</div>
     {#if card.status === 'pending'}
       <div class="approval-countdown" data-expired={locallyTimedOut ? 'true' : 'false'}>
-        {#if locallyTimedOut}
+        {#if !hasExpiry}
+          Waiting for your decision...
+        {:else if locallyTimedOut}
           Timeout reached. Waiting for final resolution...
         {:else}
           Expires in {formatCountdown(remainingMs)}

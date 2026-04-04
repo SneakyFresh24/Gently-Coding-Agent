@@ -573,15 +573,6 @@ const MessageSchemas: Record<string, any> = {
       source: { type: 'string', enum: ['user', 'system'], optional: true }
     }
   },
-  'toolApprovalLocalTimeout': {
-    required: ['approvalId', 'timestamp'],
-    fields: {
-      approvalId: { type: 'string', maxLength: 140 },
-      toolName: { type: 'string', maxLength: 120, optional: true },
-      timestamp: { type: 'number', min: 0 },
-      expiresAt: { type: 'number', min: 0, optional: true }
-    }
-  },
   'webviewUnhandledMessage': {
     required: ['rawType', 'correlationId', 'count', 'firstSeenAt', 'lastSeenAt'],
     fields: {

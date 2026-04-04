@@ -3,14 +3,12 @@ import { PlanningTools } from './PlanningTools';
 import { ToolRegistry } from './ToolRegistry';
 
 let requireApprovalValue = true;
-let autoApproveBeforeHandoverValue = false;
 
 vi.mock('vscode', () => ({
   workspace: {
     getConfiguration: () => ({
       get: (key: string, fallback: unknown) => {
         if (key === 'planning.requireApproval') return requireApprovalValue;
-        if (key === 'planning.autoApproveBeforeHandover') return autoApproveBeforeHandoverValue;
         return fallback;
       }
     })
@@ -38,12 +36,10 @@ describe('PlanningTools', () => {
 
   beforeEach(() => {
     requireApprovalValue = true;
-    autoApproveBeforeHandoverValue = false;
   });
 
   it('auto-approves create_plan through request-bound approval when policy disables manual approval', async () => {
     requireApprovalValue = false;
-    autoApproveBeforeHandoverValue = false;
 
     const planningManagerMock = {
       createPlan: vi.fn().mockReturnValue({
@@ -81,7 +77,6 @@ describe('PlanningTools', () => {
 
   it('registers and executes create_plan successfully', async () => {
     requireApprovalValue = true;
-    autoApproveBeforeHandoverValue = false;
 
     const planningManagerMock = {
       createPlan: vi.fn().mockReturnValue({
@@ -117,7 +112,6 @@ describe('PlanningTools', () => {
 
   it('blocks handover_to_coder when no active plan exists', async () => {
     requireApprovalValue = true;
-    autoApproveBeforeHandoverValue = false;
 
     const planningManagerMock = {
       createPlan: vi.fn(),
@@ -140,7 +134,6 @@ describe('PlanningTools', () => {
 
   it('keeps repeated handover blocked while plan is awaiting approval (no churn)', async () => {
     requireApprovalValue = true;
-    autoApproveBeforeHandoverValue = false;
 
     const currentPlan = {
       id: 'plan_waiting',
@@ -177,7 +170,6 @@ describe('PlanningTools', () => {
 
   it('rejects create_plan with cyclic dependencies', async () => {
     requireApprovalValue = true;
-    autoApproveBeforeHandoverValue = false;
 
     const planningManagerMock = {
       createPlan: vi.fn(),
@@ -206,7 +198,6 @@ describe('PlanningTools', () => {
 
   it('blocks create_plan when an existing plan is awaiting approval', async () => {
     requireApprovalValue = true;
-    autoApproveBeforeHandoverValue = false;
 
     const planningManagerMock = {
       createPlan: vi.fn(),
@@ -236,18 +227,14 @@ describe('PlanningTools', () => {
     expect(planningManagerMock.createPlan).not.toHaveBeenCalled();
   });
 
-  it('auto-approves pending plan before handover when policy is enabled', async () => {
+  it('does not auto-approve pending plan before handover', async () => {
     requireApprovalValue = true;
-    autoApproveBeforeHandoverValue = true;
 
     const planningManagerMock = {
       getCurrentPlan: vi
         .fn()
         .mockReturnValue({ id: 'plan_approved', steps: [{ id: 'step-1' }], status: 'awaiting_approval', pendingApproval: { approvalRequestId: 'req_handover' } }),
-      canHandover: vi
-        .fn()
-        .mockReturnValueOnce({ ok: false, reason: 'Plan must be approved before handover.' })
-        .mockReturnValueOnce({ ok: true }),
+      canHandover: vi.fn().mockReturnValue({ ok: false, code: 'PLAN_APPROVAL_PENDING_EXPLICIT', reason: 'Plan must be approved before handover.' }),
       resolvePlanApproval: vi.fn().mockResolvedValue(undefined),
       markHandedOver: vi.fn().mockResolvedValue(undefined),
       handoverToCoder: vi.fn(),
@@ -260,29 +247,20 @@ describe('PlanningTools', () => {
     const handoverTool = registry.get('handover_to_coder');
     const result = await handoverTool?.execute({ message: 'handover' });
 
-    expect(result.success).toBe(true);
-    expect(planningManagerMock.resolvePlanApproval).toHaveBeenCalledWith(
-      'plan_approved',
-      'approved',
-      'auto_approved_for_handover',
-      'policy',
-      { approvalRequestId: 'req_handover' }
-    );
-    expect(planningManagerMock.handoverToCoder).toHaveBeenCalled();
+    expect(result.success).toBe(false);
+    expect(result.code).toBe('PLAN_APPROVAL_PENDING_EXPLICIT');
+    expect(planningManagerMock.resolvePlanApproval).not.toHaveBeenCalled();
+    expect(planningManagerMock.handoverToCoder).not.toHaveBeenCalled();
   });
 
-  it('creates a fresh approval request for handover auto-approve when pending request id is missing', async () => {
+  it('does not create fresh approval request for handover auto-approve when pending request id is missing', async () => {
     requireApprovalValue = true;
-    autoApproveBeforeHandoverValue = true;
 
     const planningManagerMock = {
       getCurrentPlan: vi
         .fn()
         .mockReturnValue({ id: 'plan_waiting', steps: [{ id: 'step-1' }], status: 'awaiting_approval', pendingApproval: null }),
-      canHandover: vi
-        .fn()
-        .mockReturnValueOnce({ ok: false, reason: 'Plan must be approved before handover.' })
-        .mockReturnValueOnce({ ok: true }),
+      canHandover: vi.fn().mockReturnValue({ ok: false, code: 'PLAN_APPROVAL_PENDING_EXPLICIT', reason: 'Plan must be approved before handover.' }),
       requestPlanApproval: vi.fn().mockResolvedValue({ approvalRequestId: 'req_new' }),
       resolvePlanApproval: vi.fn().mockResolvedValue(undefined),
       markHandedOver: vi.fn().mockResolvedValue(undefined),
@@ -295,16 +273,11 @@ describe('PlanningTools', () => {
     const handoverTool = registry.get('handover_to_coder');
     const result = await handoverTool?.execute({ message: 'handover' });
 
-    expect(result.success).toBe(true);
-    expect(planningManagerMock.requestPlanApproval).toHaveBeenCalledWith('plan_waiting');
-    expect(planningManagerMock.resolvePlanApproval).toHaveBeenCalledWith(
-      'plan_waiting',
-      'approved',
-      'auto_approved_for_handover',
-      'policy',
-      { approvalRequestId: 'req_new' }
-    );
-    expect(planningManagerMock.handoverToCoder).toHaveBeenCalled();
+    expect(result.success).toBe(false);
+    expect(result.code).toBe('PLAN_APPROVAL_PENDING_EXPLICIT');
+    expect(planningManagerMock.requestPlanApproval).not.toHaveBeenCalled();
+    expect(planningManagerMock.resolvePlanApproval).not.toHaveBeenCalled();
+    expect(planningManagerMock.handoverToCoder).not.toHaveBeenCalled();
   });
 
   it('routes update_plan_steps through deterministic step engine', async () => {
@@ -335,6 +308,35 @@ describe('PlanningTools', () => {
     expect(applyStepUpdates).toHaveBeenCalledWith('plan_exec', [
       { stepId: 'step-1', status: 'in_progress', reason: undefined, result: undefined }
     ]);
+  });
+
+  it('propagates deterministic pre-handover block from step engine', async () => {
+    const applyStepUpdates = vi.fn().mockResolvedValue({
+      success: false,
+      code: 'PLAN_PRE_HANDOVER_STEP_UPDATES_BLOCKED',
+      error: 'Pre-handover step updates are blocked. Handover to coder first.',
+      planId: 'plan_pre_handover',
+      updated: [],
+      skipped: [],
+      planStatus: 'approved'
+    });
+
+    const planningManagerMock = {
+      getCurrentPlan: vi.fn().mockReturnValue({ id: 'plan_pre_handover', status: 'approved', steps: [] }),
+      getPlan: vi.fn().mockReturnValue({ id: 'plan_pre_handover', status: 'approved', steps: [] }),
+      applyStepUpdates
+    };
+
+    const tools = new PlanningTools(planningManagerMock as any, null);
+    const registry = createRegistryWithPlanningTools(tools);
+    const updateTool = registry.get('update_plan_steps');
+    const result = await updateTool?.execute({
+      planId: 'plan_pre_handover',
+      updates: [{ stepId: 'step-1', status: 'in_progress' }]
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.code).toBe('PLAN_PRE_HANDOVER_STEP_UPDATES_BLOCKED');
   });
 
   it('rejects update_plan_steps when updates are empty', async () => {

@@ -2,6 +2,41 @@
 
 All notable changes to the "Gently" extension will be documented in this file.
 
+## [0.10.1] - 2026-04-03
+
+### Added
+- **Deterministic Step Tracking Tooling**:
+  - Added/standardized `update_plan_steps` usage across planning/code flow for explicit step-state progression.
+  - Added new tests for deterministic step-update routing and validation (`update_plan_steps` success + empty-update rejection).
+- **Large-File Simulation Coverage**:
+  - Added regression coverage for oversized `write_file` payloads now being auto-expanded into deterministic `write_file_chunk` calls.
+- **Observability Error Stream Tests**:
+  - Added focused test coverage for dedicated `.gently/error-log/*.jsonl` writes for warning/error-class diagnostic events.
+- **Handover Churn Guard Test**:
+  - Added regression test for repeated `handover_to_coder` attempts while `awaiting_approval` to ensure deterministic blocking without plan churn.
+
+### Changed
+- **Claude-Style Code-Mode Contract Hardening**:
+  - Code mode instructions now explicitly include step-engine progress updates and runtime auto-chunking behavior.
+  - Prompt registry runtime hints now describe auto-chunked write behavior and deterministic progress tracking.
+- **Step Progress Resolution for Chunked Writes**:
+  - Tool alias resolution now maps `write_file_chunk` to `write_file` for plan-step matching, preventing steps from remaining `pending` during chunked execution.
+- **Chat Contract / Unknown Event Reduction**:
+  - Added explicit chat handler for `checkpointCreated` events to avoid critical-flow fallback into unhandled-message telemetry.
+- **Diagnostics Context Enrichment**:
+  - Unknown webview-message governance now propagates runtime `mode`/`model` context when available.
+  - Diagnostic persistence now writes to both `.gently/observability` and `.gently/error-log` with rotation/retention behavior.
+- **Retry Messaging Alignment**:
+  - Updated retry guidance to align with runtime auto-chunking semantics (no stale “split manually first” guidance for `write_file` primary path).
+
+### Fixed
+- **Plan Step UI Stuck at Pending**:
+  - Fixed step-status linkage for large/chunked file writes, so plan progress updates can advance correctly beyond `pending`.
+- **Critical Webview Noise**:
+  - Removed a known unhandled-path source by handling `checkpointCreated` in the chat view message flow.
+- **Test/Contract Drift**:
+  - Updated planning and tool-call tests to match the production behavior introduced by deterministic step updates and auto-chunking.
+
 ## [0.10.0] - 2026-04-02
 
 ### Added

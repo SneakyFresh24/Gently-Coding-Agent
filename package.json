@@ -213,11 +213,6 @@
           "default": true,
           "description": "Require explicit in-chat approval for newly created plans before handover_to_coder is allowed."
         },
-        "gently.planning.autoApproveBeforeHandover": {
-          "type": "boolean",
-          "default": false,
-          "description": "If enabled, handover_to_coder auto-approves a pending plan immediately before handover."
-        },
         "gently.pruning.strategy": {
           "type": "string",
           "default": "hybrid",
@@ -346,26 +341,6 @@
           "type": "boolean",
           "default": true,
           "description": "Enable deterministic context-length recovery (aggressive recompress, tool-output prune, then max-token reduction)."
-        },
-        "gently.resilience.killSwitch": {
-          "type": "boolean",
-          "default": false,
-          "description": "Disable new resilience guards and fall back to the legacy request/retry behavior."
-        },
-        "gently.resilience.errorContractV1": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable structured resilience status events for deterministic UI and diagnostics."
-        },
-        "gently.resilience.retryOrchestratorV1": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable deterministic retry orchestration with fixed error-priority order."
-        },
-        "gently.resilience.telemetryV1": {
-          "type": "boolean",
-          "default": true,
-          "description": "Emit structured resilience telemetry events with stable codes and flow IDs."
         },
         "gently.resilience.toolOrchestratorV2": {
           "type": "boolean",

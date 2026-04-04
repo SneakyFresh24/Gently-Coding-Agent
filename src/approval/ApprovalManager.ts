@@ -129,6 +129,7 @@ export class AutoApproveManager {
     'check_memory_conflicts',
     'check_pattern_suggestions',
     'create_plan',
+    'update_plan_steps',
     'handover_to_coder',
     'ask_question',
     'create_checkpoint'

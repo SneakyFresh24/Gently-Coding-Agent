@@ -6,6 +6,21 @@ import { LogService } from '../../../services/LogService';
 
 const log = new LogService('SessionHistoryManager');
 
+interface QueryRuntimeMetadata {
+    flowId?: string;
+    turnId?: string;
+    phase?: 'start' | 'attempt' | 'boundary' | 'terminal';
+    attempt?: number;
+    maxAttempts?: number;
+    resultCode?: string;
+    updatedAt: number;
+    boundaries?: Array<{
+        at: number;
+        reason: string;
+        droppedCount: number;
+    }>;
+}
+
 /**
  * Manages conversation history state and persistence via SessionManager.
  */
@@ -207,5 +222,58 @@ export class SessionHistoryManager {
 
     getChatProvider() {
         return this.sessionManager?.getChatProvider();
+    }
+
+    async saveQueryRuntimeState(update: Partial<QueryRuntimeMetadata>): Promise<void> {
+        if (!this.sessionManager) return;
+        try {
+            const activeSession = await this.sessionManager.getActiveSession(SessionType.CHAT);
+            if (!activeSession) return;
+            const metadata = activeSession.metadata || {};
+            const current: QueryRuntimeMetadata = (metadata.queryRuntime || {
+                updatedAt: Date.now(),
+                boundaries: []
+            }) as QueryRuntimeMetadata;
+            metadata.queryRuntime = {
+                ...current,
+                ...update,
+                updatedAt: Date.now(),
+                boundaries: Array.isArray(current.boundaries) ? current.boundaries : []
+            } as QueryRuntimeMetadata;
+            await this.sessionManager.getChatProvider().updateSession(activeSession.id, { metadata });
+        } catch (error) {
+            log.error('Error saving query runtime state:', error);
+        }
+    }
+
+    async appendQueryRuntimeBoundary(boundary: { reason: string; droppedCount: number }): Promise<void> {
+        if (!this.sessionManager) return;
+        try {
+            const activeSession = await this.sessionManager.getActiveSession(SessionType.CHAT);
+            if (!activeSession) return;
+            const metadata = activeSession.metadata || {};
+            const current: QueryRuntimeMetadata = (metadata.queryRuntime || {
+                updatedAt: Date.now(),
+                boundaries: []
+            }) as QueryRuntimeMetadata;
+            const boundaries = Array.isArray(current.boundaries) ? [...current.boundaries] : [];
+            boundaries.push({
+                at: Date.now(),
+                reason: boundary.reason,
+                droppedCount: boundary.droppedCount
+            });
+            while (boundaries.length > 20) {
+                boundaries.shift();
+            }
+            metadata.queryRuntime = {
+                ...current,
+                boundaries,
+                updatedAt: Date.now(),
+                phase: 'boundary'
+            } as QueryRuntimeMetadata;
+            await this.sessionManager.getChatProvider().updateSession(activeSession.id, { metadata });
+        } catch (error) {
+            log.error('Error appending query runtime boundary:', error);
+        }
     }
 }

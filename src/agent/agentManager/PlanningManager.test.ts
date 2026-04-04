@@ -36,7 +36,7 @@ describe('PlanningManager lifecycle hardening', () => {
     expect(manager.getPlan(plan.id)?.status).toBe('awaiting_approval');
   });
 
-  it('keeps plan in awaiting_approval on timeout and gates handover until approved', async () => {
+  it('does not auto-timeout plan approval and gates handover until approved', async () => {
     const manager = new PlanningManager();
     const plan = manager.createPlan({
       goal: 'Ship feature',
@@ -44,6 +44,11 @@ describe('PlanningManager lifecycle hardening', () => {
     });
 
     const approvalRequest = await manager.requestPlanApproval(plan.id);
+    expect(manager.getPlan(plan.id)?.status).toBe('awaiting_approval');
+    expect(approvalRequest.timeoutMs).toBeUndefined();
+    expect(approvalRequest.expiresAt).toBeUndefined();
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
     expect(manager.getPlan(plan.id)?.status).toBe('awaiting_approval');
 
     await manager.resolvePlanApproval(plan.id, 'timeout', 'approval_timeout', 'system', {
@@ -59,6 +64,28 @@ describe('PlanningManager lifecycle hardening', () => {
 
     await manager.markHandedOver(plan.id);
     expect(manager.getPlan(plan.id)?.status).toBe('handed_over');
+  });
+
+  it('blocks pre-handover step updates and keeps plan approved', async () => {
+    const manager = new PlanningManager();
+    const plan = manager.createPlan({
+      goal: 'Ship feature',
+      steps: [{ description: 'Analyze code', tool: 'analyze_project_structure', parameters: {} }]
+    });
+
+    const approvalRequest = await manager.requestPlanApproval(plan.id);
+    await manager.resolvePlanApproval(plan.id, 'approved', 'approved_by_user', 'user', {
+      approvalRequestId: approvalRequest.approvalRequestId
+    });
+
+    const result = await manager.applyStepUpdates(plan.id, [
+      { stepId: plan.steps[0].id, status: 'in_progress' }
+    ]);
+
+    expect(result.success).toBe(false);
+    expect(result.code).toBe('PLAN_PRE_HANDOVER_STEP_UPDATES_BLOCKED');
+    expect(manager.getPlan(plan.id)?.status).toBe('approved');
+    expect(manager.getPlan(plan.id)?.steps[0]?.status).toBe('pending');
   });
 
   it('rejects stale or mismatched approval request ids', async () => {

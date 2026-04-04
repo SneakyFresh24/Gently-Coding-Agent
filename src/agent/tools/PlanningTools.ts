@@ -151,32 +151,12 @@ export class PlanningTools {
       };
     }
 
-    const autoApproveBeforeHandover = vscode.workspace
-      .getConfiguration('gently')
-      .get<boolean>('planning.autoApproveBeforeHandover', false);
     const handoverCheck = this.planningManager.canHandover(currentPlan.id);
-    if (!handoverCheck.ok && autoApproveBeforeHandover) {
-      let approvalRequestId = String(currentPlan.pendingApproval?.approvalRequestId || '').trim();
-      if (!approvalRequestId) {
-        const approvalRequest = await this.planningManager.requestPlanApproval(currentPlan.id);
-        approvalRequestId = approvalRequest.approvalRequestId;
-      }
-      await this.planningManager.resolvePlanApproval(
-        currentPlan.id,
-        'approved',
-        'auto_approved_for_handover',
-        'policy',
-        {
-          approvalRequestId
-        }
-      );
-    }
-
-    const finalHandoverCheck = this.planningManager.canHandover(currentPlan.id);
-    if (!finalHandoverCheck.ok) {
+    if (!handoverCheck.ok) {
       return {
         success: false,
-        error: finalHandoverCheck.reason || 'Plan must be approved before handover_to_coder.'
+        code: handoverCheck.code || 'PLAN_HANDOVER_BLOCKED',
+        error: handoverCheck.reason || 'Plan must be approved before handover_to_coder.'
       };
     }
 
@@ -261,6 +241,19 @@ BEGIN IMPLEMENTATION NOW.`,
     }
 
     const result = await this.planningManager.applyStepUpdates(planId, updates);
+    if (!result.success) {
+      return {
+        success: false,
+        code: result.code || 'PLAN_STEP_UPDATE_REJECTED',
+        error: result.error || 'Plan step update was rejected by runtime policy.',
+        planId: result.planId,
+        planStatus: result.planStatus,
+        updated: result.updated,
+        skipped: result.skipped,
+        source: params?.source || 'system',
+        timestamp: typeof params?.timestamp === 'number' ? params.timestamp : Date.now()
+      };
+    }
     return {
       ...result,
       source: params?.source || 'system',

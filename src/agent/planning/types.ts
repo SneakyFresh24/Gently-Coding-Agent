@@ -34,8 +34,8 @@ export interface PlanStep {
 export interface PlanApprovalRequestState {
   approvalRequestId: string;
   requestedAt: number;
-  expiresAt: number;
-  timeoutMs: number;
+  expiresAt?: number;
+  timeoutMs?: number;
   statusAtRequest: PlanLifecycleStatus;
 }
 

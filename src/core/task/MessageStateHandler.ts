@@ -195,6 +195,12 @@ export class MessageStateHandler extends EventEmitter {
                 expiresAt: pendingApproval.expiresAt,
                 timestamp: Date.now()
             };
+            if (typeof event.timeoutMs !== 'number' || !Number.isFinite(event.timeoutMs)) {
+                delete (event as any).timeoutMs;
+            }
+            if (typeof event.expiresAt !== 'number' || !Number.isFinite(event.expiresAt)) {
+                delete (event as any).expiresAt;
+            }
             this.emitPlanEvent(event as any);
             this.sendMessageToWebview(event as any);
             this.sendMessageToWebview({

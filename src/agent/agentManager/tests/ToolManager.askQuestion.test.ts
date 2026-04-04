@@ -91,8 +91,6 @@ describe('ToolManager ask_question webview orchestration', () => {
     for (const key of Object.keys(configValues)) {
       delete configValues[key];
     }
-    configValues['resilience.killSwitch'] = false;
-    configValues['resilience.errorContractV1'] = true;
     configValues['resilience.toolOrchestratorV2'] = true;
     configValues['resilience.hookContractV2'] = true;
     configValues['resilience.toolTelemetryV2'] = false;
@@ -213,20 +211,4 @@ describe('ToolManager ask_question webview orchestration', () => {
     expect(resolvedEvents[0].source).toBe('stopped');
   });
 
-  it('uses legacy ask_question execution path when killSwitch is enabled', async () => {
-    configValues['resilience.killSwitch'] = true;
-    const { manager, askQuestionExecute } = createToolManager();
-
-    const result = await manager.executeTool(
-      'ask_question',
-      {
-        question: 'Legacy path?',
-        options: [{ label: 'Legacy' }]
-      },
-      { flowId: 'flow-q-5', toolCallId: 'tc-q-5' }
-    );
-
-    expect(askQuestionExecute).toHaveBeenCalledTimes(1);
-    expect(result).toEqual({ success: true, answer: ['legacy'] });
-  });
 });

@@ -309,8 +309,6 @@ export class HookManager {
 
   private isHookContractV2Enabled(): boolean {
     const config = vscode.workspace.getConfiguration('gently');
-    const killSwitch = config.get<boolean>('resilience.killSwitch', false);
-    if (killSwitch) return false;
     return config.get<boolean>('resilience.hookContractV2', true);
   }
 
