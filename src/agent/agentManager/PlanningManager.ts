@@ -11,6 +11,7 @@ import {
   PlanLifecycleStatus,
   PlanApprovalRequestState,
   PlanApprovalResolutionResult,
+  CodeEntryPreparationResult,
   PlanStepStatusUpdate,
   TaskStatus
 } from '../planning';
@@ -46,6 +47,8 @@ export class PlanningManager implements IAgentService {
   private currentTask: Task | null = null;
   private persistPlanFn?: (plan: ExecutionPlan) => Promise<void>;
   private readonly approvalResolver = new PlanApprovalResolver();
+  private readonly plansById = new Map<string, ExecutionPlan>();
+  private currentPlanId: string | null = null;
 
   constructor() {
     this.taskState = new TaskState();
@@ -119,6 +122,8 @@ export class PlanningManager implements IAgentService {
     };
 
     this.taskState.setPlan(plan);
+    this.plansById.set(plan.id, plan);
+    this.currentPlanId = plan.id;
 
     return plan;
   }
@@ -127,16 +132,21 @@ export class PlanningManager implements IAgentService {
    * Get a plan by ID
    */
   getPlan(planId: string): ExecutionPlan | undefined {
+    const byId = this.plansById.get(planId);
+    if (byId) return byId;
     const plan = this.taskState.getPlan();
-    return plan?.id === planId ? plan : undefined;
+    if (plan?.id === planId) {
+      this.plansById.set(plan.id, plan);
+      return plan;
+    }
+    return undefined;
   }
 
   /**
    * Get all plans (Legacy support)
    */
   getAllPlans(): ExecutionPlan[] {
-    const plan = this.taskState.getPlan();
-    return plan ? [plan] : [];
+    return Array.from(this.plansById.values()).sort((a, b) => a.createdAt - b.createdAt);
   }
 
   /**
@@ -219,16 +229,49 @@ export class PlanningManager implements IAgentService {
   }
 
   public setCurrentPlanId(planId: string): void {
-      log.info(`setCurrentPlanId called for ${planId} - Stubbed for now`);
+      const normalized = String(planId || '').trim();
+      if (!normalized) {
+        this.currentPlanId = null;
+        this.taskState.setPlan(null);
+        return;
+      }
+      const plan = this.plansById.get(normalized);
+      if (!plan) {
+        log.warn(`setCurrentPlanId: plan not found (${normalized})`);
+        this.currentPlanId = null;
+        this.taskState.setPlan(null);
+        return;
+      }
+      this.currentPlanId = normalized;
+      this.taskState.setPlan(plan);
   }
 
   public getCurrentPlanId(): string | undefined {
-    return this.taskState.getPlan()?.id;
+    return this.currentPlanId || this.taskState.getPlan()?.id;
   }
 
   public getCurrentPlan(): ExecutionPlan | undefined {
+      if (this.currentPlanId) {
+        const byId = this.plansById.get(this.currentPlanId);
+        if (byId) {
+          this.taskState.setPlan(byId);
+          return byId;
+        }
+      }
       const plan = this.taskState.getPlan();
+      if (plan) {
+        this.plansById.set(plan.id, plan);
+        this.currentPlanId = plan.id;
+      }
       return plan || undefined;
+  }
+
+  public hydratePlan(plan: ExecutionPlan): void {
+    if (!plan || typeof plan !== 'object' || typeof plan.id !== 'string') return;
+    this.plansById.set(plan.id, plan);
+    if (this.currentPlanId === plan.id) {
+      this.taskState.setPlan(plan);
+    }
   }
 
   public async requestPlanApproval(planId: string): Promise<PlanApprovalRequestState> {
@@ -323,6 +366,107 @@ export class PlanningManager implements IAgentService {
     if (plan.status === 'handed_over' || plan.status === 'pending') {
       await this.updatePlanStatus(planId, 'executing');
     }
+  }
+
+  public async prepareCodeEntry(planId?: string): Promise<CodeEntryPreparationResult> {
+    const currentPlan = this.getCurrentPlan();
+    const targetPlanId = String(planId || currentPlan?.id || '').trim();
+    if (!targetPlanId) {
+      return {
+        ok: false,
+        code: 'PLAN_REQUIRED_FOR_CODE_ENTRY',
+        reason: 'No active plan found. Create and approve a plan before entering code mode.'
+      };
+    }
+
+    const plan = this.getPlan(targetPlanId);
+    if (!plan) {
+      return {
+        ok: false,
+        code: 'PLAN_NOT_FOUND',
+        reason: `Plan "${targetPlanId}" not found.`,
+        planId: targetPlanId
+      };
+    }
+
+    if (!Array.isArray(plan.steps) || plan.steps.length === 0) {
+      return {
+        ok: false,
+        code: 'PLAN_EMPTY',
+        reason: 'Plan contains no steps and cannot enter code execution.',
+        planId: plan.id,
+        planStatus: plan.status
+      };
+    }
+
+    if (plan.status === 'approved') {
+      await this.markHandedOver(plan.id);
+      const updatedPlan = this.getPlan(plan.id);
+      return {
+        ok: true,
+        code: 'CODE_ENTRY_AUTO_HANDOVER_APPLIED',
+        reason: 'Approved plan auto-handed over for deterministic code execution.',
+        planId: plan.id,
+        planStatus: updatedPlan?.status || 'handed_over',
+        autoHandedOver: true
+      };
+    }
+
+    if (
+      plan.status === 'handed_over' ||
+      plan.status === 'pending' ||
+      plan.status === 'executing' ||
+      plan.status === 'paused' ||
+      plan.status === 'completed' ||
+      plan.status === 'failed'
+    ) {
+      return {
+        ok: true,
+        code: 'CODE_ENTRY_ALLOWED',
+        reason: `Code entry allowed for plan status "${plan.status}".`,
+        planId: plan.id,
+        planStatus: plan.status,
+        autoHandedOver: false
+      };
+    }
+
+    if (plan.status === 'awaiting_approval') {
+      return {
+        ok: false,
+        code: 'PLAN_APPROVAL_PENDING_EXPLICIT',
+        reason: 'Plan is awaiting explicit approval before code execution.',
+        planId: plan.id,
+        planStatus: plan.status
+      };
+    }
+
+    if (plan.status === 'rejected') {
+      return {
+        ok: false,
+        code: 'PLAN_REJECTED',
+        reason: 'Plan was rejected. Create or approve a new plan before code execution.',
+        planId: plan.id,
+        planStatus: plan.status
+      };
+    }
+
+    if (plan.status === 'draft' || plan.status === 'created') {
+      return {
+        ok: false,
+        code: 'PLAN_NOT_APPROVED',
+        reason: `Plan must be approved before code execution (current: ${plan.status}).`,
+        planId: plan.id,
+        planStatus: plan.status
+      };
+    }
+
+    return {
+      ok: false,
+      code: 'PLAN_STATUS_UNSUPPORTED',
+      reason: `Plan status "${plan.status}" is not supported for code entry.`,
+      planId: plan.id,
+      planStatus: plan.status
+    };
   }
 
   public async applyStepUpdates(

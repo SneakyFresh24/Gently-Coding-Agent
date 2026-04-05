@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality-and-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile
+        run: npm run compile -- --noEmit
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Run stability unit suites
+        run: >-
+          npm exec -- vitest run
+          src/approval/ApprovalManager.test.ts
+          src/services/HistoryManager.test.ts
+          src/agent/agentManager/tests/ToolManager.orchestration.test.ts
+          src/agent/agentManager/tests/ToolManager.askQuestion.test.ts
+          src/agent/tools/FileTools.test.ts
+          src/views/chat/ChatViewProvider.modelIdValidation.test.ts
+
+      - name: Run resilience release gate
+        run: npm run resilience:release-gate
+
+      - name: Security audit (prod, high+ only)
+        run: npm audit --omit=dev --audit-level=high

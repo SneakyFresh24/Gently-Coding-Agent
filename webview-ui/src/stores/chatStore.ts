@@ -27,6 +27,34 @@ const initialState: ChatStoreState = {
   error: null,
 };
 
+const LIVE_PLAN_STATUSES = new Set([
+  'awaiting_approval',
+  'approved',
+  'handed_over',
+  'executing',
+  'paused'
+]);
+
+function normalizeHydratedMessage(message: Message): Message {
+  if (!message.planCard) return message;
+  const status = String(message.planCard.status || '').trim().toLowerCase();
+  if (LIVE_PLAN_STATUSES.has(status)) return message;
+  return {
+    ...message,
+    planCard: undefined,
+    isSystemMessage: true,
+    content: message.content || `Plan archived (${status || 'terminal'}).`
+  };
+}
+
+function shouldPreserveCardMessage(message: Message): boolean {
+  if (message.planCard) {
+    const status = String(message.planCard.status || '').trim().toLowerCase();
+    return LIVE_PLAN_STATUSES.has(status);
+  }
+  return Boolean(message.approvalCard) || Boolean(message.questionCard);
+}
+
 // ── Store Creation ───────────────────────────────────
 
 function createChatStore() {
@@ -118,6 +146,14 @@ function createChatStore() {
       }));
     },
 
+    /** Remove a specific message by ID */
+    removeMessage(messageId: string) {
+      update(s => ({
+        ...s,
+        messages: s.messages.filter(m => m.id !== messageId)
+      }));
+    },
+
     // ── Input ────────────────────────────────────────
 
     setInputValue(value: string) {
@@ -188,19 +224,23 @@ function createChatStore() {
     /** Replace all messages (e.g., session load) */
     hydrateMessages(messages: Message[]) {
       const incoming = Array.isArray(messages) ? messages : [];
+      const normalizedIncoming = incoming.map((message) => normalizeHydratedMessage(message));
       update(s => ({
         ...s,
         messages: (() => {
           const existingById = new Map(s.messages.map((message) => [message.id, message]));
-          const reconciled = incoming.map((message) => {
+          const reconciled = normalizedIncoming.map((message) => {
             const existing = existingById.get(message.id);
             if (!existing) return message;
+            const hasQuestionCard = Object.prototype.hasOwnProperty.call(message, 'questionCard');
+            const hasPlanCard = Object.prototype.hasOwnProperty.call(message, 'planCard');
+            const hasApprovalCard = Object.prototype.hasOwnProperty.call(message, 'approvalCard');
             return {
               ...existing,
               ...message,
-              questionCard: message.questionCard || existing.questionCard,
-              planCard: message.planCard || existing.planCard,
-              approvalCard: message.approvalCard || existing.approvalCard
+              questionCard: hasQuestionCard ? message.questionCard : existing.questionCard,
+              planCard: hasPlanCard ? message.planCard : existing.planCard,
+              approvalCard: hasApprovalCard ? message.approvalCard : existing.approvalCard
             };
           });
 
@@ -208,7 +248,7 @@ function createChatStore() {
           const preservedCards = s.messages.filter(
             (message) =>
               !incomingIds.has(message.id) &&
-              (Boolean(message.planCard) || Boolean(message.approvalCard) || Boolean(message.questionCard))
+              shouldPreserveCardMessage(message)
           );
 
           const merged = [...reconciled, ...preservedCards];

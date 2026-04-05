@@ -501,7 +501,9 @@ const MessageSchemas: Record<string, any> = {
   },
   'requestCurrentPlan': {
     required: [],
-    fields: {}
+    fields: {
+      sessionId: { type: 'string', maxLength: 100, optional: true }
+    }
   },
   'retryStep': {
     required: ['planId', 'stepId'],

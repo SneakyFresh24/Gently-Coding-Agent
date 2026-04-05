@@ -98,8 +98,13 @@ export class HistoryManager {
             ? raw.name
             : (typeof raw.title === 'string' && raw.title.trim().length > 0 ? raw.title : 'Untitled');
         const metadata = (raw.metadata && typeof raw.metadata === 'object' && !Array.isArray(raw.metadata))
-            ? raw.metadata
+            ? { ...raw.metadata }
             : {};
+        if (typeof metadata.model !== 'string' || metadata.model.trim().length === 0) {
+            metadata.model = typeof raw.model === 'string' && raw.model.trim().length > 0
+                ? raw.model
+                : 'unknown';
+        }
 
         return {
             id,

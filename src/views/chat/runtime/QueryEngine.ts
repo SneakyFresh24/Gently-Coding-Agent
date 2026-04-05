@@ -86,6 +86,7 @@ export class QueryEngine {
     private readonly contextRecoveryMaxAttempts = this.retryBudgets.context;
     private readonly emptyResponseMaxRetries = this.retryBudgets.empty;
     private readonly rateLimitMaxRetries = this.retryBudgets.rate_limit;
+    private readonly resumeNoProgressMaxAutoRetries = 1;
     private readonly modelWarningByFlow = new Set<string>();
     private readonly knownSequenceIssueModels = new Set<string>([
         'minimax/minimax-m2.7',
@@ -99,6 +100,10 @@ export class QueryEngine {
         rate_limit: 'RATE_LIMIT_RETRY'
     };
     private readonly permissionDenials: string[] = [];
+    private readonly terminalRuntimeEventByFlow = new Map<string, 'result_success' | 'result_error'>();
+    private readonly terminalRuntimeEventOrder: string[] = [];
+    private readonly maxTrackedTerminalFlows = 256;
+    private readonly runIdByFlow = new Map<string, string>();
 
     constructor(
         private readonly agentManager: AgentManager,
@@ -129,6 +134,9 @@ export class QueryEngine {
 
         if (!silent) {
             context.currentFlowId = `flow-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+            if (context.currentRunId) {
+                this.runIdByFlow.set(context.currentFlowId, context.currentRunId);
+            }
         }
 
         try {
@@ -173,6 +181,11 @@ export class QueryEngine {
         if (!context.currentFlowId) {
             context.currentFlowId = `flow-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
         }
+        if (context.currentRunId) {
+            this.runIdByFlow.set(context.currentFlowId, context.currentRunId);
+        }
+        const isResumeRun = context.currentMessageSource === 'resume';
+        const resumeProgressBefore = isResumeRun ? this.capturePlanProgressSnapshot() : null;
         const runtimeConfig = vscode.workspace.getConfiguration('gently');
         const maxTurns = this.sanitizePositiveInt(runtimeConfig.get<number>('queryRuntime.maxTurns', 24), 24);
         const maxStructuredOutputRetries = this.sanitizePositiveInt(
@@ -259,6 +272,7 @@ export class QueryEngine {
             });
         };
         transitionTurn('PREFLIGHT', 'initial_preflight');
+        let runAbortController: AbortController | null = null;
 
         try {
         const baseTemperature = this.modeService.getTemperature();
@@ -588,6 +602,8 @@ export class QueryEngine {
         this.sendMessageToWebview({ type: 'generatingStart' });
         transitionTurn('STREAMING', 'stream_loop_start');
 
+        runAbortController = new AbortController();
+        context.activeRunAbortController = runAbortController;
         context.shouldStopStream = false;
         context.shouldAbortTools = false;
         let assistantMessage = '';
@@ -679,7 +695,8 @@ export class QueryEngine {
                     tools,
                     responseFormat,
                     isFollowUp,
-                    shouldStopRef: { get current() { return context.shouldStopStream; } } as any
+                    shouldStopRef: { get current() { return context.shouldStopStream; } } as any,
+                    abortSignal: runAbortController?.signal
                 });
                 assistantMessage = result.assistantMessage;
                 toolCalls = result.toolCalls;
@@ -1383,6 +1400,69 @@ export class QueryEngine {
                 retryCount
             );
         }
+        const resumeProgressAfter = isResumeRun ? this.capturePlanProgressSnapshot() : null;
+        const resumeNoProgressDetected = Boolean(
+            isResumeRun &&
+            toolCalls.length === 0 &&
+            incompleteToolCalls.length === 0 &&
+            !this.didPlanProgressAdvance(resumeProgressBefore, resumeProgressAfter)
+        );
+
+        if (resumeNoProgressDetected) {
+            const currentAttempts = Math.max(0, Number(context.resumeNoProgressAttempts || 0));
+            const nextAttempt = currentAttempts + 1;
+            const maxAttempts = this.resumeNoProgressMaxAutoRetries + 1;
+            this.emitResilienceStatus(context, {
+                code: 'PLAN_RESUME_NO_PROGRESS',
+                category: 'request',
+                severity: currentAttempts < this.resumeNoProgressMaxAutoRetries ? 'warning' : 'error',
+                retryable: currentAttempts < this.resumeNoProgressMaxAutoRetries,
+                attempt: nextAttempt,
+                maxAttempts,
+                userMessage: currentAttempts < this.resumeNoProgressMaxAutoRetries
+                    ? 'Approved plan produced no progress. Retrying once with stricter execution prompt.'
+                    : 'Approved plan still produced no progress after automatic retry.',
+                action: currentAttempts < this.resumeNoProgressMaxAutoRetries ? 'retry' : 'none'
+            });
+            this.emitResilienceTelemetryEvent(
+                currentAttempts < this.resumeNoProgressMaxAutoRetries
+                    ? 'RESILIENCE_RETRY_SCHEDULED'
+                    : 'RESILIENCE_TERMINAL_FAILURE',
+                context,
+                'PLAN_RESUME_NO_PROGRESS',
+                {
+                    attempt: nextAttempt,
+                    maxAttempts
+                }
+            );
+            log.event(
+                currentAttempts < this.resumeNoProgressMaxAutoRetries ? 'WARN' : 'ERROR',
+                'PLAN_RESUME_NO_PROGRESS',
+                'PLAN_RESUME_NO_PROGRESS',
+                {
+                    flowId: context.currentFlowId || null,
+                    attempt: nextAttempt,
+                    maxAttempts
+                }
+            );
+
+            if (currentAttempts < this.resumeNoProgressMaxAutoRetries) {
+                context.resumeNoProgressAttempts = nextAttempt;
+                await this.generateAndStreamResponse(
+                    context,
+                    'Resume execution now. You must execute the approved plan, run required tools, and update plan step statuses. Do not only summarize. Start with step 1 immediately.',
+                    retryCount + 1,
+                    true
+                );
+                return;
+            }
+
+            throw new Error('PLAN_RESUME_NO_PROGRESS: Approved plan resume produced no tool or step progress.');
+        }
+
+        if (isResumeRun) {
+            context.resumeNoProgressAttempts = 0;
+        }
 
         this.sendMessageToWebview({ type: 'processingEnd' });
         // Ensure activity label is cleared after LLM completes (regardless of content)
@@ -1413,8 +1493,17 @@ export class QueryEngine {
                 terminalizeTurn('failed', 'top_level_failure');
             }
             const runtimeError = error instanceof Error ? error.message : String(error);
+            const forcedCode =
+                runtimeError.includes('PLAN_RESUME_NO_PROGRESS')
+                    ? 'PLAN_RESUME_NO_PROGRESS'
+                    : undefined;
+            const errorCode: QueryRuntimeResult['code'] = context.shouldStopStream
+                ? 'REQUEST_STOPPED'
+                : forcedCode === 'PLAN_RESUME_NO_PROGRESS'
+                    ? 'PLAN_RESUME_NO_PROGRESS'
+                    : 'UNEXPECTED_FAILURE';
             const errorResult = this.createRuntimeResult({
-                code: context.shouldStopStream ? 'REQUEST_STOPPED' : 'UNEXPECTED_FAILURE',
+                code: errorCode,
                 category: context.shouldStopStream ? 'request' : 'runtime',
                 retryable: false,
                 attempt: 0,
@@ -1434,6 +1523,12 @@ export class QueryEngine {
             this.emitRuntimeEvent({ type: 'result_error', flowId: context.currentFlowId, result: errorResult });
             throw error;
         } finally {
+            if (runAbortController && context.activeRunAbortController === runAbortController) {
+                context.activeRunAbortController = null;
+            }
+            if (context.shouldStopStream && context.currentFlowId) {
+                this.runIdByFlow.delete(context.currentFlowId);
+            }
             if (turnEngine) {
                 turnEngine.ensureTerminalized();
             }
@@ -1469,7 +1564,10 @@ export class QueryEngine {
         if (toolCalls.length > 0) {
             context.isToolExecutionActive = true;
             try {
-                await this.toolCallDispatcher.handleToolCalls(toolCalls, messageId, context);
+                const dispatchOutcome = await this.toolCallDispatcher.handleToolCalls(toolCalls, messageId, context);
+                if (!dispatchOutcome.ok) {
+                    throw new Error(`${dispatchOutcome.terminalCode || 'TOOL_DISPATCH_TERMINAL_ERROR'}: ${dispatchOutcome.reason || 'Tool dispatch failed.'}`);
+                }
             } finally {
                 context.isToolExecutionActive = false;
             }
@@ -2089,7 +2187,12 @@ export class QueryEngine {
 
     private isStoppedByUserError(error: unknown): boolean {
         const message = String((error as any)?.message || error || '').toLowerCase();
-        return message.includes('request stopped by user');
+        return (
+            message.includes('request stopped by user') ||
+            message.includes('request aborted') ||
+            message.includes('operation was aborted') ||
+            message.includes('aborterror')
+        );
     }
 
     private async commitCompressedHistory(
@@ -2156,12 +2259,35 @@ export class QueryEngine {
     }
 
     private emitRuntimeEvent(event: QueryRuntimeEvent): void {
+        const flowIdForRun = typeof (event as any)?.flowId === 'string' ? String((event as any).flowId) : '';
+        const runId = flowIdForRun ? this.runIdByFlow.get(flowIdForRun) : undefined;
+        if (event.type === 'result_success' || event.type === 'result_error') {
+            const flowId = typeof event.flowId === 'string' ? event.flowId : '';
+            if (flowId) {
+                const previousTerminal = this.terminalRuntimeEventByFlow.get(flowId);
+                if (previousTerminal) {
+                    // Keep the first terminal event per flow deterministic.
+                    return;
+                }
+                this.terminalRuntimeEventByFlow.set(flowId, event.type);
+                this.terminalRuntimeEventOrder.push(flowId);
+                while (this.terminalRuntimeEventOrder.length > this.maxTrackedTerminalFlows) {
+                    const stale = this.terminalRuntimeEventOrder.shift();
+                    if (stale) this.terminalRuntimeEventByFlow.delete(stale);
+                }
+                this.runIdByFlow.delete(flowId);
+            }
+        }
+
+        const runtimeEventWithRunId = runId
+            ? ({ ...(event as any), runId } as QueryRuntimeEvent)
+            : event;
         if (this.onRuntimeEvent) {
-            this.onRuntimeEvent(event);
+            this.onRuntimeEvent(runtimeEventWithRunId);
         }
         this.sendMessageToWebview({
             type: 'queryRuntimeEvent',
-            event
+            event: runtimeEventWithRunId
         } as any);
     }
 
@@ -2193,6 +2319,32 @@ export class QueryEngine {
             permissionDenials: [...this.permissionDenials],
             message: input.message
         };
+    }
+
+    private capturePlanProgressSnapshot(): { planId: string; completedSteps: number; nonPendingSteps: number } | null {
+        const plan = this.agentManager.getPlanningManager?.()?.getCurrentPlan?.();
+        if (!plan || !Array.isArray(plan.steps)) return null;
+        const completedSteps = plan.steps.filter((step: any) => String(step?.status || '').toLowerCase() === 'completed').length;
+        const nonPendingSteps = plan.steps.filter((step: any) => {
+            const status = String(step?.status || '').toLowerCase();
+            return status !== 'pending' && status !== '';
+        }).length;
+        return {
+            planId: String(plan.id || ''),
+            completedSteps,
+            nonPendingSteps
+        };
+    }
+
+    private didPlanProgressAdvance(
+        before: { planId: string; completedSteps: number; nonPendingSteps: number } | null,
+        after: { planId: string; completedSteps: number; nonPendingSteps: number } | null
+    ): boolean {
+        if (!before || !after) return false;
+        if (!before.planId || !after.planId || before.planId !== after.planId) return false;
+        if (after.completedSteps > before.completedSteps) return true;
+        if (after.nonPendingSteps > before.nonPendingSteps) return true;
+        return false;
     }
 
     dispose(): void {

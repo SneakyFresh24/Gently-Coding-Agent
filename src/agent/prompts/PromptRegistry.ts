@@ -6,7 +6,7 @@ const ARCHITECT_OBJECTIVE = `WORKFLOW:
 2. PLAN: Persist plan via create_plan with explicit ordered steps.
 3. WAIT: If plan status is awaiting_approval, stop tool execution and wait for explicit user approval/rejection.
 4. ALIGN: Ask focused follow-up only when ambiguity blocks safe planning.
-5. HANDOVER: Switch to code mode only after explicit plan approval.`;
+5. HANDOVER: Switch to code mode only through the handover pipeline after explicit plan approval (handover_to_coder or approved-plan auto-handover gate).`;
 
 const ARCHITECT_MODE_CONTRACT = `MODE CONTRACT (PLAN_STRICT):
 - Allowed classes: read/analyze/plan/question/memory tools.

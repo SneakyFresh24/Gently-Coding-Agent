@@ -358,4 +358,75 @@ describe('PlanningTools', () => {
     expect(result.success).toBe(false);
     expect(String(result.error)).toContain('at least one step update');
   });
+
+  it('normalizes create_plan inputs (title fallback, tool alias, numeric deps, description truncate)', async () => {
+    const longDescription = 'x'.repeat(360);
+    const planningManagerMock = {
+      createPlan: vi.fn().mockReturnValue({
+        id: 'plan_norm',
+        goal: 'Normalize plan',
+        steps: [
+          { id: 'step-1', description: 'A', tool: 'read_file', parameters: {}, status: 'pending' },
+          { id: 'step-2', description: 'B', tool: 'safe_edit_file', parameters: {}, status: 'pending' }
+        ],
+        status: 'created'
+      }),
+      announcePlanCreated: vi.fn().mockResolvedValue(undefined),
+      requestPlanApproval: vi.fn().mockResolvedValue(undefined),
+      resolvePlanApproval: vi.fn().mockResolvedValue(undefined),
+      getCurrentPlan: vi.fn().mockReturnValue(undefined)
+    };
+
+    const tools = new PlanningTools(planningManagerMock as any, null);
+    const registry = createRegistryWithPlanningTools(tools);
+    const createPlanTool = registry.get('create_plan');
+    const result = await createPlanTool?.execute({
+      goal: 'Normalize plan',
+      steps: [
+        {
+          title: longDescription,
+          tool: 'read_file',
+          parameters: {}
+        },
+        {
+          description: 'Apply edit',
+          tool: 'edit_file',
+          parameters: { path: 'a.ts' },
+          dependencies: ['1']
+        }
+      ]
+    });
+
+    expect(result.success).toBe(true);
+    expect(Array.isArray(result.normalizedWarnings)).toBe(true);
+    expect(result.normalizedWarnings.length).toBeGreaterThan(0);
+    expect(planningManagerMock.createPlan).toHaveBeenCalledTimes(1);
+    const createPlanArg = planningManagerMock.createPlan.mock.calls[0][0];
+    expect(createPlanArg.steps[0].description.length).toBeLessThanOrEqual(300);
+    expect(createPlanArg.steps[1].tool).toBe('safe_edit_file');
+    expect(createPlanArg.steps[1].dependencies).toEqual([createPlanArg.steps[0].id]);
+  });
+
+  it('returns strict failure contract for invalid create_plan input', async () => {
+    const planningManagerMock = {
+      createPlan: vi.fn(),
+      announcePlanCreated: vi.fn(),
+      requestPlanApproval: vi.fn(),
+      resolvePlanApproval: vi.fn(),
+      getCurrentPlan: vi.fn().mockReturnValue(undefined)
+    };
+
+    const tools = new PlanningTools(planningManagerMock as any, null);
+    const registry = createRegistryWithPlanningTools(tools);
+    const createPlanTool = registry.get('create_plan');
+    const result = await createPlanTool?.execute({
+      goal: 'Bad input',
+      steps: []
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.code).toBe('PLAN_INPUT_INVALID');
+    expect(result.retryable).toBe(false);
+    expect(planningManagerMock.createPlan).not.toHaveBeenCalled();
+  });
 });

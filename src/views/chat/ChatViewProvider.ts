@@ -19,13 +19,46 @@ import { FileHandler } from './handlers/FileHandler';
 import { SystemHandler } from './handlers/SystemHandler';
 import { normalizeModeAlias } from '../../modes/ModeContractV2';
 import { DiagnosticService } from '../../services/DiagnosticService';
+import { LogService } from '../../services/LogService';
 
 import { ChatViewContext, WebviewMessage } from './types/ChatTypes';
+
+const log = new LogService('ChatViewProvider');
+
+type ExecutionState =
+  | 'idle'
+  | 'awaiting_plan_approval'
+  | 'resuming_after_approval'
+  | 'processing'
+  | 'tooling'
+  | 'failed'
+  | 'stopped';
+
+interface PendingPlanResumeIntent {
+  key: string;
+  planId: string;
+  approvalRequestId: string;
+  enqueuedAt: number;
+  attempts: number;
+  nextRetryAt: number;
+  lastError?: string;
+}
+
+interface ActivePlanResumeRun {
+  key: string;
+  planId: string;
+  approvalRequestId: string;
+  attempts: number;
+  startedAt: number;
+}
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'gently.chatView';
   private _view?: vscode.WebviewView;
   private isWebviewReady = false;
+  private isDisposed = false;
+  private readyFallbackTimeout?: ReturnType<typeof setTimeout>;
+  private readonly localDisposables: vscode.Disposable[] = [];
   
   // Queue for messages sent before the webview is ready
   private pendingMessages: any[] = [];
@@ -40,6 +73,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private historyManager: HistoryManager;
   private fileReferenceManager: FileReferenceManager;
   private readonly diagnosticService: DiagnosticService | null;
+  private readonly planResumeQueue: PendingPlanResumeIntent[] = [];
+  private readonly processedPlanResumeKeys = new Set<string>();
+  private readonly activePlanResumeRunsByFlow = new Map<string, ActivePlanResumeRun>();
+  private isDrainingPlanResumeQueue = false;
+  private processingActive = false;
+  private generatingActive = false;
+  private lastExecutionState: ExecutionState = 'idle';
+  private readonly planResumeRetryDelayMs = 2_000;
+  private readonly planResumeMaxAttempts = 3;
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -126,6 +168,31 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
         const storedModel = this.context?.globalState.get<string | null>('gently.selectedModel', null);
         return typeof storedModel === 'string' && storedModel.trim() !== '' ? storedModel : null;
+      },
+      async (session) => {
+        const sessionId = session?.id || null;
+        this.messageHandler.getContext().activeSessionId = sessionId;
+        if (sessionId) {
+          this.agentManager.getCheckpointManager().setCurrentSession(sessionId);
+        }
+
+        const planningManager = this.agentManager.getPlanningManager?.();
+        const tasks = (session?.metadata?.tasks && typeof session.metadata.tasks === 'object')
+          ? session.metadata.tasks
+          : null;
+        const taskPlan = tasks && typeof tasks.currentPlan === 'object'
+          ? tasks.currentPlan as any
+          : null;
+        const taskPlanId = tasks && typeof tasks.currentPlanId === 'string'
+          ? tasks.currentPlanId
+          : typeof session?.metadata?.activePlanId === 'string'
+            ? session.metadata.activePlanId
+            : null;
+
+        if (taskPlan && planningManager?.hydratePlan) {
+          planningManager.hydratePlan(taskPlan);
+        }
+        planningManager?.setCurrentPlanId?.(taskPlanId || '');
       }
     );
 
@@ -229,8 +296,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
 
 
-      webviewView.webview.onDidReceiveMessage(async (data: WebviewMessage) => {
+      const messageDisposable = webviewView.webview.onDidReceiveMessage(async (data: unknown) => {
+        if (this.isDisposed) return;
         try {
+          if (!this.isInboundMessage(data)) {
+            this.reportMalformedInboundMessage('unknown', 'non_object_or_missing_type', data);
+            return;
+          }
           if (data.type === 'ready') {
             await this.initializeWebviewData();
             return;
@@ -244,37 +316,45 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             return;
           }
           if (data.type === 'commandApprovalResponse') {
-            await this.handleCommandApprovalResponse(data.commandId, data.response);
+            const payload = this.parseCommandApprovalResponse(data);
+            if (!payload) {
+              this.reportMalformedInboundMessage(data.type, 'invalid_command_approval_payload', data);
+              return;
+            }
+            await this.handleCommandApprovalResponse(payload.commandId, payload.response);
             return;
           }
           if (data.type === 'toolApprovalResponse') {
-            this.agentManager.getToolManager().handleApprovalResponse(data.approvalId, data.approved, data.alwaysApprove);
+            const payload = this.parseToolApprovalResponse(data);
+            if (!payload) {
+              this.reportMalformedInboundMessage(data.type, 'invalid_tool_approval_payload', data);
+              return;
+            }
+            await this.agentManager.getToolManager().handleApprovalResponse(payload.approvalId, payload.approved, payload.alwaysApprove);
             return;
           }
           if (data.type === 'questionResponse') {
-            const questionId = String(data.questionId || '').trim();
-            const selectedOptionIndexes = Array.isArray(data.selectedOptionIndexes)
-              ? data.selectedOptionIndexes
-                .map((value: unknown) => Number(value))
-                .filter((value: number) => Number.isInteger(value) && value >= 0)
-              : [];
-            const source = data.source === 'stopped' ? 'stopped' : 'user';
+            const payload = this.parseQuestionResponse(data);
+            if (!payload) {
+              this.reportMalformedInboundMessage(data.type, 'invalid_question_response_payload', data);
+              return;
+            }
             try {
-              this.agentManager.getToolManager().handleQuestionResponse(
-                questionId,
-                selectedOptionIndexes,
-                source
+              await this.agentManager.getToolManager().handleQuestionResponse(
+                payload.questionId,
+                payload.selectedOptionIndexes,
+                payload.source
               );
             } catch (error: any) {
-              const correlationId = `question:${questionId || 'unknown'}:QUESTION_RESPONSE_DISPATCH_FAILED:${Date.now()}`;
+              const correlationId = `question:${payload.questionId || 'unknown'}:QUESTION_RESPONSE_DISPATCH_FAILED:${Date.now()}`;
               const context = this.messageHandler?.getContext?.();
               const mode = typeof context?.selectedMode === 'string' ? context.selectedMode : 'unknown';
               const model = typeof context?.selectedModel === 'string' ? context.selectedModel : 'unknown';
               const errorMessage = error instanceof Error ? error.message : String(error);
               console.error('[ChatViewProvider] Failed to dispatch question response:', {
-                questionId: questionId || null,
-                selectedCount: selectedOptionIndexes.length,
-                source,
+                questionId: payload.questionId || null,
+                selectedCount: payload.selectedOptionIndexes.length,
+                source: payload.source,
                 correlationId,
                 error: errorMessage
               });
@@ -298,7 +378,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
               this.sendMessageToWebview({
                 type: 'systemMessage',
                 messageId: `sys_question_dispatch_${Date.now()}`,
-                content: `Question response dispatch failed (questionId=${questionId || 'unknown'}, source=${source}, selected=${selectedOptionIndexes.length}).`,
+                content: `Question response dispatch failed (questionId=${payload.questionId || 'unknown'}, source=${payload.source}, selected=${payload.selectedOptionIndexes.length}).`,
                 code: 'QUESTION_RESPONSE_DISPATCH_FAILED',
                 severity: 'error',
                 correlationId,
@@ -317,12 +397,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           console.error('[ChatViewProvider] Error handling webview message:', error);
         }
       });
+      this.localDisposables.push(messageDisposable);
 
       // Safety Fallback: Initialize after 5 seconds if 'ready' msg was missed
-      setTimeout(() => {
+      if (this.readyFallbackTimeout) {
+        clearTimeout(this.readyFallbackTimeout);
+      }
+      this.readyFallbackTimeout = setTimeout(() => {
+        if (this.isDisposed) return;
         if (this._view && !this.isWebviewReady) {
           console.warn('[ChatViewProvider] Webview ready timeout → initializing data anyway');
-          this.initializeWebviewData();
+          void this.initializeWebviewData();
         }
       }, 5000);
     } catch (error: any) {
@@ -332,6 +417,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async initializeWebviewData(): Promise<void> {
+    if (this.isDisposed) return;
     if (this.isWebviewReady) return;
     this.isWebviewReady = true;
     console.log('[ChatViewProvider] Initializing webview data');
@@ -405,9 +491,479 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   private sendMessageToWebview(message: any): void {
+    if (this.isDisposed) return;
+    this.observeExecutionLifecycle(message);
+    this.postMessageToWebview(message);
+  }
+
+  private postMessageToWebview(message: any): void {
+    if (this.isDisposed) return;
     const enrichedMessage = this.enrichOutboundMessage(message);
     this.diagnosticService?.captureOutboundMessage(enrichedMessage);
     if (this._view) this._view.webview.postMessage(enrichedMessage);
+  }
+
+  private observeExecutionLifecycle(message: any): void {
+    if (!message || typeof message.type !== 'string') return;
+
+    const type = String(message.type);
+    if (type === 'processingStart') {
+      this.processingActive = true;
+      this.emitExecutionStateUpdate('processing', {
+        reasonCode: 'processing_start',
+        flowId: this.messageHandler.getContext()?.currentFlowId || null
+      });
+      return;
+    }
+
+    if (type === 'generatingStart') {
+      this.generatingActive = true;
+      this.emitExecutionStateUpdate('processing', {
+        reasonCode: 'generating_start',
+        flowId: this.messageHandler.getContext()?.currentFlowId || null
+      });
+      return;
+    }
+
+    if (type === 'toolExecutionStart') {
+      this.emitExecutionStateUpdate('tooling', {
+        reasonCode: 'tool_execution_start',
+        flowId: this.messageHandler.getContext()?.currentFlowId || null
+      });
+      return;
+    }
+
+    if (type === 'planApprovalRequested') {
+      const planId = typeof message.planId === 'string' ? message.planId : '';
+      this.emitExecutionStateUpdate('awaiting_plan_approval', {
+        reasonCode: 'plan_approval_requested',
+        planId: planId || undefined,
+        flowId: this.messageHandler.getContext()?.currentFlowId || null
+      });
+      return;
+    }
+
+    if (type === 'planApprovalResolved') {
+      const status = String(message.status || '');
+      const resolution = String(message.resolution || 'applied');
+      const planId = typeof message.planId === 'string' ? message.planId : '';
+      const approvalRequestId = typeof message.approvalRequestId === 'string' ? message.approvalRequestId : '';
+
+      if (resolution === 'applied' && status === 'approved' && planId) {
+        this.emitExecutionStateUpdate('resuming_after_approval', {
+          reasonCode: 'plan_approval_applied',
+          planId,
+          flowId: this.messageHandler.getContext()?.currentFlowId || null
+        });
+        this.enqueuePlanResumeIntent(planId, approvalRequestId);
+        return;
+      }
+
+      if (resolution === 'applied' && status === 'rejected') {
+        this.emitExecutionStateUpdate('failed', {
+          reasonCode: 'plan_rejected',
+          planId: planId || undefined,
+          flowId: this.messageHandler.getContext()?.currentFlowId || null
+        });
+        return;
+      }
+    }
+
+    if (type === 'resilienceStatus') {
+      const code = String(message.code || '');
+      if (code === 'REQUEST_STOPPED') {
+        this.emitExecutionStateUpdate('stopped', {
+          reasonCode: code,
+          flowId: this.messageHandler.getContext()?.currentFlowId || null
+        });
+        return;
+      }
+
+      if (
+        code === 'MODE_TOOL_BLOCKED' ||
+        code === 'CODE_ENTRY_BLOCKED' ||
+        code === 'TOOL_DISPATCH_TERMINAL_ERROR'
+      ) {
+        this.emitExecutionStateUpdate('failed', {
+          reasonCode: code,
+          detail: typeof message.reason === 'string' ? message.reason : undefined,
+          flowId: this.messageHandler.getContext()?.currentFlowId || null
+        });
+        return;
+      }
+    }
+
+    if (type === 'stopAcknowledged') {
+      this.processingActive = false;
+      this.generatingActive = false;
+      this.resetPlanResumeState();
+      this.emitExecutionStateUpdate('stopped', {
+        reasonCode: typeof message.reasonCode === 'string' ? message.reasonCode : 'REQUEST_STOPPED',
+        flowId: typeof message.flowId === 'string' ? message.flowId : this.messageHandler.getContext()?.currentFlowId || null
+      });
+      return;
+    }
+
+    if (type === 'queryRuntimeEvent') {
+      const runtimeEvent = message.event && typeof message.event === 'object' ? message.event : null;
+      const runtimeType = String(runtimeEvent?.type || '');
+      const flowId = typeof runtimeEvent?.flowId === 'string' ? runtimeEvent.flowId : this.messageHandler.getContext()?.currentFlowId || null;
+      if (runtimeType === 'result_success') {
+        if (flowId) {
+          this.handlePlanResumeRuntimeSuccess(flowId);
+        }
+        this.processingActive = false;
+        this.generatingActive = false;
+        this.emitExecutionStateUpdate('idle', { reasonCode: 'result_success', flowId });
+        void this.drainPlanResumeQueue();
+        return;
+      }
+      if (runtimeType === 'result_error') {
+        if (flowId) {
+          this.handlePlanResumeRuntimeError(flowId, runtimeEvent);
+        }
+        this.processingActive = false;
+        this.generatingActive = false;
+        const code = String((runtimeEvent as any)?.result?.code || 'result_error');
+        this.emitExecutionStateUpdate(code === 'REQUEST_STOPPED' ? 'stopped' : 'failed', {
+          reasonCode: code,
+          flowId
+        });
+        void this.drainPlanResumeQueue();
+        return;
+      }
+      if (runtimeType === 'turn_transition' && String((runtimeEvent as any)?.to || '') === 'TERMINAL') {
+        this.processingActive = false;
+        this.generatingActive = false;
+        void this.drainPlanResumeQueue();
+      }
+      return;
+    }
+
+    if (type === 'processingEnd') {
+      this.processingActive = false;
+      if (!this.isExecutionBusy()) {
+        this.emitExecutionStateUpdate('idle', {
+          reasonCode: 'processing_end_idle',
+          flowId: this.messageHandler.getContext()?.currentFlowId || null
+        });
+        void this.drainPlanResumeQueue();
+      }
+      return;
+    }
+
+    if (type === 'generatingEnd') {
+      this.generatingActive = false;
+      if (!this.isExecutionBusy()) {
+        this.emitExecutionStateUpdate('idle', {
+          reasonCode: 'generating_end_idle',
+          flowId: this.messageHandler.getContext()?.currentFlowId || null
+        });
+        void this.drainPlanResumeQueue();
+      }
+      return;
+    }
+  }
+
+  private emitExecutionStateUpdate(
+    state: ExecutionState,
+    detail: {
+      reasonCode?: string;
+      flowId?: string | null;
+      planId?: string;
+      detail?: string;
+    } = {}
+  ): void {
+    if (this.isDisposed) return;
+    const payload = {
+      type: 'executionStateUpdate',
+      state,
+      reasonCode: detail.reasonCode,
+      flowId: detail.flowId ?? this.messageHandler.getContext()?.currentFlowId ?? null,
+      planId: detail.planId,
+      detail: detail.detail,
+      timestamp: Date.now()
+    };
+
+    const shouldSuppressDuplicate =
+      this.lastExecutionState === state &&
+      (!detail.reasonCode || detail.reasonCode === 'processing_start' || detail.reasonCode === 'generating_start');
+    if (shouldSuppressDuplicate) return;
+    this.lastExecutionState = state;
+    this.postMessageToWebview(payload);
+  }
+
+  private isExecutionBusy(): boolean {
+    if (this.processingActive || this.generatingActive) return true;
+    const context = this.messageHandler?.getContext?.();
+    return Boolean(context?.isToolExecutionActive);
+  }
+
+  private enqueuePlanResumeIntent(planId: string, approvalRequestId?: string): void {
+    const normalizedPlanId = String(planId || '').trim();
+    if (!normalizedPlanId) return;
+    const normalizedApprovalId = String(approvalRequestId || '').trim();
+    const key = this.getPlanResumeKey(normalizedPlanId, normalizedApprovalId);
+    if (this.processedPlanResumeKeys.has(key)) return;
+    if (Array.from(this.activePlanResumeRunsByFlow.values()).some((entry) => entry.key === key)) return;
+    if (this.planResumeQueue.some((entry) => entry.key === key)) return;
+
+    this.planResumeQueue.push({
+      key,
+      planId: normalizedPlanId,
+      approvalRequestId: normalizedApprovalId,
+      enqueuedAt: Date.now(),
+      attempts: 0,
+      nextRetryAt: Date.now()
+    });
+
+    void this.drainPlanResumeQueue();
+  }
+
+  private getPlanResumeKey(planId: string, approvalRequestId: string): string {
+    return `${planId}:${approvalRequestId || 'no_approval_request'}`;
+  }
+
+  private resetPlanResumeState(): void {
+    this.planResumeQueue.length = 0;
+    this.processedPlanResumeKeys.clear();
+    this.activePlanResumeRunsByFlow.clear();
+    this.isDrainingPlanResumeQueue = false;
+  }
+
+  private async drainPlanResumeQueue(): Promise<void> {
+    if (this.isDisposed || this.isDrainingPlanResumeQueue) return;
+    this.isDrainingPlanResumeQueue = true;
+    try {
+      while (this.planResumeQueue.length > 0) {
+        if (this.isExecutionBusy()) break;
+        const current = this.planResumeQueue[0];
+        if (!current) break;
+        if (Date.now() < current.nextRetryAt) break;
+
+        this.emitExecutionStateUpdate('resuming_after_approval', {
+          reasonCode: 'plan_resume_starting',
+          planId: current.planId,
+          flowId: this.messageHandler.getContext()?.currentFlowId || null
+        });
+
+        const started = await this.tryStartPlanResume(current);
+        if (started) {
+          this.planResumeQueue.shift();
+          continue;
+        }
+
+        current.attempts += 1;
+        const nextAttempt = current.attempts + 1;
+        if (current.attempts >= this.planResumeMaxAttempts) {
+          this.planResumeQueue.shift();
+          this.processedPlanResumeKeys.add(current.key);
+          this.emitExecutionStateUpdate('failed', {
+            reasonCode: 'PLAN_RESUME_RETRY_EXHAUSTED',
+            detail: current.lastError || 'Plan resume failed after maximum retries.',
+            planId: current.planId,
+            flowId: this.messageHandler.getContext()?.currentFlowId || null
+          });
+          log.event('ERROR', 'PLAN_RESUME_RETRY_EXHAUSTED', 'PLAN_RESUME_RETRY_EXHAUSTED', {
+            planId: current.planId,
+            attempts: current.attempts,
+            maxAttempts: this.planResumeMaxAttempts,
+            reason: current.lastError || 'unknown'
+          });
+          continue;
+        }
+        current.nextRetryAt = Date.now() + this.computePlanResumeRetryDelayMs(current.attempts);
+        log.event('WARN', 'PLAN_RESUME_RETRY_SCHEDULED', 'PLAN_RESUME_RETRY_SCHEDULED', {
+          planId: current.planId,
+          attempts: current.attempts,
+          nextAttempt,
+          nextRetryAt: current.nextRetryAt,
+          reason: current.lastError || 'start_failed'
+        });
+        break;
+      }
+    } catch (error) {
+      log.error('[ChatViewProvider] Plan resume queue drain failed:', error);
+      const current = this.planResumeQueue[0];
+      if (current) {
+        current.attempts += 1;
+        const nextAttempt = current.attempts + 1;
+        if (current.attempts >= this.planResumeMaxAttempts) {
+          this.planResumeQueue.shift();
+          this.processedPlanResumeKeys.add(current.key);
+          this.emitExecutionStateUpdate('failed', {
+            reasonCode: 'PLAN_RESUME_RETRY_EXHAUSTED',
+            detail: error instanceof Error ? error.message : String(error),
+            planId: current.planId,
+            flowId: this.messageHandler.getContext()?.currentFlowId || null
+          });
+          log.event('ERROR', 'PLAN_RESUME_RETRY_EXHAUSTED', 'PLAN_RESUME_RETRY_EXHAUSTED', {
+            planId: current.planId,
+            attempts: current.attempts,
+            maxAttempts: this.planResumeMaxAttempts,
+            reason: error instanceof Error ? error.message : String(error)
+          });
+        } else {
+          current.lastError = error instanceof Error ? error.message : String(error);
+          current.nextRetryAt = Date.now() + this.computePlanResumeRetryDelayMs(current.attempts);
+          log.event('WARN', 'PLAN_RESUME_RETRY_SCHEDULED', 'PLAN_RESUME_RETRY_SCHEDULED', {
+            planId: current.planId,
+            attempts: current.attempts,
+            nextAttempt,
+            nextRetryAt: current.nextRetryAt,
+            reason: current.lastError
+          });
+        }
+      }
+    } finally {
+      this.isDrainingPlanResumeQueue = false;
+    }
+  }
+
+  private async tryStartPlanResume(intent: PendingPlanResumeIntent): Promise<boolean> {
+    const planningManager = this.agentManager.getPlanningManager?.();
+    const preparation = await planningManager?.prepareCodeEntry?.(intent.planId);
+    if (!preparation?.ok) {
+      intent.lastError = preparation?.reason || 'Code entry blocked while resuming approved plan.';
+      this.emitExecutionStateUpdate('failed', {
+        reasonCode: preparation?.code || 'CODE_ENTRY_BLOCKED',
+        detail: intent.lastError,
+        planId: intent.planId,
+        flowId: this.messageHandler.getContext()?.currentFlowId || null
+      });
+      return false;
+    }
+
+    const currentMode = normalizeModeAlias(this.modeService.getCurrentMode()?.id || this.messageHandler.getContext()?.selectedMode) || 'architect';
+    if (currentMode !== 'code') {
+      await this.setSelectedMode('code');
+    }
+
+    const activeMode = normalizeModeAlias(this.modeService.getCurrentMode()?.id || this.messageHandler.getContext()?.selectedMode) || 'architect';
+    if (activeMode !== 'code') {
+      intent.lastError = 'Mode transition to code failed during plan resume.';
+      this.emitExecutionStateUpdate('failed', {
+        reasonCode: 'MODE_SWITCH_FAILED',
+        detail: intent.lastError,
+        planId: intent.planId,
+        flowId: this.messageHandler.getContext()?.currentFlowId || null
+      });
+      return false;
+    }
+
+    const context = this.messageHandler.getContext();
+    const flowId = `flow-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const attempt = intent.attempts + 1;
+    context.currentFlowId = flowId;
+    this.activePlanResumeRunsByFlow.set(flowId, {
+      key: intent.key,
+      planId: intent.planId,
+      approvalRequestId: intent.approvalRequestId,
+      attempts: attempt,
+      startedAt: Date.now()
+    });
+
+    try {
+      await planningManager?.beginExecution?.(intent.planId);
+    } catch (error) {
+      console.warn('[ChatViewProvider] Failed to transition plan into execution state during resume:', error);
+    }
+
+    if (!context.selectedModel) {
+      intent.lastError = 'No model selected for auto-resume execution.';
+      this.emitExecutionStateUpdate('failed', {
+        reasonCode: 'MODEL_NOT_SELECTED',
+        detail: intent.lastError,
+        planId: intent.planId,
+        flowId: context.currentFlowId || null
+      });
+      this.activePlanResumeRunsByFlow.delete(flowId);
+      return false;
+    }
+
+    await this.messageHandler.sendMessage(
+      'Implement the approved plan step by step. Start with step 1 and keep the plan step statuses synchronized while you execute.',
+      true,
+      undefined,
+      0,
+      'resume'
+    );
+    return true;
+  }
+
+  private computePlanResumeRetryDelayMs(nextAttempt: number): number {
+    const boundedAttempt = Math.max(1, Math.min(nextAttempt, this.planResumeMaxAttempts));
+    return this.planResumeRetryDelayMs * Math.pow(2, boundedAttempt - 1);
+  }
+
+  private handlePlanResumeRuntimeSuccess(flowId: string): void {
+    const active = this.activePlanResumeRunsByFlow.get(flowId);
+    if (!active) return;
+    this.activePlanResumeRunsByFlow.delete(flowId);
+    this.processedPlanResumeKeys.add(active.key);
+  }
+
+  private handlePlanResumeRuntimeError(flowId: string, runtimeEvent: any): void {
+    const active = this.activePlanResumeRunsByFlow.get(flowId);
+    if (!active) return;
+    this.activePlanResumeRunsByFlow.delete(flowId);
+    const resultCode = String(runtimeEvent?.result?.code || '');
+    const resultMessage = String(runtimeEvent?.result?.message || '');
+    const rateLimited =
+      resultCode === 'RATE_LIMIT_RETRY_EXHAUSTED' ||
+      resultMessage.toLowerCase().includes('rate-limit') ||
+      resultMessage.toLowerCase().includes('rate limit') ||
+      resultMessage.toLowerCase().includes('provider is currently rate-limited');
+    if (!rateLimited) {
+      this.processedPlanResumeKeys.add(active.key);
+      return;
+    }
+
+    if (active.attempts >= this.planResumeMaxAttempts) {
+      this.processedPlanResumeKeys.add(active.key);
+      this.emitExecutionStateUpdate('failed', {
+        reasonCode: 'PLAN_RESUME_RETRY_EXHAUSTED',
+        detail: resultMessage || 'Plan resume failed after maximum retries.',
+        planId: active.planId,
+        flowId
+      });
+      log.event('ERROR', 'PLAN_RESUME_RETRY_EXHAUSTED', 'PLAN_RESUME_RETRY_EXHAUSTED', {
+        flowId,
+        planId: active.planId,
+        attempts: active.attempts,
+        maxAttempts: this.planResumeMaxAttempts,
+        reason: resultCode || resultMessage || 'rate_limit'
+      });
+      return;
+    }
+
+    const retryIntent: PendingPlanResumeIntent = {
+      key: active.key,
+      planId: active.planId,
+      approvalRequestId: active.approvalRequestId,
+      enqueuedAt: Date.now(),
+      attempts: active.attempts,
+      nextRetryAt: Date.now() + this.computePlanResumeRetryDelayMs(active.attempts),
+      lastError: resultMessage || resultCode || 'rate_limit'
+    };
+    if (!this.planResumeQueue.some((entry) => entry.key === retryIntent.key)) {
+      this.planResumeQueue.push(retryIntent);
+    }
+
+    this.emitExecutionStateUpdate('resuming_after_approval', {
+      reasonCode: 'PLAN_RESUME_RETRY_SCHEDULED',
+      planId: active.planId,
+      flowId
+    });
+    log.event('WARN', 'PLAN_RESUME_RETRY_SCHEDULED', 'PLAN_RESUME_RETRY_SCHEDULED', {
+      flowId,
+      planId: active.planId,
+      attempts: active.attempts,
+      nextAttempt: active.attempts + 1,
+      nextRetryAt: retryIntent.nextRetryAt,
+      reason: resultCode || resultMessage || 'rate_limit'
+    });
+    void this.drainPlanResumeQueue();
   }
 
   private enrichOutboundMessage(message: any): any {
@@ -449,6 +1005,74 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     } catch (error) {
       console.warn('[ChatViewProvider] Failed to persist plan metadata:', error);
     }
+  }
+
+  private isInboundMessage(value: unknown): value is WebviewMessage {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const maybeMessage = value as { type?: unknown };
+    return typeof maybeMessage.type === 'string' && maybeMessage.type.trim().length > 0;
+  }
+
+  private parseCommandApprovalResponse(
+    data: { commandId?: unknown; response?: unknown }
+  ): { commandId: string; response: 'accept' | 'accept_always' | 'deny' } | null {
+    const commandId = typeof data.commandId === 'string' ? data.commandId.trim() : '';
+    if (!commandId) return null;
+    const response = typeof data.response === 'string' ? data.response.trim().toLowerCase() : '';
+    if (response === 'accept' || response === 'accept_always' || response === 'deny') {
+      return { commandId, response };
+    }
+    return null;
+  }
+
+  private parseToolApprovalResponse(
+    data: { approvalId?: unknown; approved?: unknown; alwaysApprove?: unknown }
+  ): { approvalId: string; approved: boolean; alwaysApprove: boolean } | null {
+    const approvalId = typeof data.approvalId === 'string' ? data.approvalId.trim() : '';
+    if (!approvalId) return null;
+    if (typeof data.approved !== 'boolean') return null;
+    return {
+      approvalId,
+      approved: data.approved,
+      alwaysApprove: data.alwaysApprove === true
+    };
+  }
+
+  private parseQuestionResponse(
+    data: { questionId?: unknown; selectedOptionIndexes?: unknown; source?: unknown }
+  ): { questionId: string; selectedOptionIndexes: number[]; source: 'user' | 'stopped' } | null {
+    const questionId = typeof data.questionId === 'string' ? data.questionId.trim() : '';
+    if (!questionId) return null;
+    if (!Array.isArray(data.selectedOptionIndexes)) return null;
+    const selectedOptionIndexes = data.selectedOptionIndexes
+      .map((value: unknown) => Number(value))
+      .filter((value: number) => Number.isInteger(value) && value >= 0);
+    return {
+      questionId,
+      selectedOptionIndexes,
+      source: data.source === 'stopped' ? 'stopped' : 'user'
+    };
+  }
+
+  private reportMalformedInboundMessage(type: string, reason: string, payload: unknown): void {
+    const context = this.messageHandler?.getContext?.();
+    const flowId = context?.currentFlowId || null;
+    const mode = context?.selectedMode || 'unknown';
+    const model = context?.selectedModel || 'unknown';
+    const correlationId = `malformed:webview:${type || 'unknown'}:${Date.now()}`;
+    this.diagnosticService?.recordUnknownEvent({
+      kind: 'webview_message',
+      origin: 'chat_view_provider',
+      rawType: type || 'unknown',
+      correlationId,
+      flowId,
+      mode,
+      model,
+      payload: {
+        reason,
+        payloadType: payload === null ? 'null' : typeof payload
+      }
+    });
   }
 
   // ── Public API ──────────────────────────────────────────────────────────────
@@ -493,52 +1117,101 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const modeStateMachineV2Enabled =
       config.get<boolean>('modeStateMachineV2', true);
     const previousMode = normalizeModeAlias(this.modeService.getCurrentMode()?.id || this.messageHandler.getContext()?.selectedMode) || 'architect';
-    if (modeStateMachineV2Enabled && previousMode === 'architect' && requestedMode === 'code' && !this.hasPersistedPlanForCodeTransition()) {
-      const message = 'MODE_TRANSITION_BLOCKED: PLAN -> ACT requires an existing persisted plan (create_plan).';
-      const correlationId = `mode_transition_blocked:${Date.now()}`;
-      console.warn(`[ChatViewProvider] MODE_TRANSITION_BLOCKED previous=${previousMode} requested=${requestedMode} correlationId=${correlationId}`);
-      this.messageHandler.setSelectedMode('architect');
-      this.context?.globalState.update('gently.selectedMode', 'architect');
-      this.context?.globalState.update('gently.agentMode', false);
-      if (config.get<boolean>('agentMode', false) !== false) {
-        await config.update('agentMode', false, vscode.ConfigurationTarget.Global);
-      }
+    if (modeStateMachineV2Enabled && requestedMode === 'code') {
+      const preparation = await this.agentManager.getPlanningManager()?.prepareCodeEntry?.();
+      if (!preparation?.ok) {
+        const correlationId = `mode_transition_blocked:${Date.now()}`;
+        const action = preparation?.code === 'PLAN_APPROVAL_PENDING_EXPLICIT' ? 'none' : 'create_plan_now';
+        const reason = preparation?.code || 'plan_required_for_plan_to_act_transition';
+        const message =
+          `MODE_TRANSITION_BLOCKED: PLAN -> ACT blocked (${reason}). ` +
+          `${preparation?.reason || 'Create and approve a plan first.'}`;
+        console.warn(`[ChatViewProvider] MODE_TRANSITION_BLOCKED previous=${previousMode} requested=${requestedMode} reason=${reason} correlationId=${correlationId}`);
 
-      if (this.modeService.getCurrentMode()?.id !== 'architect') {
-        try {
-          await this.modeService.setMode('architect');
-        } catch (error) {
-          console.warn('[ChatViewProvider] Failed to restore architect mode after transition block:', error);
+        if (previousMode === 'architect') {
+          this.messageHandler.setSelectedMode('architect');
+          this.context?.globalState.update('gently.selectedMode', 'architect');
+          this.context?.globalState.update('gently.agentMode', false);
+          if (config.get<boolean>('agentMode', false) !== false) {
+            await config.update('agentMode', false, vscode.ConfigurationTarget.Global);
+          }
+
+          if (this.modeService.getCurrentMode()?.id !== 'architect') {
+            try {
+              await this.modeService.setMode('architect');
+            } catch (error) {
+              console.warn('[ChatViewProvider] Failed to restore architect mode after transition block:', error);
+            }
+          }
+
+          const mode = this.modeService.getCurrentMode();
+          this._view?.webview.postMessage({
+            type: 'modeChanged',
+            modeId: mode?.id || 'architect',
+            modeName: mode?.displayName || 'Architect',
+            modeDescription: mode?.description || 'Planning mode',
+            agentMode: false
+          });
         }
+
+        this._view?.webview.postMessage({
+          type: 'resilienceStatus',
+          code: 'CODE_ENTRY_BLOCKED',
+          category: 'mode',
+          severity: 'warning',
+          retryable: false,
+          attempt: 1,
+          maxAttempts: 1,
+          model: this.messageHandler.getContext()?.selectedModel || 'unknown',
+          flowId: this.messageHandler.getContext()?.currentFlowId || null,
+          userMessage: preparation?.reason || 'Code mode is blocked by the current plan state.',
+          action,
+          phase: 'preflight',
+          decision: 'abort',
+          reason,
+          correlationId
+        });
+        this._view?.webview.postMessage({
+          type: 'resilienceStatus',
+          code: 'MODE_TRANSITION_BLOCKED',
+          category: 'mode',
+          severity: 'warning',
+          retryable: false,
+          attempt: 1,
+          maxAttempts: 1,
+          model: this.messageHandler.getContext()?.selectedModel || 'unknown',
+          flowId: this.messageHandler.getContext()?.currentFlowId || null,
+          userMessage: preparation?.reason || 'Code mode transition is blocked.',
+          action,
+          phase: 'preflight',
+          decision: 'abort',
+          reason,
+          correlationId
+        });
+        this._view?.webview.postMessage({ type: 'error', message, code: 'MODE_TRANSITION_BLOCKED', action });
+        return;
       }
 
-      const mode = this.modeService.getCurrentMode();
-      this._view?.webview.postMessage({
-        type: 'modeChanged',
-        modeId: mode?.id || 'architect',
-        modeName: mode?.displayName || 'Architect',
-        modeDescription: mode?.description || 'Planning mode',
-        agentMode: false
-      });
-      this._view?.webview.postMessage({
-        type: 'resilienceStatus',
-        code: 'MODE_TRANSITION_BLOCKED',
-        category: 'mode',
-        severity: 'warning',
-        retryable: false,
-        attempt: 1,
-        maxAttempts: 1,
-        model: this.messageHandler.getContext()?.selectedModel || 'unknown',
-        flowId: this.messageHandler.getContext()?.currentFlowId || null,
-        userMessage: 'Code mode was blocked because no persisted plan exists. Create a plan first.',
-        action: 'create_plan_now',
-        phase: 'preflight',
-        decision: 'abort',
-        reason: 'plan_required_for_plan_to_act_transition',
-        correlationId
-      });
-      this._view?.webview.postMessage({ type: 'error', message, code: 'MODE_TRANSITION_BLOCKED', action: 'create_plan_now' });
-      return;
+      if (preparation.autoHandedOver) {
+        const correlationId = `code_entry_auto_handover:${Date.now()}`;
+        this._view?.webview.postMessage({
+          type: 'resilienceStatus',
+          code: 'CODE_ENTRY_AUTO_HANDOVER_APPLIED',
+          category: 'mode',
+          severity: 'info',
+          retryable: false,
+          attempt: 1,
+          maxAttempts: 1,
+          model: this.messageHandler.getContext()?.selectedModel || 'unknown',
+          flowId: this.messageHandler.getContext()?.currentFlowId || null,
+          userMessage: preparation.reason,
+          action: 'none',
+          phase: 'preflight',
+          decision: 'recover',
+          reason: preparation.code,
+          correlationId
+        });
+      }
     }
 
     this.messageHandler.setSelectedMode(requestedMode);
@@ -566,15 +1239,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private hasPersistedPlanForCodeTransition(): boolean {
-    try {
-      const plan = this.agentManager.getPlanningManager()?.getCurrentPlan();
-      return Boolean(plan && Array.isArray(plan.steps) && plan.steps.length > 0);
-    } catch {
-      return false;
-    }
-  }
-
   private async applyModeDefaultModel(modeId: string): Promise<void> {
     const config = vscode.workspace.getConfiguration('gently');
     const planDefault = String(config.get<string>('modeRouting.planModelDefault', '') || '').trim();
@@ -590,10 +1254,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   private isStructurallyValidModelId(modelId: string): boolean {
-    return /^[a-z0-9._-]+\/[a-z0-9._:@+-]+$/i.test(modelId);
+    return /^[^/\s]+\/[^\s]+$/.test(modelId);
   }
 
-  public stopMessage(): void { this.messageHandler.stopMessage(); }
+  private async stopActiveExecution(reasonCode: string): Promise<void> {
+    await this.messageHandler.stopMessage(reasonCode);
+    this.processingActive = false;
+    this.generatingActive = false;
+    this.resetPlanResumeState();
+    this.emitExecutionStateUpdate('stopped', {
+      reasonCode,
+      flowId: this.messageHandler.getContext()?.currentFlowId || null
+    });
+  }
+
+  public stopMessage(): void {
+    void this.stopActiveExecution('REQUEST_STOPPED');
+  }
 
   public async addFileReference(fileRef: FileReference): Promise<void> {
     await this.fileHandler.addFileReference(fileRef);
@@ -606,8 +1283,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   public async handleGetValidationMetrics(): Promise<void> { await this.systemHandler.handleGetValidationMetrics(); }
   public async handleEnhancePrompt(prompt: string): Promise<void> { await this.systemHandler.handleEnhancePrompt(prompt); }
   public async handleGetSessions(): Promise<void> { await this.sessionHandler.handleGetSessions(); }
-  public async handleNewSession(): Promise<void> { await this.sessionHandler.handleNewSession(); }
-  public async handleSwitchSession(sessionId: string): Promise<void> { await this.sessionHandler.handleSwitchSession(sessionId); }
+  public async handleNewSession(): Promise<void> {
+    await this.stopActiveExecution('SESSION_SWAP_STOP');
+    await this.sessionHandler.handleNewSession();
+  }
+  public async handleSwitchSession(sessionId: string): Promise<void> {
+    await this.stopActiveExecution('SESSION_SWAP_STOP');
+    await this.sessionHandler.handleSwitchSession(sessionId);
+  }
   public async handleSessionAction(action: string, sessionId: string, payload?: any): Promise<void> { await this.sessionHandler.handleSessionAction(action, sessionId, payload); }
   public async handleSearchSessions(query: string): Promise<void> { await this.sessionHandler.handleSearchSessions(query); }
 
@@ -679,6 +1362,49 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   public dispose(): void {
-    this.terminalManager?.dispose();
+    if (this.isDisposed) return;
+    this.isDisposed = true;
+
+    if (this.readyFallbackTimeout) {
+      clearTimeout(this.readyFallbackTimeout);
+      this.readyFallbackTimeout = undefined;
+    }
+
+    for (const disposable of this.localDisposables.splice(0)) {
+      try {
+        disposable.dispose();
+      } catch (error) {
+        console.warn('[ChatViewProvider] Failed to dispose local disposable', error);
+      }
+    }
+
+    this.pendingMessages = [];
+    this.resetPlanResumeState();
+    this.processingActive = false;
+    this.generatingActive = false;
+    this.lastExecutionState = 'idle';
+    this._view = undefined;
+    this.isWebviewReady = false;
+
+    try {
+      this.diagnosticService?.setSystemWarningEmitter(() => {});
+    } catch (error) {
+      console.warn('[ChatViewProvider] Failed to detach diagnostic warning emitter', error);
+    }
+
+    try {
+      this.agentManager.setEventCallback(() => {});
+      this.agentManager.setValidationMessageCallback(() => {});
+    } catch (error) {
+      console.warn('[ChatViewProvider] Failed to detach agent callbacks', error);
+    }
+
+    try {
+      this.terminalManager?.dispose();
+    } catch (error) {
+      console.warn('[ChatViewProvider] Failed to dispose terminal manager', error);
+    } finally {
+      this.terminalManager = undefined;
+    }
   }
 }

@@ -158,6 +158,19 @@ export async function activate(context: vscode.ExtensionContext) {
 
 export async function deactivate() {
   console.log('Gently AI Coding Agent is now deactivated');
+  const diagnosticService = DiagnosticService.getInstance();
+  const correlationId = `shutdown:${Date.now()}`;
+  diagnosticService?.record({
+    severity: 'info',
+    code: 'EXTENSION_DEACTIVATE_START',
+    category: 'system',
+    flowId: null,
+    correlationId,
+    mode: 'system',
+    model: 'system',
+    source: 'extension:deactivate',
+    payload: {}
+  });
 
   // Flush pending disk writes
   if (historyManager) {
@@ -168,5 +181,47 @@ export async function deactivate() {
     }
   }
 
-  if (agentManager) agentManager.dispose();
+  if (chatViewProvider) {
+    try {
+      chatViewProvider.dispose();
+    } catch (err) {
+      console.error('Failed to dispose chat view provider during deactivation:', err);
+    }
+  }
+
+  if (agentManager) {
+    try {
+      agentManager.dispose();
+    } catch (err) {
+      console.error('Failed to dispose agent manager during deactivation:', err);
+    }
+  }
+
+  if (modeService) {
+    try {
+      await modeService.deactivate();
+    } catch (err) {
+      console.error('Failed to deactivate mode service during deactivation:', err);
+    }
+  }
+
+  if (openRouterService) {
+    try {
+      openRouterService.dispose();
+    } catch (err) {
+      console.error('Failed to dispose OpenRouter service during deactivation:', err);
+    }
+  }
+
+  diagnosticService?.record({
+    severity: 'info',
+    code: 'EXTENSION_DEACTIVATE_DONE',
+    category: 'system',
+    flowId: null,
+    correlationId,
+    mode: 'system',
+    model: 'system',
+    source: 'extension:deactivate',
+    payload: {}
+  });
 }

@@ -8,6 +8,7 @@ export type QueryResultCode =
   | 'SEQUENCE_REPAIR_EXHAUSTED'
   | 'EMPTY_RESPONSE_RETRY_EXHAUSTED'
   | 'RATE_LIMIT_RETRY_EXHAUSTED'
+  | 'PLAN_RESUME_NO_PROGRESS'
   | 'MAX_TURNS_EXCEEDED'
   | 'MAX_BUDGET_EXCEEDED'
   | 'MAX_STRUCTURED_OUTPUT_RETRIES_EXCEEDED'
@@ -43,28 +44,28 @@ export interface QueryRuntimeResult {
 }
 
 export type QueryRuntimeEvent =
-  | {
+  | ({ runId?: string } & {
       type: 'system_init';
       model: string;
       flowId: string;
       maxTurns: number;
       maxBudgetUsd: number | null;
       maxStructuredOutputRetries: number;
-    }
-  | {
+    })
+  | ({ runId?: string } & {
       type: 'turn_transition';
       flowId: string;
       from: string;
       to: string;
       reason: string;
-    }
-  | {
+    })
+  | ({ runId?: string } & {
       type: 'query_attempt';
       flowId: string;
       attempt: number;
       maxAttempts: number;
-    }
-  | {
+    })
+  | ({ runId?: string } & {
       type: 'status';
       flowId: string;
       model: string;
@@ -81,26 +82,26 @@ export type QueryRuntimeEvent =
       decision: 'retry' | 'recover' | 'abort' | 'ignore' | 'report';
       reason: string;
       correlationId: string;
-    }
-  | {
+    })
+  | ({ runId?: string } & {
       type: 'tool_summary';
       flowId: string;
       toolCalls: number;
       incompleteToolCalls: number;
-    }
-  | {
+    })
+  | ({ runId?: string } & {
       type: 'compaction_boundary';
       flowId: string;
       reason: 'budget' | 'overflow_rescue';
       droppedCount: number;
-    }
-  | {
+    })
+  | ({ runId?: string } & {
       type: 'result_success';
       flowId: string;
       result: QueryRuntimeResult;
-    }
-  | {
+    })
+  | ({ runId?: string } & {
       type: 'result_error';
       flowId: string;
       result: QueryRuntimeResult;
-    };
+    });

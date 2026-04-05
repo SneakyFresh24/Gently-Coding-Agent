@@ -37,6 +37,13 @@ interface GuardrailConfig {
     growthLineThreshold: number;
 }
 
+export interface ToolDispatchOutcome {
+    ok: boolean;
+    terminalCode?: string;
+    reason?: string;
+    retryable?: boolean;
+}
+
 /**
  * Handles traditional, parallel tool execution logic.
  */
@@ -70,7 +77,7 @@ export class TraditionalToolExecutor {
         });
     }
 
-    public async execute(toolCalls: ToolCall[], messageId: string, context: ChatViewContext): Promise<void> {
+    public async execute(toolCalls: ToolCall[], messageId: string, context: ChatViewContext): Promise<ToolDispatchOutcome> {
         try {
             log.info(`[PARALLEL] Handling ${toolCalls.length} tool calls in parallel`);
             const startTime = Date.now();
@@ -91,7 +98,11 @@ export class TraditionalToolExecutor {
 
             if (invalidToolCalls.length > 0) {
                 await this.handleInvalidToolCalls(invalidToolCalls, toolCalls, context);
-                if (validToolCalls.length === 0) return;
+                if (validToolCalls.length === 0) {
+                    return {
+                        ok: true
+                    };
+                }
             }
 
             const results = await this.executeToolCallsParallel(validToolCalls, context);
@@ -102,7 +113,12 @@ export class TraditionalToolExecutor {
             for (const toolCall of validToolCalls) {
                 const match = resultById.get(toolCall.id);
                 if (!match) continue;
-                const serializedResult = this.serializeAndTruncateToolResult(match.result);
+                const normalizedResult = this.normalizeToolResultContract(
+                    toolCall.function?.name || 'unknown',
+                    match.result,
+                    context
+                );
+                const serializedResult = this.serializeAndTruncateToolResult(normalizedResult);
                 this.updateConversationHistory({
                     id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                     timestamp: Date.now(),
@@ -112,13 +128,13 @@ export class TraditionalToolExecutor {
                     tool_call_id: toolCall.id,
                 });
 
-                if (match.success) {
+                if (this.isToolResultSuccessful(normalizedResult)) {
                     context.consecutiveMistakeCount = 0;
                 } else {
                     context.consecutiveMistakeCount = (context.consecutiveMistakeCount || 0) + 1;
                 }
 
-                const candidatePostAction = this.extractPostToolAction(match.result);
+                const candidatePostAction = this.extractPostToolAction(normalizedResult);
                 if (candidatePostAction) {
                     candidatePostAction.sourceToolName = toolCall.function?.name;
                 }
@@ -129,27 +145,61 @@ export class TraditionalToolExecutor {
 
             if (postAction && (postAction.shouldAutoContinue || postAction.requestedMode)) {
                 await this.handlePostToolAction(context, postAction);
-                return;
+                return {
+                    ok: true
+                };
             }
 
             await this.triggerFollowUpMessage("\n[SYSTEM NOTE: The tools have finished executing. Review the results. If you made ANY architectural decisions, established new project rules, or learned important workflow facts that should persist across sessions, IMMEDIATELY call the `update_memory_bank` tool to document them. If not, simply summarize the results and continue.]");
+            return {
+                ok: true
+            };
 
         } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
             log.error('Error in traditional tool execution:', error);
             this.sendMessageToWebview({
                 type: 'error',
-                message: `Tool execution error: ${error instanceof Error ? error.message : String(error)}`,
+                message: `Tool execution error: ${reason}`,
             });
+            this.sendMessageToWebview({
+                type: 'resilienceStatus',
+                code: 'TOOL_DISPATCH_TERMINAL_ERROR',
+                category: 'tool',
+                severity: 'error',
+                retryable: false,
+                attempt: 1,
+                maxAttempts: 1,
+                model: context.selectedModel || 'unknown',
+                flowId: context.currentFlowId || null,
+                userMessage: 'Tool dispatch failed and execution was aborted.',
+                action: 'none',
+                phase: 'terminal',
+                decision: 'abort',
+                reason,
+                correlationId: `${context.currentFlowId || 'flow-unknown'}:TOOL_DISPATCH_TERMINAL_ERROR:${Date.now()}`
+            });
+            return {
+                ok: false,
+                terminalCode: 'TOOL_DISPATCH_TERMINAL_ERROR',
+                reason,
+                retryable: false
+            };
         }
     }
 
-    private async createCheckpointIfNeeded(toolCalls: ToolCall[], messageId: string, context: ChatViewContext): Promise<void> {
+  private async createCheckpointIfNeeded(toolCalls: ToolCall[], messageId: string, context: ChatViewContext): Promise<void> {
         const flowId = context.currentFlowId;
-        if (flowId && context.agentMode && !context.messageCheckpoints.has(flowId)) {
+        if (flowId && !context.messageCheckpoints.has(flowId)) {
             try {
                 const filePaths = ToolCallUtils.extractFilePathsFromToolCalls(toolCalls);
                 if (filePaths.size > 0) {
-                    const checkpoint = await this.agentManager.createCheckpoint(flowId, `Before implementing changes`, Array.from(filePaths));
+                    const checkpoint = await this.agentManager.createCheckpoint(
+                        flowId,
+                        `Before implementing changes`,
+                        Array.from(filePaths),
+                        context.activeSessionId || undefined
+                    );
                     context.messageCheckpoints.set(flowId, checkpoint.id);
                     this.sendMessageToWebview({ type: 'checkpointCreated', messageId, checkpointId: checkpoint.id, checkpointNumber: checkpoint.checkpointNumber, filesTracked: filePaths.size });
                 }
@@ -451,6 +501,10 @@ export class TraditionalToolExecutor {
     }
 
     private async handlePostToolAction(context: ChatViewContext, result: PostToolActionResult): Promise<void> {
+        if (context.shouldStopStream || context.shouldAbortTools) {
+            log.info('Post-tool continuation skipped because stop was requested.');
+            return;
+        }
         if (result.sourceToolName === 'handover_to_coder') {
             const consumed = await this.subagentOrchestrator.runArchitectToCoder(context, result);
             if (consumed) {
@@ -460,6 +514,58 @@ export class TraditionalToolExecutor {
 
         let continuationPrompt = result.continuationPrompt || 'Continue with the next step now.';
         if (result.requestedMode) {
+            const normalizedRequestedMode = normalizeModeAlias(result.requestedMode) || result.requestedMode;
+            if (normalizedRequestedMode === 'code') {
+                const codeEntry = await this.agentManager.getPlanningManager().prepareCodeEntry();
+                if (!codeEntry.ok) {
+                    const correlationId = `${context.currentFlowId || 'flow-unknown'}:CODE_ENTRY_BLOCKED:${Date.now()}`;
+                    this.sendMessageToWebview({
+                        type: 'resilienceStatus',
+                        code: 'CODE_ENTRY_BLOCKED',
+                        category: 'mode',
+                        severity: 'warning',
+                        retryable: false,
+                        attempt: 1,
+                        maxAttempts: 1,
+                        model: context.selectedModel || 'unknown',
+                        flowId: context.currentFlowId || null,
+                        userMessage: codeEntry.reason,
+                        action: codeEntry.code === 'PLAN_APPROVAL_PENDING_EXPLICIT' ? 'none' : 'create_plan_now',
+                        phase: 'preflight',
+                        decision: 'abort',
+                        reason: codeEntry.code,
+                        correlationId
+                    });
+                    this.sendMessageToWebview({
+                        type: 'error',
+                        message: `Code mode blocked: ${codeEntry.reason}`,
+                        code: 'CODE_ENTRY_BLOCKED'
+                    });
+                    return;
+                }
+
+                if (codeEntry.autoHandedOver) {
+                    const correlationId = `${context.currentFlowId || 'flow-unknown'}:CODE_ENTRY_AUTO_HANDOVER_APPLIED:${Date.now()}`;
+                    this.sendMessageToWebview({
+                        type: 'resilienceStatus',
+                        code: 'CODE_ENTRY_AUTO_HANDOVER_APPLIED',
+                        category: 'mode',
+                        severity: 'info',
+                        retryable: false,
+                        attempt: 1,
+                        maxAttempts: 1,
+                        model: context.selectedModel || 'unknown',
+                        flowId: context.currentFlowId || null,
+                        userMessage: codeEntry.reason,
+                        action: 'none',
+                        phase: 'preflight',
+                        decision: 'recover',
+                        reason: codeEntry.code,
+                        correlationId
+                    });
+                }
+            }
+
             if (this.shouldSkipModeSwitch(context, result.requestedMode)) {
                 log.warn(`Duplicate mode switch detected, skipping mode="${result.requestedMode}"`);
             } else {
@@ -478,7 +584,53 @@ export class TraditionalToolExecutor {
             }
         }
 
+        if (context.shouldStopStream || context.shouldAbortTools) {
+            log.info('Continuation prompt skipped because stop was requested.');
+            return;
+        }
         await this.sendContinuationMessage(continuationPrompt);
+    }
+
+    private normalizeToolResultContract(toolName: string, rawResult: any, context: ChatViewContext): any {
+        const result = rawResult && typeof rawResult === 'object' ? { ...rawResult } : rawResult;
+        if (!result || typeof result !== 'object') return result;
+
+        if (Object.prototype.hasOwnProperty.call(result, 'error') && result.success !== false) {
+            return {
+                success: false,
+                error: String(result.error || 'Tool execution failed.'),
+                code: typeof result.code === 'string' ? result.code : 'TOOL_EXECUTION_FAILED',
+                retryable: result.retryable === true
+            };
+        }
+
+        if (String(toolName || '').toLowerCase() === 'create_plan' && result.success === true) {
+            const steps = Array.isArray(result?.plan?.steps)
+                ? result.plan.steps
+                : (Array.isArray(result?.steps) ? result.steps : []);
+            if (steps.length === 0) {
+                const flowId = context.currentFlowId || null;
+                log.event('WARN', 'CREATE_PLAN_RENDER_GUARD_TRIGGERED', 'CREATE_PLAN_RENDER_GUARD_TRIGGERED', {
+                    flowId,
+                    reason: 'create_plan_success_without_steps'
+                });
+                return {
+                    success: false,
+                    error: 'create_plan returned success without any plan steps.',
+                    code: 'CREATE_PLAN_RENDER_GUARD_TRIGGERED',
+                    retryable: false
+                };
+            }
+        }
+
+        return result;
+    }
+
+    private isToolResultSuccessful(result: any): boolean {
+        if (!result || typeof result !== 'object') return true;
+        if (result.success === false) return false;
+        if (Object.prototype.hasOwnProperty.call(result, 'error')) return false;
+        return true;
     }
 
     private shouldSkipModeSwitch(context: ChatViewContext, modeId: string): boolean {
@@ -523,10 +675,10 @@ export class IterativePlanExecutor {
     constructor(
         private readonly agentManager: AgentManager,
         private readonly sendMessageToWebview: (message: OutboundWebviewMessage) => void,
-        private readonly fallback: (toolCalls: ToolCall[], messageId: string, context: ChatViewContext) => Promise<void>
+        private readonly fallback: (toolCalls: ToolCall[], messageId: string, context: ChatViewContext) => Promise<ToolDispatchOutcome>
     ) { }
 
-    async handleIterativePlanning(createPlanCall: ToolCall, context: ChatViewContext): Promise<void> {
+    async handleIterativePlanning(createPlanCall: ToolCall, context: ChatViewContext): Promise<ToolDispatchOutcome> {
         try {
             const repairResult = ToolCallUtils.repairAndParseJSON(createPlanCall.function.arguments);
             if (repairResult.success && repairResult.repaired?.goal) {
@@ -535,22 +687,23 @@ export class IterativePlanExecutor {
                 // If the LLM provided explicit steps, we use them instead of just the goal
                 if (steps && Array.isArray(steps) && steps.length > 0) {
                     log.info(`[ITERATIVE] Creating plan with ${steps.length} provided steps`);
-                    const plan = this.agentManager.getPlanningManager().createPlan({ goal, steps });
+                    this.agentManager.getPlanningManager().createPlan({ goal, steps });
                     const executionContext = await (this.agentManager as any).executeGoalIteratively(goal, new Map(), {});
                     this.sendMessageToWebview({ type: 'iterativePlanCompleted', goal, totalSteps: executionContext.completed_steps?.length || 0, totalTime: executionContext.total_execution_time });
+                    if (context.currentFlowId) context.currentFlowId = undefined;
+                    return { ok: true };
                 } else {
                     // Fallback to traditional if no steps provided
-                    await this.fallback([createPlanCall], '', context);
+                    return await this.fallback([createPlanCall], '', context);
                 }
-
-                if (context.currentFlowId) context.currentFlowId = undefined;
             } else {
-                await this.fallback([createPlanCall], '', context);
+                return await this.fallback([createPlanCall], '', context);
             }
         } catch (error) {
             log.error('Iterative planning failed, falling back:', error);
-            await this.fallback([createPlanCall], '', context);
+            return await this.fallback([createPlanCall], '', context);
         }
+        return { ok: true };
     }
 }
 
@@ -580,19 +733,25 @@ export class ToolExecutionHandler {
         this.iterative = new IterativePlanExecutor(agentManager, sendMessageToWebview, (tc, mid, ctx) => this.traditional.execute(tc, mid, ctx));
     }
 
-    async handleToolCalls(toolCalls: any[], messageId: string, context: ChatViewContext): Promise<void> {
+    async handleToolCalls(toolCalls: any[], messageId: string, context: ChatViewContext): Promise<ToolDispatchOutcome> {
         try {
             await new Promise(resolve => setTimeout(resolve, 100));
             const userMsg = context.conversationHistory[context.conversationHistory.length - 2]?.content || '';
             const createPlanCall = toolCalls.find(tc => tc.function?.name === 'create_plan');
 
             if (createPlanCall && this.agentManager.shouldUseIterativePlanning(userMsg)) {
-                await this.iterative.handleIterativePlanning(createPlanCall, context);
+                return await this.iterative.handleIterativePlanning(createPlanCall, context);
             } else {
-                await this.traditional.execute(toolCalls, messageId, context);
+                return await this.traditional.execute(toolCalls, messageId, context);
             }
         } catch (error) {
             log.error('Tool execution failed:', error);
+            return {
+                ok: false,
+                terminalCode: 'TOOL_DISPATCH_TERMINAL_ERROR',
+                reason: error instanceof Error ? error.message : String(error),
+                retryable: false
+            };
         }
     }
 }
@@ -624,11 +783,11 @@ export class ToolCallDispatcher {
         );
     }
 
-    async handleToolCalls(toolCalls: ToolCall[], messageId: string, context: ChatViewContext): Promise<void> {
+    async handleToolCalls(toolCalls: ToolCall[], messageId: string, context: ChatViewContext): Promise<ToolDispatchOutcome> {
         try {
             if (!toolCalls || toolCalls.length === 0) {
                 await this.followUp.sendFollowUpMessage(context, '');
-                return;
+                return { ok: true };
             }
 
             // 1. Validate via ToolCallManager
@@ -648,21 +807,48 @@ export class ToolCallDispatcher {
             if (validationResult.valid) {
                 // 2. Execute via ToolExecutionHandler
                 log.info(`Validation successful, executing ${toolCalls.length} tool calls`);
-                await this.executionHandler.handleToolCalls(toolCalls, messageId, context);
+                const outcome = await this.executionHandler.handleToolCalls(toolCalls, messageId, context);
+                if (!outcome.ok) {
+                    this.emitDispatchTerminalStatus(context, outcome.reason || 'Tool execution failed.');
+                }
+                return outcome;
             } else {
                 log.error(`Validation failed: ${validationResult.errors.join(', ')}`);
                 if (validationResult.errors.some((error) => error.includes('MODE_TOOL_BLOCKED'))) {
                     this.emitModeToolBlockedStatus(context, validationResult.errors);
+                    this.sendMessageToWebview({ type: 'error', message: `Validation failed: ${validationResult.errors.join(', ')}` });
+                    this.sendMessageToWebview({ type: 'generatingEnd' } as any);
+                    this.sendMessageToWebview({ type: 'processingEnd' } as any);
+                    return {
+                        ok: false,
+                        terminalCode: 'MODE_TOOL_BLOCKED',
+                        reason: validationResult.errors.join(' | '),
+                        retryable: false
+                    };
                 }
+                this.emitDispatchTerminalStatus(context, validationResult.errors.join(' | '));
                 this.sendMessageToWebview({ type: 'error', message: `Validation failed: ${validationResult.errors.join(', ')}` });
                 this.sendMessageToWebview({ type: 'generatingEnd' } as any);
                 this.sendMessageToWebview({ type: 'processingEnd' } as any);
+                return {
+                    ok: false,
+                    terminalCode: 'TOOL_DISPATCH_TERMINAL_ERROR',
+                    reason: validationResult.errors.join(' | '),
+                    retryable: false
+                };
             }
         } catch (error: any) {
             log.error('Dispatch failed:', error);
             this.sendMessageToWebview({ type: 'error', message: `Execution error: ${error.message}` });
             this.sendMessageToWebview({ type: 'generatingEnd' } as any);
             this.sendMessageToWebview({ type: 'processingEnd' } as any);
+            this.emitDispatchTerminalStatus(context, error.message || String(error));
+            return {
+                ok: false,
+                terminalCode: 'TOOL_DISPATCH_TERMINAL_ERROR',
+                reason: error.message || String(error),
+                retryable: false
+            };
         }
     }
 
@@ -733,6 +919,28 @@ export class ToolCallDispatcher {
             phase: 'runtime',
             decision: 'abort',
             reason: errors.join(' | '),
+            correlationId
+        });
+    }
+
+    private emitDispatchTerminalStatus(context: ChatViewContext, reason: string): void {
+        const flowId = context.currentFlowId || null;
+        const correlationId = `${flowId || 'dispatch'}:TOOL_DISPATCH_TERMINAL_ERROR:${Date.now()}`;
+        this.sendMessageToWebview({
+            type: 'resilienceStatus',
+            code: 'TOOL_DISPATCH_TERMINAL_ERROR',
+            category: 'tool',
+            severity: 'error',
+            retryable: false,
+            attempt: 1,
+            maxAttempts: 1,
+            model: context.selectedModel || 'unknown',
+            flowId,
+            userMessage: 'Tool dispatch failed and was terminated.',
+            action: 'none',
+            phase: 'terminal',
+            decision: 'abort',
+            reason,
             correlationId
         });
     }

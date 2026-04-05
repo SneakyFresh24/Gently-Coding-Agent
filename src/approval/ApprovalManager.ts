@@ -1,98 +1,196 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
 import { 
   TerminalMode, 
   ApprovalRequest, 
   QuickPattern, 
   CommandEvaluation,
-  AutoApprovalActions
+  AutoApprovalActions,
+  CommandApprovalResolveReason
 } from '../types/approval';
 import { DiagnosticService } from '../services/DiagnosticService';
+import { LogService } from '../services/LogService';
+import {
+  PermissionDecisionReason,
+  evaluateToolPermissionDecision,
+  resolveToolPolicyAction
+} from './PermissionPolicy';
 
-/**
- * Minimal stub for ApprovalManager to fix backend compilation errors.
- * This class provides safe defaults (manual mode, always requires approval).
- */
+const approvalLog = new LogService('ApprovalManager');
+
 export class ApprovalManager {
+  private static readonly APPROVAL_TIMEOUT_MS = 90_000;
+  private static readonly SAFE_PREFIXES = [
+    'pwd',
+    'ls',
+    'dir',
+    'echo',
+    'cat',
+    'type',
+    'git status',
+    'git diff',
+    'git log',
+    'npm test',
+    'npm run test'
+  ];
+  private static readonly RISKY_PATTERNS: RegExp[] = [
+    /\brm\s+-rf\b/i,
+    /\bdel\s+\/f\b/i,
+    /\bformat\s+\w+:?\s*\/fs/i,
+    /\bshutdown\b/i,
+    /\breboot\b/i,
+    /\bcurl\b.*\|\s*(sh|bash|pwsh|powershell)/i,
+    /\bInvoke-Expression\b/i,
+    /\bIEX\b/i
+  ];
+
   private mode: TerminalMode = 'manual';
-  private quickPatterns: QuickPattern[] = [];
+  private quickPatterns: QuickPattern[] = [
+    { name: 'git-status', pattern: '^git\\s+status(\\s|$)', enabled: true },
+    { name: 'git-diff', pattern: '^git\\s+diff(\\s|$)', enabled: true },
+    { name: 'npm-test', pattern: '^npm\\s+(run\\s+)?test(\\s|$)', enabled: true }
+  ];
+  private pendingApprovals = new Map<
+    string,
+    {
+      resolve: (approved: boolean) => void;
+      timeoutHandle: ReturnType<typeof setTimeout>;
+      settled: boolean;
+    }
+  >();
 
   constructor(
     private context: vscode.ExtensionContext,
-    private sendMessageToWebview: (message: any) => void
+    private sendMessageToWebview: (message: { type: string; [key: string]: unknown }) => void
   ) {
-    console.log('[ApprovalManager Stub] Initialized');
+    approvalLog.info('Initialized');
   }
 
-  /**
-   * Evaluate command safety (Stub: always returns 'unknown')
-   */
   public evaluateCommandSafety(command: string): CommandEvaluation {
+    const normalized = String(command || '').trim().toLowerCase();
+    if (!normalized) {
+      return {
+        safetyLevel: 'risky',
+        reason: 'Empty command'
+      };
+    }
+
+    for (const pattern of ApprovalManager.RISKY_PATTERNS) {
+      if (pattern.test(command)) {
+        return {
+          safetyLevel: 'risky',
+          reason: 'Matches risky command pattern'
+        };
+      }
+    }
+
+    const isSafePrefix = ApprovalManager.SAFE_PREFIXES.some((prefix) => normalized === prefix || normalized.startsWith(`${prefix} `));
+    if (isSafePrefix) {
+      return {
+        safetyLevel: 'safe',
+        reason: 'Matches approved safe command prefix'
+      };
+    }
+
+    const hasCommandSeparator = /[;&|]/.test(command);
+    if (hasCommandSeparator) {
+      return {
+        safetyLevel: 'risky',
+        reason: 'Contains shell command chaining'
+      };
+    }
+
+    const likelyMutating = /\b(git\s+(commit|push|reset|clean)|npm\s+install|pnpm\s+install|bun\s+install|mv|move|copy|cp|mkdir|touch)\b/i.test(command);
+    if (likelyMutating) {
+      return {
+        safetyLevel: 'moderate',
+        reason: 'Potentially mutating command'
+      };
+    }
+
     return {
-      safetyLevel: 'unknown',
-      reason: 'Stub implementation - safety evaluation not available'
+      safetyLevel: 'moderate',
+      reason: 'Unknown command profile'
     };
   }
 
-  /**
-   * Request approval for a command (Stub: always returns false unless handled via response)
-   */
   public async requestApproval(request: ApprovalRequest): Promise<boolean> {
-    console.log(`[ApprovalManager Stub] Requesting approval for: ${request.command}`);
-    
-    // In a real implementation, this would wait for a webview response.
-    // For the stub, we'll return false to be safe, or wait for handleApprovalResponse.
-    
-    // We send the request to the webview
-    this.sendMessageToWebview({
-      type: 'approvalRequest',
-      ...request
+    approvalLog.info('COMMAND_APPROVAL_REQUESTED', {
+      commandId: request.commandId,
+      command: request.command,
+      cwd: request.cwd
     });
+    const evaluation = this.evaluateCommandSafety(request.command);
+    const now = Date.now();
+    const timeoutMs = ApprovalManager.APPROVAL_TIMEOUT_MS;
+    const expiresAt = now + timeoutMs;
+    const normalizedRequest: ApprovalRequest = {
+      ...request,
+      safetyLevel: request.safetyLevel || evaluation.safetyLevel,
+      timeoutMs,
+      expiresAt
+    };
 
-    // We return a promise that will be resolved by handleApprovalResponse
-    return new Promise((resolve) => {
-      this.pendingApprovals.set(request.commandId, resolve);
-    });
-  }
-
-  private pendingApprovals = new Map<string, (approved: boolean) => void>();
-
-  /**
-   * Handle approval response from webview
-   */
-  public handleApprovalResponse(commandId: string, response: any): void {
-    const resolve = this.pendingApprovals.get(commandId);
-    if (resolve) {
-      const approved = response === 'accept' || response === 'accept_always';
-      resolve(approved);
-      this.pendingApprovals.delete(commandId);
+    if (this.mode === 'auto') {
+      return true;
     }
+    if (this.mode === 'smart' && normalizedRequest.safetyLevel === 'safe') {
+      return true;
+    }
+    if (this.matchesQuickPattern(normalizedRequest.command)) {
+      return true;
+    }
+
+    return new Promise((resolve) => {
+      const timeoutHandle = setTimeout(() => {
+        this.resolvePendingApproval(
+          normalizedRequest.commandId,
+          false,
+          'approval_timeout',
+          'system'
+        );
+      }, timeoutMs);
+
+      this.pendingApprovals.set(normalizedRequest.commandId, {
+        resolve,
+        timeoutHandle,
+        settled: false
+      });
+
+      this.sendMessageToWebview({
+        type: 'approvalRequest',
+        request: normalizedRequest,
+        timestamp: now
+      });
+    });
   }
 
-  /**
-   * Set terminal mode
-   */
+  public handleApprovalResponse(commandId: string, response: unknown): void {
+    const normalizedResponse = this.normalizeApprovalResponse(response);
+    if (!normalizedResponse) {
+      this.resolvePendingApproval(commandId, false, 'invalid_response', 'system');
+      return;
+    }
+    const approved = normalizedResponse === 'accept' || normalizedResponse === 'accept_always';
+    this.resolvePendingApproval(
+      commandId,
+      approved,
+      approved ? 'approved' : 'rejected_by_user',
+      'user'
+    );
+  }
+
   public setMode(mode: TerminalMode): void {
     this.mode = mode;
   }
 
-  /**
-   * Get current terminal mode
-   */
   public getMode(): TerminalMode {
     return this.mode;
   }
 
-  /**
-   * Get quick patterns
-   */
   public getQuickPatterns(): QuickPattern[] {
     return this.quickPatterns;
   }
 
-  /**
-   * Toggle quick pattern
-   */
   public toggleQuickPattern(name: string, enabled: boolean): void {
     const pattern = this.quickPatterns.find(p => p.name === name);
     if (pattern) {
@@ -100,11 +198,75 @@ export class ApprovalManager {
     }
   }
 
-  /**
-   * Dispose and cleanup
-   */
   public dispose(): void {
-    this.pendingApprovals.clear();
+    for (const [commandId, pending] of this.pendingApprovals.entries()) {
+      clearTimeout(pending.timeoutHandle);
+      if (!pending.settled) {
+        pending.settled = true;
+        pending.resolve(false);
+        this.emitCommandApprovalResolved(commandId, 'rejected', 'aborted_by_shutdown', 'system');
+      }
+      this.pendingApprovals.delete(commandId);
+    }
+  }
+
+  private normalizeApprovalResponse(response: unknown): 'accept' | 'accept_always' | 'deny' | null {
+    if (response === true) return 'accept';
+    if (typeof response !== 'string') return null;
+    const normalized = response.trim().toLowerCase();
+    if (normalized === 'accept' || normalized === 'accept_always' || normalized === 'deny') {
+      return normalized;
+    }
+    return null;
+  }
+
+  private resolvePendingApproval(
+    commandId: string,
+    approved: boolean,
+    reason: CommandApprovalResolveReason,
+    source: 'user' | 'system'
+  ): void {
+    const pending = this.pendingApprovals.get(commandId);
+    if (!pending || pending.settled) return;
+    pending.settled = true;
+    clearTimeout(pending.timeoutHandle);
+    this.pendingApprovals.delete(commandId);
+    pending.resolve(approved);
+
+    this.emitCommandApprovalResolved(commandId, approved ? 'approved' : 'rejected', reason, source);
+    approvalLog.info('COMMAND_APPROVAL_RESOLVED', {
+      commandId,
+      status: approved ? 'approved' : 'rejected',
+      reason,
+      source
+    });
+  }
+
+  private emitCommandApprovalResolved(
+    commandId: string,
+    status: 'approved' | 'rejected',
+    reason: CommandApprovalResolveReason,
+    source: 'user' | 'system'
+  ): void {
+    this.sendMessageToWebview({
+      type: 'commandApprovalResolved',
+      commandId,
+      status,
+      reason,
+      source,
+      timestamp: Date.now()
+    });
+  }
+
+  private matchesQuickPattern(command: string): boolean {
+    return this.quickPatterns.some((pattern) => {
+      if (!pattern.enabled) return false;
+      try {
+        return new RegExp(pattern.pattern, 'i').test(command);
+      } catch {
+        return false;
+      }
+    });
   }
 }
 
@@ -114,57 +276,10 @@ export class ApprovalManager {
 export const HybridApprovalManager = ApprovalManager;
 
 /**
- * Minimal stub for AutoApproveManager
+ * Auto-approval policy manager for tool execution.
  */
 export class AutoApproveManager {
   private static readonly STORAGE_KEY = 'gently.autoApproveSettings';
-  private static readonly ALWAYS_SAFE_TOOLS = new Set<string>([
-    'recall_memories',
-    'query_long_term_memory',
-    'analyze_project_structure',
-    'get_context',
-    'list_checkpoints',
-    'show_checkpoint_diff',
-    'check_dev_server',
-    'check_memory_conflicts',
-    'check_pattern_suggestions',
-    'create_plan',
-    'update_plan_steps',
-    'handover_to_coder',
-    'ask_question',
-    'create_checkpoint'
-  ]);
-  private static readonly READ_TOOLS = new Set<string>([
-    'read_file',
-    'list_files',
-    'find_files',
-    'regex_search',
-    'search_files'
-  ]);
-  private static readonly EDIT_TOOLS = new Set<string>([
-    'write_file',
-    'edit_file',
-    'safe_edit_file',
-    'apply_block_edit',
-    'delete_file',
-    'update_memory_bank',
-    'remember',
-    'update_memory',
-    'deprecate_memory',
-    'record_correction',
-    'accept_pattern_suggestion',
-    'reject_pattern_suggestion',
-    'restore_checkpoint'
-  ]);
-  private static readonly COMMAND_TOOLS = new Set<string>([
-    'run_command',
-    'execute_command',
-    'run_terminal_command'
-  ]);
-  private static readonly BROWSER_TOOLS = new Set<string>([
-    'web_search',
-    'search_web'
-  ]);
   private settings: import('../types/approval').AutoApprovalSettings;
   private readonly debugDecisions = false;
 
@@ -172,53 +287,32 @@ export class AutoApproveManager {
     this.settings = this.loadSettings();
   }
 
-  public async shouldAutoApprove(toolName: string, params: any): Promise<boolean> {
-    if (this.settings.yoloMode) {
-      this.logDecision(toolName, 'yoloMode', true);
-      return true;
-    }
+  public async shouldAutoApprove(toolName: string, params: unknown): Promise<boolean> {
+    const decision = evaluateToolPermissionDecision(
+      toolName,
+      params,
+      this.settings,
+      this.getWorkspaceRoots()
+    );
 
-    const normalizedToolName = toolName.toLowerCase();
-    if (AutoApproveManager.ALWAYS_SAFE_TOOLS.has(normalizedToolName)) {
-      this.logDecision(toolName, 'always-safe', true);
-      return true;
-    }
-
-    const action = this.mapToolToAction(toolName, params);
-    if (!action) {
+    if (decision.reason === 'unknown_tool') {
       console.warn(`[AutoApproveManager] Unknown tool "${toolName}" - requiring explicit approval.`);
       DiagnosticService.getInstance()?.recordUnknownEvent({
         kind: 'tool',
         origin: 'auto_approve_manager',
-        rawType: normalizedToolName,
-        correlationId: `unknown:tool:${normalizedToolName}`,
+        rawType: decision.normalizedToolName,
+        correlationId: `unknown:tool:${decision.normalizedToolName}`,
         payload: {
-          toolName: normalizedToolName
+          toolName: decision.normalizedToolName
         }
       });
-      this.logDecision(toolName, 'unknown', false);
-      return false;
     }
-
-    if (action === 'executeAllCommands') {
-      const approved = this.settings.actions.executeAllCommands;
-      this.logDecision(toolName, action, approved);
-      return approved;
-    }
-
-    if (action === 'executeSafeCommands') {
-      const approved = this.settings.actions.executeAllCommands || this.settings.actions.executeSafeCommands;
-      this.logDecision(toolName, action, approved);
-      return approved;
-    }
-
-    const approved = this.settings.actions[action];
-    this.logDecision(toolName, action, approved);
-    return approved;
+    this.logDecision(toolName, decision.policyAction, decision.reason, decision.approved);
+    return decision.approved;
   }
 
   public addAutoApproval(toolName: string): void {
-    const action = this.mapToolToAction(toolName, undefined);
+    const action = resolveToolPolicyAction(toolName, {}, this.getWorkspaceRoots()).action;
     if (!action) {
       console.log(`[AutoApproveManager] No auto-approval mapping found for tool: ${toolName}`);
       return;
@@ -276,132 +370,23 @@ export class AutoApproveManager {
     await this.context.globalState.update(AutoApproveManager.STORAGE_KEY, this.settings);
   }
 
-  private mapToolToAction(
+  private getWorkspaceRoots(): string[] {
+    return (vscode.workspace.workspaceFolders ?? [])
+      .map((folder) => folder.uri.fsPath)
+      .filter((rootPath) => typeof rootPath === 'string' && rootPath.trim().length > 0);
+  }
+
+  private logDecision(
     toolName: string,
-    params: any
-  ): keyof import('../types/approval').AutoApprovalActions | null {
-    const normalized = toolName.toLowerCase();
-
-    if (AutoApproveManager.READ_TOOLS.has(normalized)) {
-      return this.isExternalPath(params) ? 'readFilesExternally' : 'readFiles';
-    }
-
-    if (AutoApproveManager.EDIT_TOOLS.has(normalized)) {
-      return this.isExternalPath(params) ? 'editFilesExternally' : 'editFiles';
-    }
-
-    if (AutoApproveManager.COMMAND_TOOLS.has(normalized)) {
-      return this.isSafeCommand(params?.command) ? 'executeSafeCommands' : 'executeAllCommands';
-    }
-
-    if (AutoApproveManager.BROWSER_TOOLS.has(normalized) || normalized.includes('browser')) {
-      return 'useBrowser';
-    }
-
-    if (normalized.includes('mcp')) {
-      return 'useMcp';
-    }
-
-    return null;
-  }
-
-  private isExternalPath(params: any): boolean {
-    const rawPaths = this.extractPaths(params);
-    if (rawPaths.length === 0) {
-      return false;
-    }
-
-    const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
-    if (workspaceFolders.length === 0) {
-      // Conservative policy: without workspace context, treat any path as external.
-      return true;
-    }
-
-    for (const rawPath of rawPaths) {
-      let withinAnyWorkspace = false;
-
-      for (const folder of workspaceFolders) {
-        const rootPath = path.normalize(folder.uri.fsPath);
-        const candidatePath = path.isAbsolute(rawPath)
-          ? path.normalize(rawPath)
-          : path.normalize(path.join(rootPath, rawPath));
-
-        if (this.isWithinRoot(candidatePath, rootPath)) {
-          withinAnyWorkspace = true;
-          break;
-        }
-      }
-
-      if (!withinAnyWorkspace) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  private extractPaths(params: any): string[] {
-    const paths = new Set<string>();
-    const candidates = [
-      params?.path,
-      params?.file_path,
-      params?.targetPath,
-      params?.directory,
-      params?.filename,
-      params?.filePath
-    ];
-
-    for (const candidate of candidates) {
-      if (typeof candidate === 'string' && candidate.trim().length > 0) {
-        paths.add(candidate.trim());
-      }
-    }
-
-    if (Array.isArray(params?.file_edits)) {
-      for (const fileEdit of params.file_edits) {
-        const nestedPath = fileEdit?.file_path || fileEdit?.path;
-        if (typeof nestedPath === 'string' && nestedPath.trim().length > 0) {
-          paths.add(nestedPath.trim());
-        }
-      }
-    }
-
-    return Array.from(paths);
-  }
-
-  private isWithinRoot(candidatePath: string, rootPath: string): boolean {
-    const normalizedCandidate = path.normalize(candidatePath).toLowerCase();
-    const normalizedRoot = path.normalize(rootPath).replace(/[\\\/]+$/, '').toLowerCase();
-    return (
-      normalizedCandidate === normalizedRoot ||
-      normalizedCandidate.startsWith(`${normalizedRoot}${path.sep}`)
-    );
-  }
-
-  private isSafeCommand(command?: string): boolean {
-    if (!command) {
-      return false;
-    }
-
-    const trimmed = command.trim().toLowerCase();
-    return [
-      'pwd',
-      'ls',
-      'dir',
-      'echo',
-      'cat',
-      'type',
-      'git status',
-      'git diff',
-      'git log',
-      'npm test',
-      'npm run test'
-    ].some((safePrefix) => trimmed === safePrefix || trimmed.startsWith(`${safePrefix} `));
-  }
-
-  private logDecision(toolName: string, policy: keyof AutoApprovalActions | 'yoloMode' | 'always-safe' | 'unknown', approved: boolean): void {
+    policy: keyof AutoApprovalActions | null,
+    reason: PermissionDecisionReason,
+    approved: boolean
+  ): void {
     if (!this.debugDecisions) {
       return;
     }
-    console.log(`[AutoApproveManager] Decision: tool=${toolName}, policy=${policy}, approved=${approved}`);
+    console.log(
+      `[AutoApproveManager] Decision: tool=${toolName}, policy=${policy || 'none'}, reason=${reason}, approved=${approved}`
+    );
   }
 }

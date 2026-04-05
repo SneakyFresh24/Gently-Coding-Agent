@@ -99,7 +99,7 @@ export interface ToolApprovalCardState {
   toolName: string;
   params: any;
   status: 'pending' | 'approved' | 'rejected';
-  reason?: string | null;
+  reason?: 'approved' | 'approved_and_remembered' | 'rejected_by_user' | 'approval_timeout' | 'aborted_by_user_stop' | 'approval_callback_unavailable' | string | null;
   source?: 'user' | 'system';
   createdAt: number;
   timeoutMs?: number;
@@ -221,6 +221,14 @@ export interface ExtensionState {
   activityLabel?: string | null;
   activityPhase?: 'idle' | 'sending' | 'thinking' | 'tooling';
   activeToolCalls?: ToolCallInfo[];
+  executionState?: 'idle' | 'awaiting_plan_approval' | 'resuming_after_approval' | 'processing' | 'tooling' | 'failed' | 'stopped';
+  executionStateDetail?: {
+    reasonCode?: string;
+    flowId?: string | null;
+    planId?: string;
+    detail?: string;
+    timestamp?: number;
+  } | null;
 }
 
 // ── Model Info ───────────────────────────────────────
@@ -344,11 +352,14 @@ export type OutboundMessageType =
   | 'planStepCompleted'
   | 'autoApproveSettingsUpdate'
   | 'toolApprovalRequest'
+  | 'commandApprovalResolved'
   | 'toolApprovalResolved'
   | 'questionRequest'
   | 'questionResolved'
   | 'planApprovalRequested'
   | 'planApprovalResolved'
+  | 'stopAcknowledged'
+  | 'executionStateUpdate'
   | 'planCardCreated'
   | 'planCardUpdated'
   | 'handoverProgress'

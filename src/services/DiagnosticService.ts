@@ -267,12 +267,41 @@ export class DiagnosticService {
       if (approvalId) {
         this.approvalRequestedAt.set(approvalId, Number(message.timestamp || Date.now()));
       }
+      const correlationId =
+        typeof message.correlationId === 'string' && message.correlationId.trim() !== ''
+          ? message.correlationId
+          : approvalId
+            ? `approval:${approvalId}`
+            : this.makeCorrelationId(type, flowId);
       this.record({
         severity: 'info',
         code: 'APPROVAL_REQUESTED',
         category: 'approval',
         flowId,
-        correlationId: approvalId ? `approval:${approvalId}` : this.makeCorrelationId(type, flowId),
+        correlationId,
+        mode,
+        model,
+        source: 'extension:webview',
+        payload: message as Record<string, unknown>,
+      });
+      return;
+    }
+
+    if (type === 'approvalRequest') {
+      const commandId = String(message.request?.commandId || '');
+      const timestamp =
+        typeof message.request?.timestamp === 'number'
+          ? message.request.timestamp
+          : Number(message.timestamp || Date.now());
+      if (commandId) {
+        this.approvalRequestedAt.set(commandId, timestamp);
+      }
+      this.record({
+        severity: 'info',
+        code: 'COMMAND_APPROVAL_REQUESTED',
+        category: 'approval',
+        flowId,
+        correlationId: commandId ? `command_approval:${commandId}` : this.makeCorrelationId(type, flowId),
         mode,
         model,
         source: 'extension:webview',
@@ -291,14 +320,54 @@ export class DiagnosticService {
           ? Math.max(0, resolvedAt - startedAt)
           : undefined;
       const status = String(message.status || 'resolved');
+      const reason = String(message.reason || '');
       const severity: DiagnosticSeverity =
-        status === 'timeout' ? 'warning' : status === 'rejected' ? 'warning' : 'info';
+        reason === 'approval_timeout' ? 'warning' : status === 'rejected' ? 'warning' : 'info';
+      const correlationId =
+        typeof message.correlationId === 'string' && message.correlationId.trim() !== ''
+          ? message.correlationId
+          : approvalId
+            ? `approval:${approvalId}`
+            : this.makeCorrelationId(type, flowId);
       this.record({
         severity,
-        code: `APPROVAL_RESOLVED_${status.toUpperCase()}`,
+        code: reason === 'approval_timeout' ? 'APPROVAL_RESOLVED_TIMEOUT' : `APPROVAL_RESOLVED_${status.toUpperCase()}`,
         category: 'approval',
         flowId,
-        correlationId: approvalId ? `approval:${approvalId}` : this.makeCorrelationId(type, flowId),
+        correlationId,
+        mode,
+        model,
+        source: 'extension:webview',
+        payload: {
+          ...(message as Record<string, unknown>),
+          durationMs,
+        },
+      });
+      return;
+    }
+
+    if (type === 'commandApprovalResolved') {
+      const commandId = String(message.commandId || '');
+      const startedAt = commandId ? this.approvalRequestedAt.get(commandId) : undefined;
+      const resolvedAt = Number(message.timestamp || Date.now());
+      if (commandId) this.approvalRequestedAt.delete(commandId);
+      const durationMs =
+        typeof startedAt === 'number' && Number.isFinite(startedAt)
+          ? Math.max(0, resolvedAt - startedAt)
+          : undefined;
+      const status = String(message.status || 'resolved');
+      const reason = String(message.reason || '');
+      const severity: DiagnosticSeverity =
+        reason === 'approval_timeout' ? 'warning' : status === 'rejected' ? 'warning' : 'info';
+      this.record({
+        severity,
+        code:
+          reason === 'approval_timeout'
+            ? 'COMMAND_APPROVAL_RESOLVED_TIMEOUT'
+            : `COMMAND_APPROVAL_RESOLVED_${status.toUpperCase()}`,
+        category: 'approval',
+        flowId,
+        correlationId: commandId ? `command_approval:${commandId}` : this.makeCorrelationId(type, flowId),
         mode,
         model,
         source: 'extension:webview',

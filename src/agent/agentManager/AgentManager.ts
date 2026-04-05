@@ -432,48 +432,12 @@ export class AgentManager {
   }
 
   private async loadLastSessionState(): Promise<void> {
-    const lastPlanId = this.context.globalState.get<string>('lastActivePlanId');
-    if (!lastPlanId) return;
-
-    agentLogger.info(`Found last active plan ID: ${lastPlanId}`);
-    try {
-      const planningManager = this.container.resolve<PlanningManager>('planningManager');
-      const planManager = planningManager.getPlanManager();
-
-      const plan = await planManager.loadPlanFromMarkdown(lastPlanId);
-      if (plan) {
-        agentLogger.info(`Successfully restored plan: ${lastPlanId}`);
-        planManager.setCurrentPlanId(lastPlanId);
-
-        // Emit event to notify UI
-        if (this.eventCallback) {
-          this.eventCallback({ type: 'planLoaded', planId: lastPlanId, plan });
-        }
-
-        // Resume auto-execution if it was running
-        if (plan.status === 'executing') {
-          agentLogger.info(`Resuming auto-execution for plan: ${lastPlanId}`);
-          await planManager.startAutoExecution(lastPlanId);
-        }
-      }
-    } catch (error) {
-      agentLogger.error(`Failed to restore last session state for plan ${lastPlanId}`, error);
-    }
+    // Disabled: global plan restore causes cross-session plan leakage.
+    await this.context.globalState.update('lastActivePlanId', undefined);
   }
 
   public async saveCurrentState(): Promise<void> {
-    try {
-      const planningManager = this.container.resolve<PlanningManager>('planningManager');
-      const planManager = planningManager.getPlanManager();
-      const currentPlanId = planManager.getCurrentPlanId();
-
-      if (currentPlanId) {
-        agentLogger.info(`Saving current active plan ID: ${currentPlanId}`);
-        await this.context.globalState.update('lastActivePlanId', currentPlanId);
-      }
-    } catch (error) {
-      agentLogger.error('Failed to save current state', error);
-    }
+    await this.context.globalState.update('lastActivePlanId', undefined);
   }
 
   dispose(): void {

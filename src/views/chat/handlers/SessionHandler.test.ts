@@ -100,4 +100,32 @@ describe('SessionHandler restore task normalization', () => {
       })
     );
   });
+
+  it('invokes onSessionActivated callback when creating a new session', async () => {
+    const onSessionActivated = vi.fn().mockResolvedValue(undefined);
+    const createdSession = {
+      id: 'session_new',
+      metadata: { model: 'openai/gpt-4o-mini' }
+    };
+    const sessionManager = {
+      createSession: vi.fn().mockResolvedValue(createdSession),
+      setActiveSession: vi.fn().mockResolvedValue(undefined),
+      getSessionsByType: vi.fn().mockResolvedValue([createdSession]),
+      getActiveSession: vi.fn().mockResolvedValue(createdSession),
+      refreshSessions: vi.fn().mockResolvedValue(undefined)
+    };
+
+    const handler = new SessionHandler(
+      sessionManager as any,
+      vi.fn(),
+      vi.fn().mockResolvedValue(undefined),
+      undefined,
+      undefined,
+      onSessionActivated
+    );
+
+    await handler.handleNewSession();
+
+    expect(onSessionActivated).toHaveBeenCalledWith(expect.objectContaining({ id: 'session_new' }));
+  });
 });

@@ -130,9 +130,9 @@ export class ArchitectHandoverHandler {
             'You are the Architect. Use your tools to analyze, plan, and persist decisions.\n' +
             '- create_plan: Create the implementation roadmap.\n' +
             '- planApprovalResponse (user): Approve/reject the plan directly in chat cards.\n' +
-            '- ask_question: Offer handover/refinement options with optional mode switch.\n' +
+            '- ask_question: Offer handover/refinement options; requested code switches go through code-entry gate.\n' +
             '- update_memory_bank: Persist architectural decisions.\n' +
-            '- handover_to_coder: Trigger Architect -> Code handover after approval.\n' +
+            '- handover_to_coder: Trigger Architect -> Code handover after approval (preferred).\n' +
             'Do NOT implement code changes yourself.';
     }
 }
@@ -226,6 +226,10 @@ export class FollowUpHandler {
 
     async sendFollowUpMessage(context: ChatViewContext, message: string): Promise<void> {
         try {
+            if (context.shouldStopStream || context.shouldAbortTools) {
+                log.info('Skipping follow-up because stop was requested.');
+                return;
+            }
             log.info('Sending follow-up CONTINUATION...');
 
             let hasToolCalls = false;
@@ -301,6 +305,10 @@ export class FollowUpHandler {
                 return;
             }
 
+            if (context.shouldStopStream || context.shouldAbortTools) {
+                log.info('Skipping follow-up generation because stop was requested.');
+                return;
+            }
             await this.generateAndStreamResponse('', 0, true);
         } catch (error: any) {
             log.error('Error sending follow-up message:', error);

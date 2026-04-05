@@ -23,7 +23,8 @@ export class SessionHandler {
     private readonly sendMessageToWebview: (message: any) => void,
     private readonly applyRuntimeSessionState?: (messages: any[], model: string | null) => Promise<void>,
     private readonly openRouterService?: OpenRouterService,
-    private readonly getCurrentSelectedModel?: () => string | null
+    private readonly getCurrentSelectedModel?: () => string | null,
+    private readonly onSessionActivated?: (session: Session | null) => Promise<void>
   ) { }
 
   private normalizeSessionModel(model: unknown): string | null {
@@ -204,6 +205,9 @@ export class SessionHandler {
           this.resolveRuntimeModel(activeSession.metadata?.model)
         );
       }
+      if (this.onSessionActivated) {
+        await this.onSessionActivated(activeSession || null);
+      }
 
       if (activeSession) {
         await this.sendTokenUsageForSession(activeSession);
@@ -262,6 +266,9 @@ export class SessionHandler {
         console.log(`[SessionHandler] Created new session: ${session.id}`);
         await this.sessionManager.setActiveSession(SessionType.CHAT, session.id);
         console.log(`[SessionHandler] Set active session: ${session.id}`);
+        if (this.onSessionActivated) {
+          await this.onSessionActivated(session);
+        }
 
         this.sendMessageToWebview({
           type: 'restoreSessionState',
@@ -318,6 +325,9 @@ export class SessionHandler {
 
     console.log('[SessionHandler] Message breakdown:', messageCounts);
     await this.sessionManager.setActiveSession(SessionType.CHAT, sessionId);
+    if (this.onSessionActivated) {
+      await this.onSessionActivated(session);
+    }
 
     const messages = chatSession.messages || [];
     if (switchToken !== this.latestSwitchToken) {
@@ -406,6 +416,9 @@ export class SessionHandler {
               if (this.applyRuntimeSessionState) {
                 await this.applyRuntimeSessionState([], this.resolveRuntimeModel(null));
               }
+              if (this.onSessionActivated) {
+                await this.onSessionActivated(null);
+              }
               await this.sendTokenUsageEmpty();
             }
             break;
@@ -469,6 +482,9 @@ export class SessionHandler {
 
         if (this.applyRuntimeSessionState) {
           await this.applyRuntimeSessionState([], this.resolveRuntimeModel(null));
+        }
+        if (this.onSessionActivated) {
+          await this.onSessionActivated(null);
         }
 
         await this.handleGetSessions({ suppressActiveMessagesLoad: true });
@@ -756,6 +772,16 @@ export class SessionHandler {
       console.error('[SessionHandler] Error getting session stats:', error);
       return null;
     }
+  }
+
+  async getActiveSessionId(): Promise<string | null> {
+    const activeSession = await this.sessionManager.getActiveSession(SessionType.CHAT);
+    return activeSession?.id || null;
+  }
+
+  async getSessionById(sessionId: string): Promise<Session | null> {
+    if (!sessionId || typeof sessionId !== 'string') return null;
+    return await this.sessionManager.getSession(sessionId);
   }
 
   async updateSessionMetadata(metadataUpdate: Record<string, any>): Promise<void> {

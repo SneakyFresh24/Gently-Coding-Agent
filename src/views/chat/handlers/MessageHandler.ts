@@ -28,6 +28,7 @@ export class MessageHandler {
   private availableModelIds = new Set<string>();
   private readonly lifecycleGuard: LifecycleGuard;
   private readonly guardedSendMessageToWebview: (message: OutboundWebviewMessage) => void;
+  private runSequence = 0;
 
   constructor(
     private readonly extensionContext: vscode.ExtensionContext,
@@ -97,7 +98,7 @@ export class MessageHandler {
         this.setSelectedMode(modeId);
       },
       async (message: string) => {
-        await this.sendMessage(message, false);
+        await this.sendMessage(message, false, undefined, 0, 'continuation');
       },
       () => this.modeService.getCurrentMode()?.id ?? this.context.selectedMode
     );
@@ -126,6 +127,12 @@ export class MessageHandler {
       conversationHistory: [],
       shouldStopStream: false,
       shouldAbortTools: false,
+      currentMessageSource: 'user',
+      resumeNoProgressAttempts: 0,
+      currentRunId: undefined,
+      stopRequestedAt: undefined,
+      activeSessionId: null,
+      activeRunAbortController: null,
       messageCheckpoints: new Map(),
       toolExecutionStartSent: new Set(),
       sequenceRepairHistory: [],
@@ -141,7 +148,13 @@ export class MessageHandler {
     this.sessionHistoryManager.initializeSession(this.context);
   }
 
-  async sendMessage(userMessage: string, silent: boolean = false, fileReferences?: any[], retryCount: number = 0): Promise<void> {
+  async sendMessage(
+    userMessage: string,
+    silent: boolean = false,
+    fileReferences?: any[],
+    retryCount: number = 0,
+    source: 'user' | 'continuation' | 'resume' = 'user'
+  ): Promise<void> {
     if (!this.isValidOpenRouterModelId(this.context.selectedModel)) {
       this.sendMessageToWebview({
         type: 'error',
@@ -149,9 +162,36 @@ export class MessageHandler {
       });
       return;
     }
+    if (source !== 'user' && (this.context.shouldStopStream || this.context.shouldAbortTools)) {
+      this.sendMessageToWebview({
+        type: 'resilienceStatus',
+        code: 'REQUEST_STOPPED',
+        category: 'request',
+        severity: 'info',
+        retryable: false,
+        attempt: 1,
+        maxAttempts: 1,
+        model: this.context.selectedModel || 'unknown',
+        flowId: this.context.currentFlowId || null,
+        userMessage: 'Continuation blocked because a stop was requested.',
+        action: 'none',
+        phase: 'stopped',
+        decision: 'abort',
+        reason: 'continuation_blocked_after_stop',
+        correlationId: `${this.context.currentFlowId || 'flow-unknown'}:REQUEST_STOPPED:${Date.now()}`
+      } as any);
+      return;
+    }
     // Always clear stale stop flags at the beginning of a new turn.
+    this.context.currentRunId = `run-${Date.now()}-${++this.runSequence}`;
     this.context.shouldStopStream = false;
     this.context.shouldAbortTools = false;
+    this.context.currentMessageSource = source;
+    if (source !== 'resume') {
+      this.context.resumeNoProgressAttempts = 0;
+    }
+    this.context.stopRequestedAt = undefined;
+    this.context.activeRunAbortController = null;
     await this.flowManager.handleUserMessage(this.context, userMessage, { silent, fileReferences, retryCount });
   }
 
@@ -292,16 +332,26 @@ export class MessageHandler {
     return this.sessionHistoryManager;
   }
 
-  stopMessage(): void {
+  async stopMessage(reasonCode: string = 'REQUEST_STOPPED'): Promise<void> {
     this.context.shouldStopStream = true;
     this.context.shouldAbortTools = true; // Flag for potential future use in execution loops
+    this.context.stopRequestedAt = Date.now();
+    this.context.activeRunAbortController?.abort(reasonCode);
+    this.context.activeRunAbortController = null;
     
     // Abort active tool executions & approvals
-    this.agentManager.getToolManager().abortAllExecutions();
+    await this.agentManager.getToolManager().abortAllExecutions();
 
     this.guardedSendMessageToWebview({ type: 'assistantMessageEnd', messageId: this.context.currentMessageId || '' } as any);
     this.guardedSendMessageToWebview({ type: 'processingEnd' } as any);
     this.guardedSendMessageToWebview({ type: 'generatingEnd' } as any);
+    this.guardedSendMessageToWebview({
+      type: 'stopAcknowledged',
+      flowId: this.context.currentFlowId || null,
+      runId: this.context.currentRunId || null,
+      reasonCode,
+      timestamp: Date.now()
+    } as any);
   }
 
 

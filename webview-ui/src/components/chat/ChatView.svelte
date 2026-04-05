@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { get } from 'svelte/store';
   import ChatLayout from './ChatLayout.svelte';
   import TaskHeader from './TaskHeader.svelte';
@@ -28,12 +28,53 @@
   let checkpointDiffTo = $state<string | undefined>(undefined);
   let queryRuntimeContractActive = $state(false);
   const UNHANDLED_SURFACE_WINDOW_MS = 60_000;
+  const HANDOVER_LABEL_WATCHDOG_MS = 30_000;
+  const LIVE_PLAN_STATUSES = new Set([
+    'awaiting_approval',
+    'approved',
+    'handed_over',
+    'executing',
+    'paused'
+  ]);
+  const TERMINAL_PLAN_STATUSES = new Set(['completed', 'failed', 'rejected']);
   const unhandledStats = new Map<string, {
     count: number;
     firstSeenAt: number;
     lastSeenAt: number;
     lastSurfacedAt: number;
   }>();
+  let handoverLabelWatchdog: ReturnType<typeof setTimeout> | null = null;
+
+  function normalizePlanStatus(status: string | undefined | null): string {
+    return String(status || '').trim().toLowerCase();
+  }
+
+  function isLivePlanStatus(status: string | undefined | null): boolean {
+    return LIVE_PLAN_STATUSES.has(normalizePlanStatus(status));
+  }
+
+  function isTerminalPlanStatus(status: string | undefined | null): boolean {
+    return TERMINAL_PLAN_STATUSES.has(normalizePlanStatus(status));
+  }
+
+  function clearHandoverLabelWatchdog(): void {
+    if (!handoverLabelWatchdog) return;
+    clearTimeout(handoverLabelWatchdog);
+    handoverLabelWatchdog = null;
+  }
+
+  function scheduleHandoverLabelWatchdog(planId?: string): void {
+    clearHandoverLabelWatchdog();
+    handoverLabelWatchdog = setTimeout(() => {
+      const state = get(extensionStore);
+      if (state.executionState !== 'resuming_after_approval') return;
+      applyExecutionState('processing', {
+        reasonCode: 'HANDOVER_LABEL_WATCHDOG',
+        planId,
+        detail: 'Continuing implementation...'
+      });
+    }, HANDOVER_LABEL_WATCHDOG_MS);
+  }
 
   function toPlanCard(plan: any): PlanCardState | null {
     if (!plan || typeof plan !== 'object') return null;
@@ -80,8 +121,58 @@
     };
   }
 
+  function getTerminalPlanSummary(card: PlanCardState): string {
+    const status = normalizePlanStatus(card.status);
+    if (status === 'completed') {
+      return `Plan completed: ${card.goal || card.planId} (${card.completedSteps}/${card.totalSteps} steps done).`;
+    }
+    if (status === 'failed') {
+      return `Plan failed: ${card.goal || card.planId} (${card.completedSteps}/${card.totalSteps} steps done).`;
+    }
+    if (status === 'rejected') {
+      return `Plan rejected: ${card.goal || card.planId}.`;
+    }
+    return `Plan archived: ${card.goal || card.planId}.`;
+  }
+
+  function upsertPlanTerminalSummary(card: PlanCardState): void {
+    const messageId = `sys_plan_terminal_${card.planId}`;
+    const existing = get(chatStore).messages.find((msg) => msg.id === messageId);
+    const nextTimestamp = Date.now();
+    if (existing) {
+      chatStore.updateMessage(messageId, {
+        content: getTerminalPlanSummary(card),
+        timestamp: nextTimestamp,
+        isSystemMessage: true
+      });
+      return;
+    }
+    chatStore.addMessage({
+      id: messageId,
+      role: 'system',
+      content: getTerminalPlanSummary(card),
+      timestamp: nextTimestamp,
+      isSystemMessage: true
+    });
+  }
+
+  function handleNonLivePlanCard(card: PlanCardState): void {
+    const planMessageId = `plan_${card.planId}`;
+    chatStore.removeMessage(planMessageId);
+    if (isTerminalPlanStatus(card.status)) {
+      upsertPlanTerminalSummary(card);
+    }
+  }
+
   function upsertPlanMessage(card: PlanCardState) {
+    if (!isLivePlanStatus(card.status)) {
+      handleNonLivePlanCard(card);
+      return;
+    }
+
     const messageId = `plan_${card.planId}`;
+    const terminalSummaryId = `sys_plan_terminal_${card.planId}`;
+    chatStore.removeMessage(terminalSummaryId);
     const existing = get(chatStore).messages.find((msg) => msg.id === messageId);
     if (existing) {
       chatStore.updateMessage(messageId, {
@@ -104,15 +195,23 @@
     });
   }
 
-  function updatePlanCard(planId: string, updater: (card: PlanCardState) => PlanCardState) {
+  function updatePlanCard(planId: string, updater: (card: PlanCardState) => PlanCardState): PlanCardState | null {
     const messageId = `plan_${planId}`;
     const existing = get(chatStore).messages.find((msg) => msg.id === messageId);
-    if (!existing?.planCard) return;
+    if (!existing?.planCard) return null;
+    const nextCard = updater(existing.planCard);
+
+    if (!isLivePlanStatus(nextCard.status)) {
+      handleNonLivePlanCard(nextCard);
+      return nextCard;
+    }
+
     chatStore.updateMessage(messageId, {
-      planCard: updater(existing.planCard),
+      planCard: nextCard,
       timestamp: Date.now(),
       isSystemMessage: false
     });
+    return nextCard;
   }
 
   function ensurePlanCardForApproval(
@@ -174,6 +273,32 @@
     return plans[plans.length - 1] || null;
   }
 
+  function applyPlanStepUpdate(
+    planId: string,
+    stepId: string,
+    status: string
+  ): { updated: boolean; matched: boolean } {
+    let matchedStep = false;
+    const nextCard = updatePlanCard(planId, (card) => {
+      const steps = card.steps.map((step) => {
+        if (step.id !== stepId) return step;
+        matchedStep = true;
+        return { ...step, status: String(status || step.status) };
+      });
+
+      return {
+        ...card,
+        steps,
+        completedSteps: steps.filter((step) => step.status === 'completed').length
+      };
+    });
+
+    if (!nextCard) return { updated: false, matched: false };
+    if (!matchedStep) return { updated: true, matched: false };
+
+    return { updated: true, matched: true };
+  }
+
   function getResilienceFallbackMessage(code: string): string {
     switch (code) {
       case 'CTX_BUDGET_UNSAFE':
@@ -202,6 +327,8 @@
         return 'Tool call blocked by current mode contract.';
       case 'TOOL_STOPPED_BY_USER':
         return 'Tool execution stopped by user.';
+      case 'PLAN_RESUME_NO_PROGRESS':
+        return 'Approved plan did not make progress automatically.';
       case 'QUESTION_RESPONSE_ACCEPTED':
         return 'Question response accepted.';
       case 'QUESTION_RESPONSE_REJECTED':
@@ -276,6 +403,92 @@
     }
   }
 
+  type ExecutionState = 'idle' | 'awaiting_plan_approval' | 'resuming_after_approval' | 'processing' | 'tooling' | 'failed' | 'stopped';
+
+  function getExecutionPriority(state: ExecutionState): number {
+    switch (state) {
+      case 'awaiting_plan_approval':
+        return 5;
+      case 'resuming_after_approval':
+        return 4;
+      case 'tooling':
+        return 3;
+      case 'processing':
+        return 2;
+      case 'failed':
+      case 'stopped':
+        return 1;
+      default:
+        return 0;
+    }
+  }
+
+  function deriveExecutionLabel(state: ExecutionState, detail?: { detail?: string }): string | null {
+    if (detail?.detail && detail.detail.trim().length > 0) return detail.detail;
+    switch (state) {
+      case 'awaiting_plan_approval':
+        return '[awaiting approval]';
+      case 'resuming_after_approval':
+        return 'Resuming approved plan...';
+      case 'processing':
+        return 'Working...';
+      case 'tooling':
+        return 'Running tools...';
+      case 'failed':
+        return 'Execution blocked.';
+      case 'stopped':
+        return 'Execution stopped.';
+      default:
+        return null;
+    }
+  }
+
+  function applyExecutionState(
+    state: ExecutionState,
+    detail?: {
+      reasonCode?: string;
+      flowId?: string | null;
+      planId?: string;
+      detail?: string;
+      timestamp?: number;
+    }
+  ): void {
+    const current = get(extensionStore);
+    const currentState = (current.executionState || 'idle') as ExecutionState;
+    const isBusyNow = current.isStreaming || current.isProcessing || current.activeToolCalls.length > 0;
+    if (
+      state === 'idle' &&
+      isBusyNow &&
+      getExecutionPriority(currentState) >= getExecutionPriority('resuming_after_approval')
+    ) {
+      return;
+    }
+
+    extensionStore.setExecutionState(state, detail || null);
+    if (state !== 'resuming_after_approval') {
+      clearHandoverLabelWatchdog();
+    }
+    if (state === 'idle') {
+      if (!current.isStreaming && !current.isProcessing && current.activeToolCalls.length === 0) {
+        extensionStore.clearActivityState();
+      }
+      return;
+    }
+
+    const label = deriveExecutionLabel(state, detail);
+    if (label) {
+      extensionStore.setActivityLabel(label);
+    }
+
+    if (state === 'tooling') {
+      extensionStore.setActivityPhase('tooling');
+    } else if (state === 'failed' || state === 'stopped') {
+      extensionStore.setActivityPhase('idle');
+    } else {
+      extensionStore.setActivityPhase('thinking');
+    }
+  }
+
   function renderQueryRuntimeStatus(data: any): void {
     const code = String(data.code || '');
     const baseMessage = getResilienceFallbackMessage(code);
@@ -305,7 +518,7 @@
     }
 
     if (code === 'REQUEST_STOPPED') {
-      extensionStore.clearActivityState();
+      applyExecutionState('stopped', { reasonCode: 'REQUEST_STOPPED' });
     }
   }
 
@@ -332,7 +545,7 @@
         });
         return;
       case 'result_success':
-        extensionStore.clearActivityState();
+        applyExecutionState('idle', { reasonCode: 'RESULT_SUCCESS' });
         return;
       case 'result_error': {
         const result = event.result || {};
@@ -346,12 +559,16 @@
           timestamp: Date.now(),
           isSystemMessage: true,
         });
-        extensionStore.clearActivityState();
+        const errorCode = String(result.code || 'RESULT_ERROR');
+        applyExecutionState(errorCode === 'REQUEST_STOPPED' ? 'stopped' : 'failed', {
+          reasonCode: errorCode,
+          detail: typeof result.message === 'string' ? result.message : undefined
+        });
         return;
       }
       case 'turn_transition':
         if (String(event.to || '') === 'TERMINAL') {
-          extensionStore.clearActivityState();
+          applyExecutionState('idle', { reasonCode: 'TURN_TERMINAL' });
         }
         return;
       default:
@@ -399,6 +616,10 @@
     };
   }
 
+  onDestroy(() => {
+    clearHandoverLabelWatchdog();
+  });
+
   onMount(() => {
     initMessaging({
       // State & lifecycle
@@ -440,11 +661,17 @@
         }
 
         if (code === 'REQUEST_STOPPED') {
-          extensionStore.clearActivityState();
+          applyExecutionState('stopped', { reasonCode: code });
+        } else if (code === 'MODE_TOOL_BLOCKED' || code === 'CODE_ENTRY_BLOCKED' || code === 'TOOL_DISPATCH_TERMINAL_ERROR') {
+          applyExecutionState('failed', {
+            reasonCode: code,
+            detail: typeof data.reason === 'string' ? data.reason : undefined
+          });
         }
       },
       onSubagentStatus: (data) => {
         const code = String(data.code || '');
+        const planId = typeof data?.planId === 'string' ? data.planId : undefined;
         const userMessage = typeof data.userMessage === 'string' && data.userMessage.trim().length > 0
           ? data.userMessage
           : getSubagentFallbackMessage(code);
@@ -470,8 +697,40 @@
           return;
         }
 
-        if (code === 'SUBAGENT_STOPPED' || code === 'SUBAGENT_SUMMARY_READY' || code === 'SUBAGENT_TERMINAL_FAILED') {
-          extensionStore.clearActivityState();
+        if (code === 'SUBAGENT_START') {
+          applyExecutionState('resuming_after_approval', {
+            reasonCode: code,
+            planId,
+            detail: 'Architect -> Code handover...'
+          });
+          scheduleHandoverLabelWatchdog(planId);
+          return;
+        }
+
+        if (code === 'SUBAGENT_MODE_SWITCHED' || code === 'SUBAGENT_RUNNING' || code === 'SUBAGENT_SUMMARY_READY') {
+          applyExecutionState('processing', {
+            reasonCode: code,
+            planId,
+            detail: code === 'SUBAGENT_RUNNING' ? 'Starting coder worker...' : 'Continuing implementation...'
+          });
+          return;
+        }
+
+        if (code === 'SUBAGENT_TERMINAL_FAILED') {
+          applyExecutionState('failed', {
+            reasonCode: code,
+            planId,
+            detail: userMessage
+          });
+          return;
+        }
+
+        if (code === 'SUBAGENT_STOPPED') {
+          applyExecutionState('stopped', {
+            reasonCode: code,
+            planId,
+            detail: userMessage
+          });
         }
       },
       onQuestionRequest: (data) => {
@@ -640,35 +899,45 @@
       // Generation state
       onGeneratingStart: () => {
         extensionStore.setStreaming(true);
-        if (!get(extensionStore).activityLabel) {
-          extensionStore.setActivityLabel('Thinking...');
-          extensionStore.setActivityPhase('thinking');
-        }
+        applyExecutionState('processing', { reasonCode: 'GENERATING_START' });
+        if (!get(extensionStore).activityLabel) extensionStore.setActivityLabel('Thinking...');
       },
       onGeneratingEnd: () => {
         extensionStore.setStreaming(false);
         extensionStore.setPendingApproval(null);
-        extensionStore.clearActivityState();
+        const state = get(extensionStore);
+        if (!state.isProcessing && state.activeToolCalls.length === 0) {
+          applyExecutionState('idle', { reasonCode: 'GENERATING_END' });
+        }
       },
       onProcessingStart: () => {
         extensionStore.setProcessing(true);
+        applyExecutionState('processing', { reasonCode: 'PROCESSING_START' });
       },
       onProcessingEnd: () => {
         extensionStore.setProcessing(false);
         extensionStore.setPendingApproval(null);
-        if (!get(extensionStore).isStreaming) {
-          extensionStore.clearActivityState();
+        const state = get(extensionStore);
+        if (!state.isStreaming && state.activeToolCalls.length === 0) {
+          applyExecutionState('idle', { reasonCode: 'PROCESSING_END' });
         }
       },
 
       // Context
       onContextUpdate: (_data) => {},
       onActivityUpdate: (data) => {
-        if (data?.label == null) {
-          const state = get(extensionStore);
-          if (!state.isStreaming && !state.isProcessing && state.activeToolCalls.length === 0) {
-            extensionStore.clearActivityState();
+        const currentState = (get(extensionStore).executionState || 'idle') as ExecutionState;
+        if (data?.label != null) {
+          if (currentState === 'awaiting_plan_approval' || currentState === 'resuming_after_approval') {
+            return;
           }
+          extensionStore.setActivityLabel(String(data.label));
+          extensionStore.setActivityPhase('thinking');
+          return;
+        }
+        const state = get(extensionStore);
+        if (!state.isStreaming && !state.isProcessing && state.activeToolCalls.length === 0) {
+          applyExecutionState('idle', { reasonCode: 'ACTIVITY_CLEARED' });
         }
       },
 
@@ -780,7 +1049,7 @@
           status: 'running',
           startedAt: Number(data.timestamp || Date.now()),
         });
-        extensionStore.setActivityPhase('tooling');
+        applyExecutionState('tooling', { reasonCode: 'TOOL_EXECUTION_START' });
       },
       onToolComplete: (data) => {
         const toolName = data.tool || data.toolName || 'tool';
@@ -790,7 +1059,7 @@
           extensionStore.removeActiveToolCall(exact.toolId);
           const nextState = get(extensionStore);
           if (!nextState.isStreaming && !nextState.isProcessing && nextState.activeToolCalls.length === 0) {
-            extensionStore.clearActivityState();
+            applyExecutionState('idle', { reasonCode: 'TOOL_EXECUTION_COMPLETE' });
           }
           return;
         }
@@ -799,7 +1068,7 @@
           extensionStore.removeActiveToolCall(candidate.toolId);
           const nextState = get(extensionStore);
           if (!nextState.isStreaming && !nextState.isProcessing && nextState.activeToolCalls.length === 0) {
-            extensionStore.clearActivityState();
+            applyExecutionState('idle', { reasonCode: 'TOOL_EXECUTION_COMPLETE' });
           }
         }
       },
@@ -843,27 +1112,46 @@
       onPlanStatusUpdate: (data) => {
         const planId = String(data.planId || '');
         if (!planId) return;
-        updatePlanCard(planId, (card) => ({
+        const nextStatus = String(data.status || '');
+        const nextCard = updatePlanCard(planId, (card) => ({
           ...card,
-          status: String(data.status || card.status),
+          status: nextStatus || card.status,
           completedSteps: typeof data.completedSteps === 'number' ? Number(data.completedSteps) : card.completedSteps,
-          awaitingApproval: String(data.status || '') === 'awaiting_approval'
+          awaitingApproval: nextStatus === 'awaiting_approval'
         }));
+
+        if (!nextCard) {
+          messaging.send('requestCurrentPlan');
+        }
+
+        if (isTerminalPlanStatus(nextStatus)) {
+          messaging.send('requestCurrentPlan');
+          const state = get(extensionStore);
+          if (!state.isStreaming && !state.isProcessing && state.activeToolCalls.length === 0) {
+            applyExecutionState('idle', {
+              reasonCode: 'PLAN_TERMINAL',
+              planId
+            });
+          }
+        }
       },
       onStepStatusUpdate: (data) => {
         const planId = String(data.planId || '');
         const stepId = String(data.stepId || '');
         if (!planId || !stepId) return;
-        updatePlanCard(planId, (card) => {
-          const steps = card.steps.map((step) => step.id === stepId
-            ? { ...step, status: String(data.status || step.status) }
-            : step);
-          return {
-            ...card,
-            steps,
-            completedSteps: steps.filter((step) => step.status === 'completed').length
-          };
-        });
+        const stepUpdate = applyPlanStepUpdate(planId, stepId, String(data.status || 'pending'));
+        if (!stepUpdate.updated || !stepUpdate.matched) {
+          messaging.send('requestCurrentPlan');
+        }
+      },
+      onPlanStepCompleted: (data) => {
+        const planId = String(data.planId || '');
+        const stepId = String(data.stepId || '');
+        if (!planId || !stepId) return;
+        const stepUpdate = applyPlanStepUpdate(planId, stepId, 'completed');
+        if (!stepUpdate.updated || !stepUpdate.matched) {
+          messaging.send('requestCurrentPlan');
+        }
       },
       onPlanApprovalRequested: (data) => {
         const planId = String(data.planId || '');
@@ -889,6 +1177,10 @@
           awaitingApproval: true,
           pendingApproval
         }));
+        applyExecutionState('awaiting_plan_approval', {
+          reasonCode: 'PLAN_APPROVAL_REQUESTED',
+          planId
+        });
       },
       onPlanApprovalResolved: (data) => {
         const planId = String(data.planId || '');
@@ -922,14 +1214,62 @@
             ? (nextStatus === 'timeout' ? card.pendingApproval : null)
             : card.pendingApproval
         }));
+        if (resolution === 'applied' && nextStatus === 'approved') {
+          applyExecutionState('resuming_after_approval', {
+            reasonCode: 'PLAN_APPROVED',
+            planId
+          });
+        } else if (resolution === 'applied' && nextStatus === 'rejected') {
+          applyExecutionState('failed', {
+            reasonCode: 'PLAN_REJECTED',
+            planId
+          });
+        }
+      },
+      onStopAcknowledged: (data) => {
+        applyExecutionState('stopped', {
+          reasonCode: typeof data?.reasonCode === 'string' ? data.reasonCode : 'REQUEST_STOPPED',
+          flowId: typeof data?.flowId === 'string' || data?.flowId === null ? data.flowId : undefined,
+          timestamp: typeof data?.timestamp === 'number' ? data.timestamp : Date.now()
+        });
+      },
+      onExecutionStateUpdate: (data) => {
+        const nextState = String(data?.state || 'idle') as ExecutionState;
+        if (
+          nextState !== 'idle' &&
+          nextState !== 'awaiting_plan_approval' &&
+          nextState !== 'resuming_after_approval' &&
+          nextState !== 'processing' &&
+          nextState !== 'tooling' &&
+          nextState !== 'failed' &&
+          nextState !== 'stopped'
+        ) {
+          return;
+        }
+        applyExecutionState(nextState, {
+          reasonCode: typeof data?.reasonCode === 'string' ? data.reasonCode : undefined,
+          flowId: typeof data?.flowId === 'string' || data?.flowId === null ? data.flowId : undefined,
+          planId: typeof data?.planId === 'string' ? data.planId : undefined,
+          detail: typeof data?.detail === 'string' ? data.detail : undefined,
+          timestamp: typeof data?.timestamp === 'number' ? data.timestamp : Date.now()
+        });
       },
       onHandoverProgress: (data) => {
         const detail = String(data.detail || 'Handover update.');
+        const planId = typeof data?.planId === 'string' ? data.planId : undefined;
         if (data.status === 'started') {
-          extensionStore.setActivityLabel('Architect -> Code handover...');
-          extensionStore.setActivityPhase('tooling');
+          applyExecutionState('resuming_after_approval', {
+            reasonCode: 'HANDOVER_STARTED',
+            planId,
+            detail: 'Architect -> Code handover...'
+          });
+          scheduleHandoverLabelWatchdog(planId);
         } else if (data.status === 'completed' || data.status === 'aborted') {
-          extensionStore.clearActivityState();
+          applyExecutionState(data.status === 'completed' ? 'processing' : 'failed', {
+            reasonCode: data.status === 'completed' ? 'HANDOVER_COMPLETED' : 'HANDOVER_ABORTED',
+            planId,
+            detail: data.status === 'completed' ? 'Continuing implementation...' : detail
+          });
         }
         chatStore.addMessage({
           id: `sys_handover_${Date.now()}`,
@@ -951,6 +1291,12 @@
         const card = toPlanCard(restoredPlan);
         if (!card) return;
         upsertPlanMessage(card);
+        if (card.awaitingApproval) {
+          applyExecutionState('awaiting_plan_approval', {
+            reasonCode: 'RESTORED_PENDING_PLAN_APPROVAL',
+            planId: card.planId
+          });
+        }
       },
 
       onTaskProgress: (msg) => {

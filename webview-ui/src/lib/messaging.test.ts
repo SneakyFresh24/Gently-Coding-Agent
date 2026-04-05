@@ -97,6 +97,15 @@ describe('messaging plan/handover contract mapping', () => {
     );
   });
 
+  it('does not route known message types to onUnhandled when no specific handler is registered', () => {
+    const onUnhandled = vi.fn();
+    initMessaging?.({ onUnhandled });
+
+    dispatchMessage({ type: 'planStepCompleted', planId: 'plan_1', stepId: 'step_1' });
+
+    expect(onUnhandled).not.toHaveBeenCalled();
+  });
+
   it('returns false when postMessage throws during send', () => {
     postMessageSpy.mockImplementation(() => {
       throw new Error('DataCloneError');

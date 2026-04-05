@@ -7,6 +7,7 @@ import { ToolCall } from '../../../services/OpenRouterService';
 import { CommandApproval, ToolExecution, Checkpoint, Message } from './ChatTypes';
 import {
   ApprovalRequest,
+  CommandApprovalResolveReason,
   TerminalMode,
   QuickPattern,
   AutoApprovalSettings as AutoApproveSettings
@@ -396,6 +397,7 @@ export interface SyncContextMessage {
  */
 export interface RequestCurrentPlanMessage {
   type: 'requestCurrentPlan';
+  sessionId?: string;
 }
 
 /**
@@ -552,10 +554,21 @@ export interface ToolApprovalRequestMessage {
   type: 'toolApprovalRequest';
   approvalId: string;
   toolName: string;
-  params: any;
+  params: Record<string, unknown>;
   timestamp: number;
+  flowId: string | null;
+  correlationId: string;
   timeoutMs?: number;
   expiresAt?: number;
+}
+
+export interface CommandApprovalResolvedMessage {
+  type: 'commandApprovalResolved';
+  commandId: string;
+  status: 'approved' | 'rejected';
+  reason: CommandApprovalResolveReason;
+  source: 'user' | 'system';
+  timestamp: number;
 }
 
 /**
@@ -566,9 +579,11 @@ export interface ToolApprovalResolvedMessage {
   approvalId: string;
   toolName: string;
   status: 'approved' | 'rejected';
-  reason?: string | null;
+  reason?: 'approved' | 'approved_and_remembered' | 'rejected_by_user' | 'approval_timeout' | 'aborted_by_user_stop' | 'approval_callback_unavailable' | null;
   source: 'user' | 'system';
   timestamp: number;
+  flowId: string | null;
+  correlationId: string;
 }
 
 export interface QuestionRequestOption {
@@ -707,7 +722,11 @@ export type ResilienceStatusCode =
   | 'STREAM_CONTRACT_MISSING_STOP'
   | 'MODE_STATE_DESYNC_DETECTED'
   | 'MODE_TRANSITION_BLOCKED'
+  | 'CODE_ENTRY_AUTO_HANDOVER_APPLIED'
+  | 'CODE_ENTRY_BLOCKED'
   | 'MODE_TOOL_BLOCKED'
+  | 'TOOL_DISPATCH_TERMINAL_ERROR'
+  | 'PLAN_RESUME_NO_PROGRESS'
   | 'REQUEST_STOPPED';
 
 export type ResilienceStatusCategory =
@@ -1170,7 +1189,16 @@ export interface WorkspaceInfoMessage {
  */
 export interface CurrentPlanResponseMessage {
   type: 'currentPlanResponse';
+  sessionId?: string | null;
   plan: any | null;
+}
+
+export interface StopAcknowledgedMessage {
+  type: 'stopAcknowledged';
+  flowId?: string | null;
+  runId?: string | null;
+  reasonCode?: string;
+  timestamp: number;
 }
 
 /**
@@ -1420,6 +1448,19 @@ export interface HandoverProgressMessage {
   timestamp: number;
 }
 
+/**
+ * Canonical execution state update for spinner/activity UX.
+ */
+export interface ExecutionStateUpdateMessage {
+  type: 'executionStateUpdate';
+  state: 'idle' | 'awaiting_plan_approval' | 'resuming_after_approval' | 'processing' | 'tooling' | 'failed' | 'stopped';
+  reasonCode?: string;
+  detail?: string;
+  flowId?: string | null;
+  planId?: string;
+  timestamp: number;
+}
+
 export interface RestoreSessionTasksShape {
   currentPlan: any | null;
   currentPlanId: string | null;
@@ -1584,6 +1625,7 @@ export type OutboundWebviewMessage =
   | { type: 'activityUpdate'; label: string | null }
   | AutoApproveSettingsUpdateMessage
   | ToolApprovalRequestMessage
+  | CommandApprovalResolvedMessage
   | ToolApprovalResolvedMessage
   | QuestionRequestMessage
   | QuestionResolvedMessage
@@ -1595,6 +1637,8 @@ export type OutboundWebviewMessage =
   | PlanApprovalRequestedMessage
   | PlanApprovalResolvedMessage
   | HandoverProgressMessage
+  | StopAcknowledgedMessage
+  | ExecutionStateUpdateMessage
   | RestoreSessionStateMessage
   | TokenTrackerUpdateMessage;
 

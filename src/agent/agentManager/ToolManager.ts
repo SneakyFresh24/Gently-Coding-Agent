@@ -17,7 +17,10 @@ import {
   CommandTools,
   WebSearchTools,
   QuestionTools,
-  ToolName
+  ToolName,
+  ToolExecutionResult,
+  isToolFailureResult,
+  getToolFailureMessage
 } from '../tools';
 import { ToolParamValidator } from '../tools/ToolParamValidator';
 import { IAgentService } from './index';
@@ -32,9 +35,12 @@ import { CircuitBreakerRegistry } from '../../core/resilience/CircuitBreakerRegi
 import { ToolRunPhase, ToolRunStateMachine } from './runtime/ToolRunStateMachine';
 import { ToolRetryPolicyEngine } from './runtime/ToolRetryPolicyEngine';
 import { sleepWithAbort } from '../../core/resilience/RetryDelayUtils';
+import { Mutex } from '../../core/state/Mutex';
+import { normalizeModeAlias } from '../../modes/ModeContractV2';
 
 const log = new LogService('ToolManager');
 const QUESTION_TIMEOUT_MS = 60_000;
+const APPROVAL_TIMEOUT_MS = 90_000;
 
 type ToolResilienceCode =
   | 'TOOL_RETRY_SCHEDULED'
@@ -101,8 +107,32 @@ interface ExecuteToolCallInput {
 
 interface ApprovalDecision {
   status: 'approved' | 'rejected';
-  reason?: string;
+  reason?: ToolApprovalResolveReason | string;
   source: 'user' | 'system';
+}
+
+interface ApprovalEventContext {
+  flowId: string | null;
+  correlationId: string;
+}
+
+type ToolApprovalResolveReason =
+  | 'approved'
+  | 'approved_and_remembered'
+  | 'rejected_by_user'
+  | 'approval_timeout'
+  | 'aborted_by_user_stop'
+  | 'approval_callback_unavailable';
+
+interface PendingApprovalEntry {
+  resolve: (decision: ApprovalDecision) => void;
+  toolName: string;
+  timeoutHandle: ReturnType<typeof setTimeout>;
+  settled: boolean;
+  createdAt: number;
+  expiresAt: number;
+  flowId: string | null;
+  correlationId: string;
 }
 
 class ToolExecutionError extends Error {
@@ -152,6 +182,8 @@ export class ToolManager implements IAgentService {
   private modeProvider?: () => string | undefined;
   private lastToolName: string | null = null;
   private readonly toolParamValidator = new ToolParamValidator();
+  private readonly stateMutex = new Mutex();
+  private pendingApprovals: Map<string, PendingApprovalEntry> = new Map();
   private pendingQuestions: Map<string, PendingQuestionEntry> = new Map();
 
   constructor(
@@ -205,6 +237,15 @@ export class ToolManager implements IAgentService {
   }
 
   dispose(): void {
+    void this.abortAllExecutions();
+    if (typeof (this.fileTools as any)?.dispose === 'function') {
+      try {
+        (this.fileTools as any).dispose();
+      } catch (error) {
+        log.error('Failed to dispose file tools', error);
+      }
+    }
+
     // Clean up tool registry
     this.toolRegistry.clear();
 
@@ -305,7 +346,7 @@ export class ToolManager implements IAgentService {
         };
 
         try {
-          await this.ensurePlanExecutionStarted(toolName, toolArgs);
+          await this.ensurePlanExecutionStarted(toolName, toolArgs, runContext);
           // 1. Resolve planning context if applicable
           const planCtx = this.resolvePlanContext(toolName, toolArgs);
           
@@ -352,7 +393,16 @@ export class ToolManager implements IAgentService {
           }
 
         } catch (error) {
-          results.push({ id: taskId, result: { error: String(error) } });
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          results.push({
+            id: taskId,
+            result: {
+              success: false,
+              error: errorMessage,
+              code: 'TOOL_EXECUTION_FAILED',
+              retryable: this.isRecoverableToolError(error)
+            }
+          });
           
           if (this.eventCallback) {
             this.eventCallback({ type: 'taskComplete', taskId });
@@ -361,7 +411,7 @@ export class ToolManager implements IAgentService {
           // Handle plan failure
           const planCtx = this.resolvePlanContext(toolName, toolArgs);
           if (planCtx && this.planningManager) {
-             await this.planningManager.updateStepStatus(planCtx.planId, planCtx.stepId, 'failed', undefined, String(error));
+             await this.planningManager.updateStepStatus(planCtx.planId, planCtx.stepId, 'failed', undefined, errorMessage);
           }
         }
       }
@@ -445,14 +495,44 @@ export class ToolManager implements IAgentService {
     return ['create_plan', 'update_plan_steps', 'handover_to_coder', 'ask_question'].includes(normalized);
   }
 
-  private async ensurePlanExecutionStarted(toolName: string, params: any): Promise<void> {
+  private async ensurePlanExecutionStarted(
+    toolName: string,
+    params: any,
+    runContext: ToolRunContext
+  ): Promise<void> {
     if (!this.planningManager) return;
     if (this.isPlanningControlTool(toolName)) return;
+    const runMode = normalizeModeAlias(runContext.mode || '') || null;
+    if (runMode !== 'code') return;
     const currentPlan = this.planningManager.getCurrentPlan();
     if (!currentPlan || !currentPlan.id) return;
 
     const targetPlanId = String(params?.planId || currentPlan.id).trim();
     if (!targetPlanId) return;
+    const codeEntry = await this.planningManager.prepareCodeEntry(targetPlanId);
+    if (!codeEntry.ok) {
+      throw new Error(`CODE_ENTRY_BLOCKED: ${codeEntry.reason}`);
+    }
+    if (codeEntry.autoHandedOver && this.eventCallback) {
+      const correlationId = `${runContext?.flowId || 'flow-unknown'}:CODE_ENTRY_AUTO_HANDOVER_APPLIED:${Date.now()}`;
+      this.eventCallback({
+        type: 'resilienceStatus',
+        code: 'CODE_ENTRY_AUTO_HANDOVER_APPLIED',
+        category: 'mode',
+        severity: 'info',
+        retryable: false,
+        attempt: 1,
+        maxAttempts: 1,
+        model: runContext?.model || 'unknown',
+        flowId: runContext?.flowId || null,
+        userMessage: 'Approved plan was auto-handed over for code execution.',
+        action: 'none',
+        phase: 'preflight',
+        decision: 'recover',
+        reason: codeEntry.reason,
+        correlationId
+      });
+    }
     const plan = this.planningManager.getPlan(targetPlanId);
     if (!plan) return;
 
@@ -533,7 +613,7 @@ export class ToolManager implements IAgentService {
     const currentMode = this.modeProvider?.();
     
     // Anti-Loop Check for handover_to_coder
-    if (toolName === 'handover_to_coder' && this.lastToolName === 'handover_to_coder') {
+    if (toolName === 'handover_to_coder' && await this.isConsecutiveHandoverCall()) {
       throw new Error(`Cannot call handover_to_coder consecutively - already in handover state`);
     }
 
@@ -622,7 +702,10 @@ export class ToolManager implements IAgentService {
           // 3. APPROVAL CHECK
           const autoApproved = await this.autoApproveManager.shouldAutoApprove(toolName, params);
           if (!autoApproved) {
-            const approved = await this.requestApproval(toolName, params);
+            const approved = await this.requestApproval(toolName, params, {
+              flowId: null,
+              correlationId: `legacy:${toolName}:${Date.now()}`
+            });
             if (!approved) {
               throw new Error('Tool execution rejected by user');
             }
@@ -638,6 +721,7 @@ export class ToolManager implements IAgentService {
           const writePath = params?.path || params?.file_path;
           const contentLength = typeof params?.content === 'string' ? params.content.length : 0;
           const result = await tool.execute(params);
+          this.ensureToolExecutionResult(toolName, result);
           const successUpdate = this.circuitBreakers.recordSuccess('tool.execute', toolName);
           if (successUpdate.transition === 'closed') {
             const payload: NotificationPayload = {
@@ -663,7 +747,7 @@ export class ToolManager implements IAgentService {
 
           // Reset or update lastToolName
           if (toolName !== 'handover_to_coder') {
-            this.lastToolName = toolName;
+            await this.setLastToolName(toolName);
           }
 
           return result;
@@ -704,7 +788,7 @@ export class ToolManager implements IAgentService {
     let terminalized = false;
 
     // Anti-loop check remains strict and non-retryable
-    if (toolName === 'handover_to_coder' && this.lastToolName === 'handover_to_coder') {
+    if (toolName === 'handover_to_coder' && await this.isConsecutiveHandoverCall()) {
       throw new ToolExecutionError({
         code: 'TOOL_EXECUTION_FAILED',
         message: 'Cannot call handover_to_coder consecutively - already in handover state',
@@ -841,7 +925,10 @@ export class ToolManager implements IAgentService {
         stateMachine.transition('APPROVAL', 'approval_check');
         const autoApproved = await this.autoApproveManager.shouldAutoApprove(toolName, params);
         if (!autoApproved) {
-          const decision = await this.requestApprovalDecision(toolName, params);
+          const decision = await this.requestApprovalDecision(toolName, params, {
+            flowId: runContext.flowId || null,
+            correlationId
+          });
           if (decision.status === 'rejected') {
             const stoppedByUser =
               decision.source === 'user' ||
@@ -856,13 +943,14 @@ export class ToolManager implements IAgentService {
         }
 
         stateMachine.transition('EXECUTE', 'tool_execute');
-        let result: any;
+        let result: ToolExecutionResult;
         try {
           if (toolName === 'ask_question') {
             result = await this.executeAskQuestionViaWebview(params, runContext);
           } else {
             result = await tool.execute(params);
           }
+          this.ensureToolExecutionResult(toolName, result);
         } catch (error) {
           if (error instanceof ToolExecutionError) {
             throw error;
@@ -915,7 +1003,7 @@ export class ToolManager implements IAgentService {
         }
 
         if (toolName !== 'handover_to_coder') {
-          this.lastToolName = toolName;
+          await this.setLastToolName(toolName);
         }
 
         stateMachine.terminalize('completed', 'tool_completed');
@@ -1057,6 +1145,19 @@ export class ToolManager implements IAgentService {
       code: 'TOOL_EXECUTION_FAILED',
       message: error instanceof Error ? error.message : String(error),
       retryable: this.isRecoverableToolError(error)
+    });
+  }
+
+  private ensureToolExecutionResult(toolName: string, result: ToolExecutionResult): void {
+    if (!isToolFailureResult(result)) {
+      return;
+    }
+
+    const message = getToolFailureMessage(toolName, result);
+    throw new ToolExecutionError({
+      code: 'TOOL_EXECUTION_FAILED',
+      message,
+      retryable: this.isRecoverableToolError(message)
     });
   }
 
@@ -1214,24 +1315,27 @@ export class ToolManager implements IAgentService {
       };
     }
 
-    return new Promise((resolve) => {
-      const resolveOnce = (payload: QuestionResolutionPayload) => {
-        const entry = this.pendingQuestions.get(args.questionId);
-        if (!entry || entry.settled) return;
-        entry.settled = true;
-        clearTimeout(entry.timeoutHandle);
-        this.pendingQuestions.delete(args.questionId);
-        this.emitQuestionResolved(args.questionId, payload.selectedOptionIndexes, payload.source);
+    let resolveOnce!: (payload: QuestionResolutionPayload) => void;
+    const resolutionPromise = new Promise<QuestionResolutionPayload>((resolve) => {
+      resolveOnce = (payload: QuestionResolutionPayload) => {
         resolve(payload);
       };
+    });
 
-      const timeoutHandle = setTimeout(() => {
-        resolveOnce({
-          selectedOptionIndexes: [args.defaultOptionIndex],
-          source: 'timeout_default'
-        });
-      }, args.timeoutMs);
+    const timeoutHandle = setTimeout(() => {
+      void this.settlePendingQuestion(args.questionId, {
+        selectedOptionIndexes: [args.defaultOptionIndex],
+        source: 'timeout_default'
+      });
+    }, args.timeoutMs);
 
+    await this.stateMutex.runExclusive(() => {
+      const existing = this.pendingQuestions.get(args.questionId);
+      if (existing) {
+        clearTimeout(existing.timeoutHandle);
+        existing.settled = true;
+        this.pendingQuestions.delete(args.questionId);
+      }
       this.pendingQuestions.set(args.questionId, {
         resolve: resolveOnce,
         optionCount: args.options.length,
@@ -1239,17 +1343,19 @@ export class ToolManager implements IAgentService {
         timeoutHandle,
         settled: false
       });
-
-      this.emitQuestionRequest({
-        questionId: args.questionId,
-        header: args.header,
-        question: args.question,
-        options: args.options,
-        multiple: args.multiple,
-        timeoutMs: args.timeoutMs,
-        defaultOptionIndex: args.defaultOptionIndex
-      });
     });
+
+    this.emitQuestionRequest({
+      questionId: args.questionId,
+      header: args.header,
+      question: args.question,
+      options: args.options,
+      multiple: args.multiple,
+      timeoutMs: args.timeoutMs,
+      defaultOptionIndex: args.defaultOptionIndex
+    });
+
+    return resolutionPromise;
   }
 
   private emitQuestionRequest(payload: {
@@ -1287,6 +1393,75 @@ export class ToolManager implements IAgentService {
       selectedOptionIndexes,
       source,
       timestamp: Date.now()
+    });
+  }
+
+  private async getPendingQuestionSnapshot(questionId: string): Promise<{
+    optionCount: number;
+    multiple: boolean;
+    settled: boolean;
+  } | null> {
+    return this.stateMutex.runExclusive(() => {
+      const entry = this.pendingQuestions.get(questionId);
+      if (!entry) return null;
+      return {
+        optionCount: entry.optionCount,
+        multiple: entry.multiple,
+        settled: entry.settled
+      };
+    });
+  }
+
+  private async settlePendingQuestion(
+    questionId: string,
+    payload: QuestionResolutionPayload
+  ): Promise<boolean> {
+    const entry = await this.stateMutex.runExclusive<PendingQuestionEntry | null>(() => {
+      const current = this.pendingQuestions.get(questionId);
+      if (!current || current.settled) return null;
+      current.settled = true;
+      clearTimeout(current.timeoutHandle);
+      this.pendingQuestions.delete(questionId);
+      return current;
+    });
+
+    if (!entry) return false;
+    this.emitQuestionResolved(questionId, payload.selectedOptionIndexes, payload.source);
+    entry.resolve(payload);
+    return true;
+  }
+
+  private async settlePendingApproval(
+    approvalId: string,
+    decision: ApprovalDecision,
+    fallbackToolName?: string
+  ): Promise<string | null> {
+    const entry = await this.stateMutex.runExclusive<PendingApprovalEntry | null>(() => {
+      const current = this.pendingApprovals.get(approvalId);
+      if (!current || current.settled) return null;
+      current.settled = true;
+      clearTimeout(current.timeoutHandle);
+      this.pendingApprovals.delete(approvalId);
+      return current;
+    });
+
+    if (!entry) return null;
+    const resolvedToolName = entry.toolName || fallbackToolName || 'unknown';
+    this.emitToolApprovalResolved(approvalId, resolvedToolName, decision, {
+      flowId: entry.flowId,
+      correlationId: entry.correlationId
+    });
+    entry.resolve(decision);
+    return resolvedToolName;
+  }
+
+  private async isConsecutiveHandoverCall(): Promise<boolean> {
+    return this.stateMutex.runExclusive(() => this.lastToolName === 'handover_to_coder');
+  }
+
+  private async setLastToolName(toolName: string | null): Promise<void> {
+    await this.stateMutex.runExclusive(() => {
+      this.lastToolName = toolName;
     });
   }
 
@@ -1414,108 +1589,143 @@ export class ToolManager implements IAgentService {
    * Request approval for a tool execution
    * Returns a promise that resolves when the user approves or rejects
    */
-  private async requestApprovalDecision(toolName: string, params: any): Promise<ApprovalDecision> {
-    return new Promise((resolve) => {
-      const approvalId = `tool_approval_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      const timestamp = Date.now();
+  private async requestApprovalDecision(
+    toolName: string,
+    params: unknown,
+    context?: Partial<ApprovalEventContext>
+  ): Promise<ApprovalDecision> {
+    const eventCallback = this.eventCallback;
+    const approvalContext = this.normalizeApprovalEventContext(context, toolName);
+    if (!eventCallback) {
+      return {
+        status: 'rejected',
+        reason: 'approval_callback_unavailable',
+        source: 'system'
+      };
+    }
 
-      if (!this.eventCallback) {
-        resolve({
-          status: 'rejected',
-          reason: 'approval_callback_unavailable',
-          source: 'system'
-        });
-        return;
-      }
+    const approvalId = `tool_approval_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const timestamp = Date.now();
+    const timeoutMs = APPROVAL_TIMEOUT_MS;
+    const expiresAt = timestamp + timeoutMs;
+    let resolveDecision!: (decision: ApprovalDecision) => void;
+    const decisionPromise = new Promise<ApprovalDecision>((resolve) => {
+      resolveDecision = resolve;
+    });
 
-      this.eventCallback({
-        type: 'toolApprovalRequest',
+    const timeoutHandle = setTimeout(() => {
+      void this.settlePendingApproval(
         approvalId,
-        toolName,
-        params,
-        timestamp
-      });
-
-      this.pendingApprovals.set(approvalId, {
-        resolve: (decision: ApprovalDecision) => {
-          this.emitToolApprovalResolved(approvalId, toolName, decision);
-          resolve(decision);
+        {
+          status: 'rejected',
+          reason: 'approval_timeout',
+          source: 'system'
         },
         toolName
+      );
+    }, timeoutMs);
+
+    await this.stateMutex.runExclusive(() => {
+      this.pendingApprovals.set(approvalId, {
+        resolve: resolveDecision,
+        toolName,
+        timeoutHandle,
+        settled: false,
+        createdAt: timestamp,
+        expiresAt,
+        flowId: approvalContext.flowId,
+        correlationId: approvalContext.correlationId
       });
     });
+
+    eventCallback({
+      type: 'toolApprovalRequest',
+      approvalId,
+      toolName,
+      params: this.toApprovalParamsRecord(params),
+      timestamp,
+      timeoutMs,
+      expiresAt,
+      flowId: approvalContext.flowId,
+      correlationId: approvalContext.correlationId
+    });
+
+    return decisionPromise;
   }
 
   /**
    * Request approval for a tool execution
    * Returns a promise that resolves when the user approves or rejects
    */
-  private async requestApproval(toolName: string, params: any): Promise<boolean> {
-    return new Promise((resolve) => {
-      const approvalId = `tool_approval_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      const timestamp = Date.now();
-      
-      console.log(`[ToolManager] ═════════════════════════════════════`);
-      console.log(`[ToolManager] APPROVAL REQUEST START`);
-      console.log(`[ToolManager] Tool: ${toolName}`);
-      console.log(`[ToolManager] ID: ${approvalId}`);
-      console.log(`[ToolManager] eventCallback: ${this.eventCallback ? '✅ SET' : '❌ NOT SET'}`);
-      console.log(`[ToolManager] Pending queue size: ${this.pendingApprovals.size}`);
-      console.log(`[ToolManager] ═════════════════════════════════════`);
-
-      if (!this.eventCallback) {
-        console.error(`[ToolManager] ❌ CRITICAL: eventCallback is not set!`);
-        console.error(`[ToolManager] This means the UI will never receive the approval request!`);
-        throw new Error('Tool approval system not initialized. Please restart the extension.');
-      }
-
-      this.eventCallback({
-          type: 'toolApprovalRequest',
-          approvalId,
-          toolName,
-          params,
-          timestamp
-      });
-      
-      console.log(`[ToolManager] ✅ Approval request sent to webview (ID: ${approvalId})`);
-
-      this.pendingApprovals.set(approvalId, {
-        resolve: (decision: ApprovalDecision) => {
-          console.log(`[ToolManager] 📩 Response received for ${approvalId}: ${decision.status === 'approved' ? '✅ APPROVED' : '❌ REJECTED'}`);
-          this.emitToolApprovalResolved(approvalId, toolName, decision);
-          resolve(decision.status === 'approved');
-        },
-        toolName
-      });
-    });
+  private async requestApproval(
+    toolName: string,
+    params: unknown,
+    context?: Partial<ApprovalEventContext>
+  ): Promise<boolean> {
+    const decision = await this.requestApprovalDecision(toolName, params, context);
+    return decision.status === 'approved';
   }
 
-  private pendingApprovals: Map<string, { resolve: (decision: ApprovalDecision) => void, toolName: string }> = new Map();
+  private normalizeApprovalEventContext(
+    context: Partial<ApprovalEventContext> | undefined,
+    toolName: string
+  ): ApprovalEventContext {
+    const flowId =
+      typeof context?.flowId === 'string' && context.flowId.trim() !== ''
+        ? context.flowId.trim()
+        : null;
+    const correlationId =
+      typeof context?.correlationId === 'string' && context.correlationId.trim() !== ''
+        ? context.correlationId.trim()
+        : `approval:${flowId || 'flow-unknown'}:${toolName}:${Date.now()}`;
+    return { flowId, correlationId };
+  }
 
-  public handleApprovalResponse(approvalId: string, approved: boolean, alwaysApprove: boolean = false): void {
-    const entry = this.pendingApprovals.get(approvalId);
-    if (entry) {
-      if (alwaysApprove && approved) {
-        this.autoApproveManager.addAutoApproval(entry.toolName);
-      }
-      entry.resolve({
+  private toApprovalParamsRecord(params: unknown): Record<string, unknown> {
+    if (params && typeof params === 'object' && !Array.isArray(params)) {
+      return params as Record<string, unknown>;
+    }
+    if (typeof params === 'undefined') {
+      return {};
+    }
+    return { value: params };
+  }
+
+  public async handleApprovalResponse(approvalId: string, approved: boolean, alwaysApprove: boolean = false): Promise<void> {
+    const normalizedApprovalId = String(approvalId || '').trim();
+    if (!normalizedApprovalId) return;
+
+    const reason: ToolApprovalResolveReason = approved
+      ? (alwaysApprove ? 'approved_and_remembered' : 'approved')
+      : 'rejected_by_user';
+
+    const settledToolName = await this.settlePendingApproval(
+      normalizedApprovalId,
+      {
         status: approved ? 'approved' : 'rejected',
-        reason: alwaysApprove && approved ? 'approved_and_remembered' : approved ? 'approved' : 'rejected_by_user',
+        reason,
         source: 'user'
-      });
-      this.pendingApprovals.delete(approvalId);
+      }
+    );
+
+    // Stale response after timeout/abort: ignore silently.
+    if (!settledToolName) {
+      return;
+    }
+    if (alwaysApprove && approved) {
+      this.autoApproveManager.addAutoApproval(settledToolName);
     }
   }
 
-  public handleQuestionResponse(
+  public async handleQuestionResponse(
     questionId: string,
     selectedOptionIndexes: number[],
     source: 'user' | 'stopped' = 'user'
-  ): void {
+  ): Promise<void> {
     const normalizedQuestionId = String(questionId || '').trim();
     const correlationId = `question:${normalizedQuestionId || 'unknown'}:${Date.now()}`;
-    const entry = this.pendingQuestions.get(normalizedQuestionId);
-    if (!entry) {
+    const pending = await this.getPendingQuestionSnapshot(normalizedQuestionId);
+    if (!pending) {
       this.emitQuestionResponseStatus({
         code: 'QUESTION_RESPONSE_REJECTED',
         severity: 'warning',
@@ -1532,7 +1742,7 @@ export class ToolManager implements IAgentService {
       return;
     }
 
-    if (entry.settled) {
+    if (pending.settled) {
       this.emitQuestionResponseStatus({
         code: 'QUESTION_RESPONSE_REJECTED',
         severity: 'warning',
@@ -1551,8 +1761,8 @@ export class ToolManager implements IAgentService {
 
     const sanitizedSelection = this.sanitizeQuestionSelection(
       selectedOptionIndexes,
-      entry.optionCount,
-      entry.multiple
+      pending.optionCount,
+      pending.multiple
     );
 
     if (source === 'stopped') {
@@ -1569,10 +1779,19 @@ export class ToolManager implements IAgentService {
         source,
         correlationId
       });
-      entry.resolve({
+      const settled = await this.settlePendingQuestion(normalizedQuestionId, {
         selectedOptionIndexes: [],
         source: 'stopped'
       });
+      if (!settled) {
+        this.emitQuestionResponseStatus({
+          code: 'QUESTION_RESPONSE_REJECTED',
+          severity: 'warning',
+          userMessage: 'Question response ignored: question no longer pending.',
+          reason: 'not_found',
+          correlationId
+        });
+      }
       return;
     }
 
@@ -1589,10 +1808,19 @@ export class ToolManager implements IAgentService {
       source,
       correlationId
     });
-    entry.resolve({
+    const settled = await this.settlePendingQuestion(normalizedQuestionId, {
       selectedOptionIndexes: sanitizedSelection,
       source: 'user'
     });
+    if (!settled) {
+      this.emitQuestionResponseStatus({
+        code: 'QUESTION_RESPONSE_REJECTED',
+        severity: 'warning',
+        userMessage: 'Question response ignored: question no longer pending.',
+        reason: 'not_found',
+        correlationId
+      });
+    }
   }
 
   private emitQuestionResponseStatus(payload: {
@@ -1625,31 +1853,32 @@ export class ToolManager implements IAgentService {
   /**
    * Abort all pending tool executions and approvals
    */
-  public abortAllExecutions(): void {
-    console.log(`[ToolManager] 🛑 Aborting pending interactions (approvals=${this.pendingApprovals.size}, questions=${this.pendingQuestions.size})`);
-    
-    // 1. Resolve all pending approvals with 'false'
-    for (const [approvalId, entry] of this.pendingApprovals.entries()) {
-      entry.resolve({
+  public async abortAllExecutions(): Promise<void> {
+    const counts = await this.stateMutex.runExclusive(() => ({
+      approvals: this.pendingApprovals.size,
+      questions: this.pendingQuestions.size
+    }));
+    console.log(`[ToolManager] 🛑 Aborting pending interactions (approvals=${counts.approvals}, questions=${counts.questions})`);
+
+    const approvalIds = await this.stateMutex.runExclusive(() => Array.from(this.pendingApprovals.keys()));
+    for (const approvalId of approvalIds) {
+      await this.settlePendingApproval(approvalId, {
         status: 'rejected',
         reason: 'aborted_by_user_stop',
         source: 'system'
       });
-      this.pendingApprovals.delete(approvalId);
     }
 
-    // 2. Resolve all pending questions as stopped
-    for (const [questionId, entry] of this.pendingQuestions.entries()) {
-      entry.resolve({
+    const questionIds = await this.stateMutex.runExclusive(() => Array.from(this.pendingQuestions.keys()));
+    for (const questionId of questionIds) {
+      await this.settlePendingQuestion(questionId, {
         selectedOptionIndexes: [],
         source: 'stopped'
       });
-      this.pendingQuestions.delete(questionId);
     }
-    
-    // 3. Clear lastToolName to prevent loop detection issues after abort
-    this.lastToolName = null;
-    
+
+    await this.setLastToolName(null);
+
     if (this.debug) {
       console.log('[ToolManager] All tool executions aborted');
     }
@@ -1722,8 +1951,14 @@ export class ToolManager implements IAgentService {
     return this.toolRegistry.getToolsForPrompt();
   }
 
-  private emitToolApprovalResolved(approvalId: string, toolName: string, decision: ApprovalDecision): void {
+  private emitToolApprovalResolved(
+    approvalId: string,
+    toolName: string,
+    decision: ApprovalDecision,
+    context?: Partial<ApprovalEventContext>
+  ): void {
     if (!this.eventCallback) return;
+    const normalizedContext = this.normalizeApprovalEventContext(context, toolName);
     this.eventCallback({
       type: 'toolApprovalResolved',
       approvalId,
@@ -1731,7 +1966,9 @@ export class ToolManager implements IAgentService {
       status: decision.status,
       reason: decision.reason || null,
       source: decision.source,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      flowId: normalizedContext.flowId,
+      correlationId: normalizedContext.correlationId
     });
   }
 

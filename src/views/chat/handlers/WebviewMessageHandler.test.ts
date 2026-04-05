@@ -25,6 +25,8 @@ vi.mock('vscode', () => ({
 function createHandler(overrides?: {
   planningManager?: any;
   sendMessage?: (message: any) => void;
+  activeSession?: any;
+  sessionById?: any;
 }) {
   const planningManager = overrides?.planningManager || {
     getCurrentPlan: vi.fn().mockReturnValue(undefined),
@@ -39,9 +41,28 @@ function createHandler(overrides?: {
     getCheckpointManager: vi.fn().mockReturnValue({ getCheckpointsForMessage: vi.fn(), getDiffSet: vi.fn() })
   };
 
+  const activeSession = overrides?.activeSession ?? null;
+  const sessionById = overrides?.sessionById ?? null;
   const handler = new WebviewMessageHandler(
-    { sendMessage: vi.fn(), clearHistory: vi.fn(), stopMessage: vi.fn(), getSessionManager: vi.fn() } as any,
-    { handleGetSessions: vi.fn(), handleNewSession: vi.fn(), handleSwitchSession: vi.fn(), handleSessionAction: vi.fn(), handleSearchSessions: vi.fn(), refreshSessions: vi.fn(), updateSessionWithPlan: vi.fn(), updateSessionMetadata: vi.fn() } as any,
+    {
+      sendMessage: vi.fn(),
+      clearHistory: vi.fn(),
+      stopMessage: vi.fn(),
+      getSessionManager: vi.fn(() => ({
+        getActiveSession: vi.fn().mockResolvedValue(activeSession)
+      }))
+    } as any,
+    {
+      handleGetSessions: vi.fn(),
+      handleNewSession: vi.fn(),
+      handleSwitchSession: vi.fn(),
+      handleSessionAction: vi.fn(),
+      handleSearchSessions: vi.fn(),
+      refreshSessions: vi.fn(),
+      updateSessionWithPlan: vi.fn(),
+      updateSessionMetadata: vi.fn(),
+      getSessionById: vi.fn().mockResolvedValue(sessionById)
+    } as any,
     { handleOpenFilePicker: vi.fn(), handleTogglePinFile: vi.fn(), handleOpenFile: vi.fn(), handleSearchFiles: vi.fn(), handleRequestFilePreview: vi.fn() } as any,
     { agentManager } as any,
     { setKey: vi.fn(), deleteKey: vi.fn(), hasKey: vi.fn() } as any,
@@ -156,6 +177,39 @@ describe('WebviewMessageHandler plan approval intent', () => {
       expect.objectContaining({
         type: 'systemMessage',
         code: 'PLAN_APPROVAL_MISMATCH'
+      })
+    );
+  });
+
+  it('returns currentPlanResponse scoped to the requested session', async () => {
+    const sendMessage = vi.fn();
+    const { handler, planningManager } = createHandler({
+      planningManager: {
+        getCurrentPlan: vi.fn().mockReturnValue({ id: 'plan_other' }),
+        getPlan: vi.fn((id: string) => (id === 'plan_scoped' ? { id: 'plan_scoped', status: 'executing' } : null))
+      },
+      sendMessage,
+      sessionById: {
+        id: 'session_2',
+        metadata: {
+          tasks: {
+            currentPlanId: 'plan_scoped'
+          }
+        }
+      }
+    });
+
+    await handler.handleMessage(
+      { type: 'requestCurrentPlan', sessionId: 'session_2' } as any,
+      { webview: { postMessage: vi.fn() } } as any
+    );
+
+    expect(planningManager.getPlan).toHaveBeenCalledWith('plan_scoped');
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'currentPlanResponse',
+        sessionId: 'session_2',
+        plan: expect.objectContaining({ id: 'plan_scoped' })
       })
     );
   });

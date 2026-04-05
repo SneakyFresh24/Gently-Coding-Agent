@@ -67,6 +67,8 @@ export interface MessageHandlers {
   onPlanStepCompleted?: (data: any) => void;
   onPlanApprovalRequested?: (data: any) => void;
   onPlanApprovalResolved?: (data: any) => void;
+  onStopAcknowledged?: (data: any) => void;
+  onExecutionStateUpdate?: (data: any) => void;
   onHandoverProgress?: (data: any) => void;
   onCurrentPlanResponse?: (data: any) => void;
 
@@ -156,6 +158,8 @@ const TYPE_TO_HANDLER: Record<string, keyof MessageHandlers> = {
   planStepCompleted: 'onPlanStepCompleted',
   planApprovalRequested: 'onPlanApprovalRequested',
   planApprovalResolved: 'onPlanApprovalResolved',
+  stopAcknowledged: 'onStopAcknowledged',
+  executionStateUpdate: 'onExecutionStateUpdate',
   handoverProgress: 'onHandoverProgress',
   currentPlanResponse: 'onCurrentPlanResponse',
   terminalOutputChunk: 'onTerminalOutputChunk',
@@ -189,9 +193,15 @@ function handleMessage(event: MessageEvent): void {
   if (!message || !message.type) return;
 
   const handlerKey = TYPE_TO_HANDLER[message.type];
-  if (handlerKey && _handlers[handlerKey]) {
-    (_handlers[handlerKey] as Function)(message);
-  } else if (_handlers.onUnhandled) {
+  if (handlerKey) {
+    const handler = _handlers[handlerKey];
+    if (handler) {
+      (handler as Function)(message);
+    }
+    return;
+  }
+
+  if (_handlers.onUnhandled) {
     _handlers.onUnhandled(message);
   }
 }

@@ -138,3 +138,56 @@ describe('MessageHandler mode state loading', () => {
     expect(handler.context.agentMode).toBe(true);
   });
 });
+
+describe('MessageHandler stop/continuation hardening', () => {
+  it('blocks continuation messages when stop is active', async () => {
+    const handler = Object.create(MessageHandler.prototype) as any;
+    handler.context = createContext('openai/gpt-4o');
+    handler.context.shouldStopStream = true;
+    handler.context.shouldAbortTools = true;
+    handler.context.currentFlowId = 'flow-stop';
+    handler.isValidOpenRouterModelId = vi.fn(() => true);
+    handler.sendMessageToWebview = vi.fn();
+    handler.flowManager = {
+      handleUserMessage: vi.fn()
+    };
+
+    await handler.sendMessage('continue', false, undefined, 0, 'continuation');
+
+    expect(handler.flowManager.handleUserMessage).not.toHaveBeenCalled();
+    expect(handler.sendMessageToWebview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'resilienceStatus',
+        code: 'REQUEST_STOPPED'
+      })
+    );
+  });
+
+  it('emits stopAcknowledged and aborts active run controller', async () => {
+    const abort = vi.fn();
+    const handler = Object.create(MessageHandler.prototype) as any;
+    handler.context = createContext('openai/gpt-4o');
+    handler.context.currentFlowId = 'flow-stop-ack';
+    handler.context.currentRunId = 'run-1';
+    handler.context.currentMessageId = 'msg-1';
+    handler.context.activeRunAbortController = { abort };
+    handler.agentManager = {
+      getToolManager: vi.fn(() => ({
+        abortAllExecutions: vi.fn().mockResolvedValue(undefined)
+      }))
+    };
+    handler.guardedSendMessageToWebview = vi.fn();
+
+    await handler.stopMessage('REQUEST_STOPPED');
+
+    expect(abort).toHaveBeenCalledWith('REQUEST_STOPPED');
+    expect(handler.guardedSendMessageToWebview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'stopAcknowledged',
+        flowId: 'flow-stop-ack',
+        runId: 'run-1',
+        reasonCode: 'REQUEST_STOPPED'
+      })
+    );
+  });
+});

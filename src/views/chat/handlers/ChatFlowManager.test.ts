@@ -403,4 +403,70 @@ describe('ChatFlowManager resilience hardening', () => {
         const err = new EmptyAssistantResponseError();
         expect(err.name).toBe('EmptyAssistantResponseError');
     });
+
+    it('guards resume flows against no-progress completions', async () => {
+        const streamResponse = vi.fn().mockResolvedValue({
+            assistantMessage: 'I analyzed the plan.',
+            toolCalls: [],
+            incompleteToolCalls: [],
+            usage: undefined,
+            streamTerminated: true
+        });
+        const { manager, sendMessageToWebview } = createManager({
+            streamResponse
+        });
+        const context = createContext();
+        context.currentMessageSource = 'resume';
+        context.resumeNoProgressAttempts = 0;
+
+        await expect(manager.generateAndStreamResponse(context, 'resume now')).rejects.toThrow(
+            'PLAN_RESUME_NO_PROGRESS'
+        );
+        expect(streamResponse).toHaveBeenCalledTimes(2);
+        expectQueryRuntimeStatus(sendMessageToWebview, {
+            code: 'PLAN_RESUME_NO_PROGRESS',
+            retryable: true
+        });
+        expectQueryRuntimeStatus(sendMessageToWebview, {
+            code: 'PLAN_RESUME_NO_PROGRESS',
+            retryable: false
+        });
+
+        const terminalCalls = sendMessageToWebview.mock.calls
+            .map((call) => call[0])
+            .filter(
+                (msg) =>
+                    msg?.type === 'queryRuntimeEvent' &&
+                    (msg?.event?.type === 'result_error' || msg?.event?.type === 'result_success')
+            );
+        expect(terminalCalls).toHaveLength(1);
+        expect(terminalCalls[0]?.event?.type).toBe('result_error');
+        expect(terminalCalls[0]?.event?.result?.code).toBe('PLAN_RESUME_NO_PROGRESS');
+    });
+
+    it('emits only the first terminal runtime event per flow', () => {
+        const { manager, sendMessageToWebview } = createManager();
+
+        (manager as any).emitRuntimeEvent({
+            type: 'result_error',
+            flowId: 'flow-terminal-dedupe',
+            result: { code: 'MODE_TOOL_BLOCKED' }
+        });
+        (manager as any).emitRuntimeEvent({
+            type: 'result_success',
+            flowId: 'flow-terminal-dedupe',
+            result: { code: 'RESULT_SUCCESS' }
+        });
+
+        const terminalCalls = sendMessageToWebview.mock.calls
+            .map((call) => call[0])
+            .filter(
+                (msg) =>
+                    msg?.type === 'queryRuntimeEvent' &&
+                    (msg?.event?.type === 'result_error' || msg?.event?.type === 'result_success')
+            );
+
+        expect(terminalCalls).toHaveLength(1);
+        expect(terminalCalls[0]?.event?.type).toBe('result_error');
+    });
 });

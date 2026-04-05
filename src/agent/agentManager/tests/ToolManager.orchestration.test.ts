@@ -147,4 +147,35 @@ describe('ToolManager R2 orchestration', () => {
     expect(postFailureStatus.category).toBe('hook');
   });
 
+  it('auto-rejects pending tool approvals on timeout and ignores stale responses', async () => {
+    vi.useFakeTimers();
+    const { manager, events } = createToolManager({ autoApproved: false });
+    const pending = manager.executeTool('read_file', { path: 'README.md' }, { flowId: 'flow-timeout', toolCallId: 'tc-timeout' });
+    void pending.catch(() => undefined);
+
+    await vi.waitFor(() => {
+      expect(events.find((event) => event.type === 'toolApprovalRequest')).toBeTruthy();
+    });
+    const request = events.find((event) => event.type === 'toolApprovalRequest');
+    expect(request.flowId).toBe('flow-timeout');
+    expect(typeof request.correlationId).toBe('string');
+
+    await vi.advanceTimersByTimeAsync(90_000);
+
+    await expect(pending).rejects.toThrow();
+    const resolved = events.find((event) => event.type === 'toolApprovalResolved');
+    expect(resolved).toBeTruthy();
+    expect(resolved.status).toBe('rejected');
+    expect(resolved.reason).toBe('approval_timeout');
+    expect(resolved.source).toBe('system');
+    expect(resolved.flowId).toBe('flow-timeout');
+    expect(resolved.correlationId).toBe(request.correlationId);
+
+    const resolvedCountBeforeStale = events.filter((event) => event.type === 'toolApprovalResolved').length;
+    await manager.handleApprovalResponse(String(resolved.approvalId), true, false);
+    const resolvedCountAfterStale = events.filter((event) => event.type === 'toolApprovalResolved').length;
+    expect(resolvedCountAfterStale).toBe(resolvedCountBeforeStale);
+    vi.useRealTimers();
+  });
+
 });

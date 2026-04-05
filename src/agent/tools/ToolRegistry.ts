@@ -99,7 +99,7 @@ export class ToolRegistry {
       .map(tool => ({
         name: tool.name,
         description: tool.description,
-        parameters: (tool.parameters as any)?.properties || {}
+        parameters: (tool.parameters as { properties?: Record<string, unknown> })?.properties || {}
       }));
   }
 
@@ -108,7 +108,7 @@ export class ToolRegistry {
    */
   getToolsForPrompt(): string {
     return this.getAll().map(tool => {
-      const params = tool.parameters as any;
+      const params = tool.parameters as { properties?: Record<string, unknown> };
       const properties = params?.properties || {};
       return `- **${tool.name}**: ${tool.description} (Category: ${tool.category || 'general'})\n  Parameters: ${JSON.stringify(properties, null, 2)}`;
     }).join('\n\n');

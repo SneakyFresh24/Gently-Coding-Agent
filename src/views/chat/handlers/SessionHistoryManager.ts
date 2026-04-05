@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { HistoryManager, SessionType, Session } from '../../../services/HistoryManager';
+import { HistoryManager, SessionType } from '../../../services/HistoryManager';
 import { Message, ChatViewContext, fromChatMessage } from '../types/ChatTypes';
 import { FileReference } from '../../../agent/fileReferenceManager';
 import { LogService } from '../../../services/LogService';
@@ -44,6 +44,7 @@ export class SessionHistoryManager {
             if (activeSession) {
                 const chatSession = activeSession as any;
                 const messages = chatSession.messages || [];
+                context.activeSessionId = activeSession.id;
                 context.conversationHistory = messages
                     .filter((m: any) => m.role === 'user' || m.role === 'assistant' || m.role === 'system' || m.role === 'tool')
                     .map((m: any) => ({
@@ -83,18 +84,13 @@ export class SessionHistoryManager {
             try {
                 let activeSession = await this.sessionManager.getActiveSession(SessionType.CHAT);
                 if (!activeSession) {
-                    const chatSessions = await this.sessionManager.getSessionsByType(SessionType.CHAT);
-                    if (chatSessions.length > 0) {
-                        activeSession = chatSessions.sort((a: Session, b: Session) => b.updatedAt - a.updatedAt)[0];
-                        await this.sessionManager.setActiveSession(SessionType.CHAT, activeSession.id);
-                    } else {
-                        activeSession = await this.sessionManager.createSession(SessionType.CHAT, {
-                            name: originalMessage.length > 50 ? originalMessage.substring(0, 50) + '...' : originalMessage
-                        });
-                    }
+                    activeSession = await this.sessionManager.createSession(SessionType.CHAT, {
+                        name: originalMessage.length > 50 ? originalMessage.substring(0, 50) + '...' : originalMessage
+                    });
                 }
 
                 if (activeSession) {
+                    context.activeSessionId = activeSession.id;
                     const chatProvider = this.sessionManager.getChatProvider();
                     await chatProvider.addMessage(activeSession.id, {
                         role: 'user',
@@ -132,19 +128,11 @@ export class SessionHistoryManager {
         try {
             let activeSession = await this.sessionManager.getActiveSession(SessionType.CHAT);
             if (!activeSession) {
-                // Try to reactivate the most recent existing session first
-                const chatSessions = await this.sessionManager.getSessionsByType(SessionType.CHAT);
-                if (chatSessions.length > 0) {
-                    activeSession = chatSessions.sort((a: Session, b: Session) => b.updatedAt - a.updatedAt)[0];
-                    await this.sessionManager.setActiveSession(SessionType.CHAT, activeSession.id);
-                    log.info(`Reactivated existing session: ${activeSession.id}`);
-                } else {
-                    // No sessions at all — create a new one
-                    activeSession = await this.sessionManager.createSession(SessionType.CHAT, {
-                        name: 'Chat Session – ' + new Date().toLocaleString()
-                    });
-                    log.info(`Created new session for message persistence: ${activeSession.id}`);
-                }
+                // No active session: create a fresh one instead of reviving an unrelated older session.
+                activeSession = await this.sessionManager.createSession(SessionType.CHAT, {
+                    name: 'Chat Session – ' + new Date().toLocaleString()
+                });
+                log.info(`Created new session for message persistence: ${activeSession.id}`);
             }
 
             const chatProvider = this.sessionManager.getChatProvider();

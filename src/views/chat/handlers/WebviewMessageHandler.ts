@@ -147,7 +147,7 @@ export class WebviewMessageHandler {
         break;
 
       case 'stopMessage':
-        this.messageHandler.stopMessage();
+        await this.messageHandler.stopMessage('REQUEST_STOPPED');
         break;
 
       case 'getWorkspaceInfo':
@@ -289,10 +289,12 @@ export class WebviewMessageHandler {
         break;
 
       case 'newSession':
+        await this.messageHandler.stopMessage('SESSION_SWAP_STOP');
         await this.sessionHandler.handleNewSession();
         break;
 
       case 'switchSession':
+        await this.messageHandler.stopMessage('SESSION_SWAP_STOP');
         await this.sessionHandler.handleSwitchSession(data.sessionId);
         break;
 
@@ -449,9 +451,27 @@ export class WebviewMessageHandler {
         const agentManager = (this.systemHandler as any).agentManager;
         if (agentManager) {
           const planningManager = agentManager.getPlanningManager();
-          const currentPlan = planningManager.getCurrentPlan();
+          const requestedSessionId = typeof (data as any).sessionId === 'string'
+            ? String((data as any).sessionId).trim()
+            : '';
+          const targetSession = requestedSessionId
+            ? await this.sessionHandler.getSessionById(requestedSessionId)
+            : await this.messageHandler.getSessionManager().getActiveSession(SessionType.CHAT);
+          const tasks = targetSession?.metadata?.tasks && typeof targetSession.metadata.tasks === 'object'
+            ? targetSession.metadata.tasks as Record<string, unknown>
+            : null;
+          const scopedPlanId = tasks && typeof tasks.currentPlanId === 'string'
+            ? String(tasks.currentPlanId)
+            : typeof targetSession?.metadata?.activePlanId === 'string'
+              ? String(targetSession.metadata.activePlanId)
+              : '';
+          planningManager.setCurrentPlanId?.(scopedPlanId || '');
+          const currentPlan = scopedPlanId
+            ? planningManager.getPlan(scopedPlanId) || null
+            : null;
           this.sendMessageToWebview({
             type: 'currentPlanResponse',
+            sessionId: targetSession?.id || null,
             plan: currentPlan || null
           });
         }

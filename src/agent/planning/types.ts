@@ -50,6 +50,24 @@ export interface PlanApprovalResolutionResult {
   expectedApprovalRequestId?: string;
 }
 
+export interface CodeEntryPreparationResult {
+  ok: boolean;
+  code:
+    | 'CODE_ENTRY_ALLOWED'
+    | 'CODE_ENTRY_AUTO_HANDOVER_APPLIED'
+    | 'PLAN_REQUIRED_FOR_CODE_ENTRY'
+    | 'PLAN_NOT_FOUND'
+    | 'PLAN_EMPTY'
+    | 'PLAN_NOT_APPROVED'
+    | 'PLAN_APPROVAL_PENDING_EXPLICIT'
+    | 'PLAN_REJECTED'
+    | 'PLAN_STATUS_UNSUPPORTED';
+  reason: string;
+  planId?: string;
+  planStatus?: PlanLifecycleStatus;
+  autoHandedOver?: boolean;
+}
+
 export interface ExecutionPlan {
   schemaVersion: number;
   id: string;

@@ -38,6 +38,7 @@ export class StreamingService {
             responseFormat?: any;
             isFollowUp?: boolean;
             shouldStopRef: { current: boolean };
+            abortSignal?: AbortSignal;
         }
     ): Promise<{ assistantMessage: string; toolCalls: any[]; incompleteToolCalls: IncompleteToolCall[]; usage?: UsageInfo; streamTerminated: boolean }> {
         const streamHandler = new StreamResponseHandler();
@@ -63,6 +64,7 @@ export class StreamingService {
                     model: options.model,
                     response_format: options.responseFormat,
                     reasoning: options.reasoningConfig,
+                    abortSignal: options.abortSignal,
                     modelPolicyOptions: {
                         providerCachingEnabled,
                         geminiSchemaSanitizationEnabled,
@@ -169,6 +171,7 @@ export class StreamingService {
                                     response_format: options.responseFormat,
                                     reasoning: options.reasoningConfig,
                                     disableInternalRetries: true,
+                                    abortSignal: options.abortSignal,
                                     modelPolicyOptions: {
                                         providerCachingEnabled,
                                         geminiSchemaSanitizationEnabled,
@@ -179,6 +182,9 @@ export class StreamingService {
                                     if (options.shouldStopRef.current) {
                                         recoveryState = 'FAILED';
                                         return;
+                                    }
+                                    if (options.abortSignal?.aborted) {
+                                        throw new Error('Request aborted');
                                     }
 
                                     const chunks = recovery.process(rawChunk);
@@ -317,7 +323,7 @@ export class StreamingService {
                                             metadata: { attempt: reconnectAttempt, maxReconnects }
                                         });
                                         const delayMs = Math.min(1000 * (2 ** (reconnectAttempt - 1)), 30_000);
-                                        await this.sleep(delayMs);
+                                        await this.sleep(delayMs, options.abortSignal, options.shouldStopRef);
                                     }
                                 );
                                 recoveryState = 'STREAMING';
@@ -353,6 +359,7 @@ export class StreamingService {
 
         const message = String((error as any)?.message || error || '').toLowerCase();
         if (!message) return true;
+        if (message.includes('aborted') || message.includes('aborterror')) return false;
         return (
             message.includes('network') ||
             message.includes('timeout') ||
@@ -363,8 +370,37 @@ export class StreamingService {
         );
     }
 
-    private async sleep(ms: number): Promise<void> {
-        await new Promise((resolve) => setTimeout(resolve, ms));
+    private async sleep(ms: number, signal?: AbortSignal, shouldStopRef?: { current: boolean }): Promise<void> {
+        if (!signal && !shouldStopRef) {
+            await new Promise((resolve) => setTimeout(resolve, ms));
+            return;
+        }
+        if (signal?.aborted || shouldStopRef?.current) {
+            throw new Error('Request aborted');
+        }
+        await new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                cleanup();
+                resolve();
+            }, ms);
+            const onAbort = () => {
+                cleanup();
+                reject(new Error('Request aborted'));
+            };
+            const stopInterval = shouldStopRef
+                ? setInterval(() => {
+                    if (shouldStopRef.current) {
+                        onAbort();
+                    }
+                }, 50)
+                : undefined;
+            const cleanup = () => {
+                clearTimeout(timeout);
+                if (stopInterval) clearInterval(stopInterval);
+                signal?.removeEventListener('abort', onAbort);
+            };
+            signal?.addEventListener('abort', onAbort, { once: true });
+        });
     }
 
     private async emitRecoveryNotification(payload: NotificationPayload): Promise<void> {

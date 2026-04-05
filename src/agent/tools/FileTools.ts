@@ -10,6 +10,8 @@ import { ToolRegistry } from './ToolRegistry';
 import { createHash } from 'crypto';
 
 export class FileTools {
+  private static readonly CHUNK_SESSION_TTL_MS = 10 * 60 * 1000;
+  private static readonly MAX_CHUNK_SESSIONS = 200;
   private readonly chunkedWriteSessions = new Map<
     string,
     {
@@ -18,6 +20,7 @@ export class FileTools {
       checksum?: string;
       chunks: Map<number, string>;
       createdAt: number;
+      lastUpdatedAt: number;
     }
   >();
 
@@ -43,6 +46,8 @@ export class FileTools {
 
   private async writeFileChunk(params: any): Promise<any> {
     try {
+      const now = Date.now();
+      this.cleanupChunkedWriteSessions(now);
       const filePath = String(params.path || params.file_path || '').trim();
       const writeSessionId = String(params.writeSessionId || '').trim();
       const chunkIndex = Number(params.chunkIndex);
@@ -76,12 +81,19 @@ export class FileTools {
       }
 
       const existing = this.chunkedWriteSessions.get(writeSessionId);
+      if (!existing && chunkIndex !== 0) {
+        return {
+          success: false,
+          message: `Unknown or expired writeSessionId "${writeSessionId}". Restart chunked write from chunkIndex 0.`
+        };
+      }
       const session = existing || {
         path: filePath,
         chunkCount,
         checksum,
         chunks: new Map<number, string>(),
-        createdAt: Date.now()
+        createdAt: now,
+        lastUpdatedAt: now
       };
 
       if (session.path !== filePath) {
@@ -98,10 +110,12 @@ export class FileTools {
       }
 
       session.chunks.set(chunkIndex, chunkContent);
+      session.lastUpdatedAt = now;
       if (checksum && !session.checksum) {
         session.checksum = checksum;
       }
       this.chunkedWriteSessions.set(writeSessionId, session);
+      this.enforceChunkedSessionLimit(now);
 
       if (session.chunks.size < session.chunkCount) {
         return {
@@ -149,6 +163,10 @@ export class FileTools {
     } catch (error) {
       return { success: false, message: String(error) };
     }
+  }
+
+  public dispose(): void {
+    this.chunkedWriteSessions.clear();
   }
 
   private async readFile(params: any): Promise<any> {
@@ -254,6 +272,37 @@ export class FileTools {
         },
         message: String(error)
       };
+    }
+  }
+
+  private cleanupChunkedWriteSessions(now: number): void {
+    for (const [writeSessionId, session] of this.chunkedWriteSessions.entries()) {
+      if (now - session.lastUpdatedAt > FileTools.CHUNK_SESSION_TTL_MS) {
+        this.chunkedWriteSessions.delete(writeSessionId);
+      }
+    }
+  }
+
+  private enforceChunkedSessionLimit(now: number): void {
+    if (this.chunkedWriteSessions.size <= FileTools.MAX_CHUNK_SESSIONS) {
+      return;
+    }
+
+    const ordered = Array.from(this.chunkedWriteSessions.entries()).sort((left, right) => {
+      const leftTs = left[1].lastUpdatedAt || left[1].createdAt;
+      const rightTs = right[1].lastUpdatedAt || right[1].createdAt;
+      return leftTs - rightTs;
+    });
+
+    while (this.chunkedWriteSessions.size > FileTools.MAX_CHUNK_SESSIONS && ordered.length > 0) {
+      const candidate = ordered.shift();
+      if (!candidate) break;
+      const [sessionId, session] = candidate;
+      // Prefer removing stale sessions first when over limit.
+      const isStale = now - session.lastUpdatedAt > FileTools.CHUNK_SESSION_TTL_MS;
+      if (isStale || this.chunkedWriteSessions.size > FileTools.MAX_CHUNK_SESSIONS) {
+        this.chunkedWriteSessions.delete(sessionId);
+      }
     }
   }
 }

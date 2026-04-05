@@ -31,6 +31,8 @@ export interface ApprovalRequest {
   reason: string;
   safetyLevel: SafetyLevel;
   timestamp: number;
+  timeoutMs?: number;
+  expiresAt?: number;
 }
 
 /**
@@ -72,3 +74,10 @@ export interface CommandEvaluation {
   safetyLevel: SafetyLevel;
   reason?: string;
 }
+
+export type CommandApprovalResolveReason =
+  | 'approved'
+  | 'rejected_by_user'
+  | 'approval_timeout'
+  | 'aborted_by_shutdown'
+  | 'invalid_response';

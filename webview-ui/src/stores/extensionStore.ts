@@ -32,6 +32,14 @@ interface StoreState {
   activityLabel: string | null;
   activityPhase: 'idle' | 'sending' | 'thinking' | 'tooling';
   activeToolCalls: ToolCallInfo[];
+  executionState: 'idle' | 'awaiting_plan_approval' | 'resuming_after_approval' | 'processing' | 'tooling' | 'failed' | 'stopped';
+  executionStateDetail: {
+    reasonCode?: string;
+    flowId?: string | null;
+    planId?: string;
+    detail?: string;
+    timestamp?: number;
+  } | null;
 }
 
 const TOOL_TIMEOUT_MS = 30_000;
@@ -64,6 +72,8 @@ const initialState: StoreState = {
   activityLabel: null,
   activityPhase: 'idle',
   activeToolCalls: [],
+  executionState: 'idle',
+  executionStateDetail: null,
 };
 
 
@@ -116,6 +126,19 @@ function createExtensionStore() {
 
     setActivityPhase(activityPhase: 'idle' | 'sending' | 'thinking' | 'tooling') {
       update(s => ({ ...s, activityPhase }));
+    },
+
+    setExecutionState(
+      executionState: 'idle' | 'awaiting_plan_approval' | 'resuming_after_approval' | 'processing' | 'tooling' | 'failed' | 'stopped',
+      executionStateDetail: {
+        reasonCode?: string;
+        flowId?: string | null;
+        planId?: string;
+        detail?: string;
+        timestamp?: number;
+      } | null = null
+    ) {
+      update(s => ({ ...s, executionState, executionStateDetail }));
     },
 
     upsertActiveToolCall(tool: ToolCallInfo) {

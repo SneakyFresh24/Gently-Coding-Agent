@@ -74,6 +74,12 @@ export interface ChatViewContext {
   conversationHistory: Message[];
   shouldStopStream: boolean;
   shouldAbortTools?: boolean;
+  currentMessageSource?: 'user' | 'continuation' | 'resume';
+  resumeNoProgressAttempts?: number;
+  currentRunId?: string;
+  stopRequestedAt?: number;
+  activeSessionId?: string | null;
+  activeRunAbortController?: AbortController | null;
   currentFlowId?: string;
   currentMessageId?: string;
   messageCheckpoints: Map<string, string>;

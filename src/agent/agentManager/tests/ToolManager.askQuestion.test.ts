@@ -122,7 +122,7 @@ describe('ToolManager ask_question webview orchestration', () => {
       expect(getQuestionRequest(events)).toBeTruthy();
     });
     const request = getQuestionRequest(events);
-    manager.handleQuestionResponse(request.questionId, [1], 'user');
+    await manager.handleQuestionResponse(request.questionId, [1], 'user');
 
     const result = await pending;
     expect(result).toMatchObject({
@@ -155,7 +155,7 @@ describe('ToolManager ask_question webview orchestration', () => {
       expect(getQuestionRequest(events)).toBeTruthy();
     });
     const request = getQuestionRequest(events);
-    manager.handleQuestionResponse(request.questionId, [2, 0, 2], 'user');
+    await manager.handleQuestionResponse(request.questionId, [2, 0, 2], 'user');
 
     const result = await pending;
     expect(result.answer).toEqual(['Tests only', 'Both and switch']);
@@ -206,10 +206,10 @@ describe('ToolManager ask_question webview orchestration', () => {
     });
     const request = getQuestionRequest(events);
 
-    manager.abortAllExecutions();
+    await manager.abortAllExecutions();
     await expect(pending).rejects.toThrow('Question stopped by user.');
 
-    manager.handleQuestionResponse(request.questionId, [1], 'user');
+    await manager.handleQuestionResponse(request.questionId, [1], 'user');
     const resolvedEvents = events.filter((event) => event.type === 'questionResolved');
     expect(resolvedEvents).toHaveLength(1);
     expect(resolvedEvents[0].source).toBe('stopped');
@@ -218,7 +218,7 @@ describe('ToolManager ask_question webview orchestration', () => {
   it('emits deterministic rejection when question response is unknown', async () => {
     const { manager, events } = createToolManager();
 
-    manager.handleQuestionResponse('question_missing', [0], 'user');
+    await manager.handleQuestionResponse('question_missing', [0], 'user');
 
     const rejected = getResilienceEvents(events, 'QUESTION_RESPONSE_REJECTED');
     expect(rejected).toHaveLength(1);
@@ -244,9 +244,9 @@ describe('ToolManager ask_question webview orchestration', () => {
     });
     const request = getQuestionRequest(events);
 
-    manager.handleQuestionResponse(request.questionId, [0], 'user');
+    await manager.handleQuestionResponse(request.questionId, [0], 'user');
     await pending;
-    manager.handleQuestionResponse(request.questionId, [1], 'user');
+    await manager.handleQuestionResponse(request.questionId, [1], 'user');
 
     const rejected = getResilienceEvents(events, 'QUESTION_RESPONSE_REJECTED');
     expect(rejected.length).toBeGreaterThanOrEqual(1);

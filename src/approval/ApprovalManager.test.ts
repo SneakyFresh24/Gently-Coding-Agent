@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { AutoApproveManager } from './ApprovalManager';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApprovalManager, AutoApproveManager } from './ApprovalManager';
 
 const { mockVscode } = vi.hoisted(() => ({
   mockVscode: {
@@ -142,5 +142,103 @@ describe('AutoApproveManager', () => {
     const manager = new AutoApproveManager(context);
     const result = await manager.shouldAutoApprove('unknown_new_tool', {});
     expect(result).toBe(false);
+  });
+});
+
+describe('ApprovalManager', () => {
+  const context = {
+    globalState: {
+      get: vi.fn(),
+      update: vi.fn().mockResolvedValue(undefined)
+    }
+  } as any;
+
+  let sentMessages: any[];
+  let manager: ApprovalManager;
+
+  beforeEach(() => {
+    sentMessages = [];
+    manager = new ApprovalManager(context, (message: any) => {
+      sentMessages.push(message);
+    });
+  });
+
+  afterEach(() => {
+    manager.dispose();
+    vi.useRealTimers();
+  });
+
+  it('classifies safe, moderate and risky commands deterministically', () => {
+    expect(manager.evaluateCommandSafety('git status').safetyLevel).toBe('safe');
+    expect(manager.evaluateCommandSafety('npm install').safetyLevel).toBe('moderate');
+    expect(manager.evaluateCommandSafety('rm -rf node_modules').safetyLevel).toBe('risky');
+  });
+
+  it('auto-rejects command approvals after timeout', async () => {
+    vi.useFakeTimers();
+    const pending = manager.requestApproval({
+      commandId: 'cmd_timeout',
+      command: 'npm run build',
+      cwd: 'C:\\repo',
+      reason: 'build',
+      safetyLevel: 'moderate',
+      timestamp: Date.now()
+    });
+
+    expect(sentMessages[0]?.type).toBe('approvalRequest');
+    expect(sentMessages[0]?.request?.timeoutMs).toBe(90_000);
+    expect(sentMessages[0]?.request?.expiresAt).toBeTypeOf('number');
+
+    await vi.advanceTimersByTimeAsync(90_000);
+    await expect(pending).resolves.toBe(false);
+    expect(sentMessages).toContainEqual(
+      expect.objectContaining({
+        type: 'commandApprovalResolved',
+        commandId: 'cmd_timeout',
+        status: 'rejected',
+        reason: 'approval_timeout',
+        source: 'system'
+      })
+    );
+  });
+
+  it('ignores stale approval responses after timeout settlement', async () => {
+    vi.useFakeTimers();
+    const pending = manager.requestApproval({
+      commandId: 'cmd_stale',
+      command: 'npm run lint',
+      cwd: 'C:\\repo',
+      reason: 'lint',
+      safetyLevel: 'moderate',
+      timestamp: Date.now()
+    });
+
+    await vi.advanceTimersByTimeAsync(90_000);
+    await expect(pending).resolves.toBe(false);
+
+    expect(() => manager.handleApprovalResponse('cmd_stale', 'accept')).not.toThrow();
+  });
+
+  it('rejects invalid approval payloads deterministically', async () => {
+    const pending = manager.requestApproval({
+      commandId: 'cmd_invalid',
+      command: 'npm run typecheck',
+      cwd: 'C:\\repo',
+      reason: 'typecheck',
+      safetyLevel: 'moderate',
+      timestamp: Date.now()
+    });
+
+    manager.handleApprovalResponse('cmd_invalid', { unexpected: true });
+    await expect(pending).resolves.toBe(false);
+    expect(sentMessages).toContainEqual(
+      expect.objectContaining({
+        type: 'commandApprovalResolved',
+        commandId: 'cmd_invalid',
+        status: 'rejected',
+        reason: 'invalid_response',
+        source: 'system'
+      })
+    );
   });
 });

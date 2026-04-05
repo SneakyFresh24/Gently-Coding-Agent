@@ -1,5 +1,14 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
+vi.mock('fs', () => ({
+  promises: {
+    mkdir: vi.fn(async () => undefined),
+    readdir: vi.fn(async () => [] as string[]),
+    stat: vi.fn(async () => ({ mtimeMs: Date.now() })),
+    unlink: vi.fn(async () => undefined)
+  }
+}));
+
 vi.mock('../../utils/persistenceUtils', () => ({
   fileExists: vi.fn(async () => true),
   readFileAsync: vi.fn(async () => ''),
@@ -8,7 +17,8 @@ vi.mock('../../utils/persistenceUtils', () => ({
 }));
 
 import { EditorEngine } from './EditorEngine';
-import { readFileAsync, safeWriteFile } from '../../utils/persistenceUtils';
+import { copyFileAsync, readFileAsync, safeWriteFile } from '../../utils/persistenceUtils';
+import * as fs from 'fs';
 
 describe('EditorEngine.applyHunkEditsSafely', () => {
   const fileOps = {
@@ -25,6 +35,7 @@ describe('EditorEngine.applyHunkEditsSafely', () => {
   beforeEach(() => {
     engine = new EditorEngine(fileOps, astAnalyzer);
     vi.clearAllMocks();
+    vi.mocked((fs as any).promises.readdir).mockResolvedValue([]);
   });
 
   it('applies multi-line hunks using real newline splitting', async () => {
@@ -105,5 +116,22 @@ describe('EditorEngine.applyHunkEditsSafely', () => {
     expect(result.appliedCount).toBe(1);
     expect(result.failedCount).toBe(1);
     expect(result.failedHunks[0].reason).toContain('Out-of-order');
+  });
+
+  it('stores managed backups under .gently/backups and does not create workspace .bak files', async () => {
+    vi.mocked(readFileAsync).mockResolvedValue('line 1\nline 2');
+
+    const result = await engine.executeEdit({
+      filePath: 'src/demo.ts',
+      anchorLine: 'line 1',
+      newContent: 'updated line 1'
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.backupPath).toContain('.gently/backups/src/demo.ts.bak-');
+    expect(copyFileAsync).toHaveBeenCalledTimes(1);
+    const backupTarget = String(vi.mocked(copyFileAsync).mock.calls[0]?.[1] || '');
+    expect(backupTarget).toContain('.gently\\backups');
+    expect(backupTarget.replace(/\\/g, '/')).toMatch(/^C:\/workspace\/\.gently\/backups\//);
   });
 });

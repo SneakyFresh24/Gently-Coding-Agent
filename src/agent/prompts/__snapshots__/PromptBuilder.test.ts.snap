@@ -6,8 +6,9 @@ exports[`PromptBuilder > builds architect/default prompt snapshot 1`] = `
 WORKFLOW:
 1. ANALYZE: Gather required codebase context with read/analyze tools.
 2. PLAN: Persist plan via create_plan with explicit ordered steps.
-3. ALIGN: Ask focused follow-up only when ambiguity blocks safe planning.
-4. HANDOVER: Switch to code mode only after plan persistence succeeds.
+3. WAIT: If plan status is awaiting_approval, stop tool execution and wait for explicit user approval/rejection.
+4. ALIGN: Ask focused follow-up only when ambiguity blocks safe planning.
+5. HANDOVER: Switch to code mode only through the handover pipeline after explicit plan approval (handover_to_coder or approved-plan auto-handover gate).
 
 MODE CONTRACT (PLAN_STRICT):
 - Allowed classes: read/analyze/plan/question/memory tools.
@@ -45,7 +46,7 @@ MEMORY_BANKMEMORIES
 RUNTIME HINTS:
 - Keep tool payloads complete and valid JSON.
 - Place path/file_path before content/new_content for file-writing tools.
-- Split large writes into smaller edits."
+- Large writes are auto-chunked by the runtime write pipeline when needed."
 `;
 
 exports[`PromptBuilder > builds architect/minimal without memory component 1`] = `
@@ -54,8 +55,9 @@ exports[`PromptBuilder > builds architect/minimal without memory component 1`] =
 WORKFLOW:
 1. ANALYZE: Gather required codebase context with read/analyze tools.
 2. PLAN: Persist plan via create_plan with explicit ordered steps.
-3. ALIGN: Ask focused follow-up only when ambiguity blocks safe planning.
-4. HANDOVER: Switch to code mode only after plan persistence succeeds.
+3. WAIT: If plan status is awaiting_approval, stop tool execution and wait for explicit user approval/rejection.
+4. ALIGN: Ask focused follow-up only when ambiguity blocks safe planning.
+5. HANDOVER: Switch to code mode only through the handover pipeline after explicit plan approval (handover_to_coder or approved-plan auto-handover gate).
 
 MODE CONTRACT (PLAN_STRICT):
 - Allowed classes: read/analyze/plan/question/memory tools.
@@ -86,7 +88,7 @@ AVAILABLE TOOLS (MINIFIED):
 RUNTIME HINTS:
 - Keep tool payloads complete and valid JSON.
 - Place path/file_path before content/new_content for file-writing tools.
-- Split large writes into smaller edits."
+- Large writes are auto-chunked by the runtime write pipeline when needed."
 `;
 
 exports[`PromptBuilder > builds code/default and keeps code-mode rules 1`] = `
@@ -94,12 +96,13 @@ exports[`PromptBuilder > builds code/default and keeps code-mode rules 1`] = `
 
 WORKFLOW:
 1. READ PLAN: Follow architect plan from conversation context.
-2. IMPLEMENT: Execute changes in small verifiable steps.
+2. EXECUTE + TRACK: Execute changes in small verifiable steps and keep step status deterministic with update_plan_steps.
 3. VERIFY: Re-check edits and summarize outcomes and residual risk.
 
 MODE CONTRACT (ACT_STRICT):
 - Allowed classes: implementation and verification tools.
 - Forbidden planning tools: create_plan, handover_to_coder, ask_question.
+- update_plan_steps is allowed for deterministic progress tracking.
 - Do not re-plan unless user explicitly switches back to architect mode.
 
 TOOL POLICY:
@@ -135,7 +138,7 @@ EXAMPLES:
 RUNTIME HINTS:
 - Keep tool payloads complete and valid JSON.
 - Place path/file_path before content/new_content for file-writing tools.
-- Split large writes into smaller edits.
+- Large writes are auto-chunked by the runtime write pipeline when needed.
 
 WICHTIG: Nach Tool-Ausführung IMMER eine klare Antwort geben – niemals leer lassen.
 

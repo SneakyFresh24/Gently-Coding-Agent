@@ -46,6 +46,7 @@ export interface ChatRequest {
         webpFallbackEnabled?: boolean;
     };
     disableInternalRetries?: boolean;
+    abortSignal?: AbortSignal;
 }
 
 export interface Tool {
@@ -181,6 +182,7 @@ export class OpenRouterService {
             method: 'POST',
             headers,
             body: JSON.stringify(body),
+            signal: request.abortSignal,
         });
 
         if (!response.ok) {
@@ -245,7 +247,7 @@ export class OpenRouterService {
                 lastError = error;
                 if (attempt < maxRetries) {
                     console.warn(`[OpenRouterService] Stream attempt ${attempt + 1} failed, retrying in ${delay}ms...`, error);
-                    await new Promise(resolve => setTimeout(resolve, delay));
+                    await this.sleepWithAbort(delay, request.abortSignal);
                 }
             }
         }
@@ -754,6 +756,31 @@ export class OpenRouterService {
             return Number.isFinite(parsed) ? parsed : undefined;
         }
         return undefined;
+    }
+
+    private async sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
+        if (!signal) {
+            await new Promise((resolve) => setTimeout(resolve, ms));
+            return;
+        }
+        if (signal.aborted) {
+            throw new Error('Request aborted');
+        }
+        await new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                cleanup();
+                resolve();
+            }, ms);
+            const onAbort = () => {
+                cleanup();
+                reject(new Error('Request aborted'));
+            };
+            const cleanup = () => {
+                clearTimeout(timeout);
+                signal.removeEventListener('abort', onAbort);
+            };
+            signal.addEventListener('abort', onAbort, { once: true });
+        });
     }
 
     dispose(): void {

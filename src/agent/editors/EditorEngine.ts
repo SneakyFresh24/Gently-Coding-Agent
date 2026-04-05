@@ -9,6 +9,7 @@
  */
 
 import * as path from 'path';
+import * as fs from 'fs';
 import { fileExists, readFileAsync, copyFileAsync, safeWriteFile } from '../../utils/persistenceUtils';
 import { FileOperations } from '../fileOperations';
 import { ASTAnalyzer } from '../ASTAnalyzer';
@@ -76,6 +77,8 @@ export interface EditResult {
 
 export class EditorEngine {
     private readonly fileLocks = new Map<string, Mutex>();
+    private readonly backupRetentionMs = 24 * 60 * 60 * 1000;
+    private readonly maxBackupsPerFile = 1;
 
     constructor(
         private fileOps: FileOperations,
@@ -159,8 +162,7 @@ export class EditorEngine {
                 }
 
                 // Backup + Edit
-                const backupPath = absolutePath + '.bak-' + Date.now();
-                await copyFileAsync(absolutePath, backupPath);
+                const backupPath = await this.createManagedBackup(absolutePath, relativePath);
 
                 await this.fileOps.editFile({
                     filePath: relativePath,
@@ -176,7 +178,7 @@ export class EditorEngine {
                     success: true,
                     message: `✅ Edit applied (${strategy} strategy). Lines ${startIndex + 1}-${endIndex + 1} replaced.`,
                     path: relativePath,
-                    backupPath: path.basename(backupPath),
+                    backupPath,
                     diff: `-${oldLines} / +${newLines} lines`
                 };
 
@@ -322,8 +324,7 @@ export class EditorEngine {
             const tempContentLines = originalContent.split('\n');
 
             if (matches.length > 0) {
-                const backupPath = absolutePath + '.bak-' + Date.now();
-                await copyFileAsync(absolutePath, backupPath);
+                await this.createManagedBackup(absolutePath, relativePath);
             }
 
             for (const match of matches) {
@@ -449,6 +450,56 @@ export class EditorEngine {
         }
 
         return candidates;
+    }
+
+    private async createManagedBackup(absolutePath: string, relativePath: string): Promise<string> {
+        const workspaceRoot = this.fileOps.getWorkspaceRoot();
+        const normalizedRelative = relativePath.replace(/\\/g, '/');
+        const relDir = path.dirname(normalizedRelative);
+        const baseName = path.basename(normalizedRelative);
+        const backupDir = relDir === '.'
+            ? path.join(workspaceRoot, '.gently', 'backups')
+            : path.join(workspaceRoot, '.gently', 'backups', relDir);
+        await fs.promises.mkdir(backupDir, { recursive: true });
+
+        const backupFileName = `${baseName}.bak-${Date.now()}`;
+        const backupPath = path.join(backupDir, backupFileName);
+        await copyFileAsync(absolutePath, backupPath);
+        await this.pruneManagedBackups(backupDir, `${baseName}.bak-`);
+
+        return path.relative(workspaceRoot, backupPath).replace(/\\/g, '/');
+    }
+
+    private async pruneManagedBackups(backupDir: string, prefix: string): Promise<void> {
+        const now = Date.now();
+        const entries = await fs.promises.readdir(backupDir);
+        const candidates = await Promise.all(
+            entries
+                .filter((entry) => entry.startsWith(prefix))
+                .map(async (entry) => {
+                    const fullPath = path.join(backupDir, entry);
+                    const stat = await fs.promises.stat(fullPath);
+                    return {
+                        fullPath,
+                        mtimeMs: stat.mtimeMs
+                    };
+                })
+        );
+
+        candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+        const stale = candidates.filter((item) => now - item.mtimeMs > this.backupRetentionMs);
+        const overflow = candidates.slice(this.maxBackupsPerFile);
+        const toDelete = new Set<string>([...stale.map((item) => item.fullPath), ...overflow.map((item) => item.fullPath)]);
+
+        await Promise.all(
+            Array.from(toDelete).map(async (target) => {
+                try {
+                    await fs.promises.unlink(target);
+                } catch {
+                    // Ignore cleanup races.
+                }
+            })
+        );
     }
 
     private filterByContext(

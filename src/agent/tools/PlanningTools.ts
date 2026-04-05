@@ -19,16 +19,25 @@ interface CreatePlanFileHint {
 
 interface CreatePlanInputStep {
   id?: string;
-  description: string;
-  tool: string;
-  parameters: Record<string, unknown>;
-  dependencies?: string[];
+  description?: string;
+  title?: string;
+  tool?: string;
+  parameters?: Record<string, unknown>;
+  dependencies?: Array<string | number>;
 }
 
 interface CreatePlanInput {
   goal: string;
   steps: CreatePlanInputStep[];
   files?: CreatePlanFileHint[];
+}
+
+interface NormalizedCreatePlanStep {
+  id: string;
+  description: string;
+  tool: string;
+  parameters: Record<string, unknown>;
+  dependencies: string[];
 }
 
 interface UpdatePlanStepsInput {
@@ -58,6 +67,7 @@ export class PlanningTools {
   ]);
   private static readonly TOOL_ALIAS_MAP: Record<string, string> = {
     create_file: 'write_file',
+    edit_file: 'safe_edit_file',
     update_file: 'safe_edit_file',
     modify_file: 'safe_edit_file'
   };
@@ -83,6 +93,7 @@ export class PlanningTools {
         success: false,
         error: `Existing plan ${existingPlan.id} is still awaiting approval (request: ${existingPlan.pendingApproval.approvalRequestId}).`,
         code: 'PLAN_APPROVAL_PENDING',
+        retryable: false,
         planId: existingPlan.id,
         approvalRequestId: existingPlan.pendingApproval.approvalRequestId
       };
@@ -92,10 +103,21 @@ export class PlanningTools {
     if (!validation.valid) {
       return {
         success: false,
-        error: validation.error
+        error: validation.error,
+        code: 'PLAN_INPUT_INVALID',
+        retryable: false
       };
     }
-    const { goal, steps } = validation;
+    const { goal, steps, normalizedWarnings } = validation;
+
+    if (normalizedWarnings.length > 0) {
+      const correlationId = `create_plan:CREATE_PLAN_INPUT_NORMALIZED:${Date.now()}`;
+      log.event('INFO', 'CREATE_PLAN_INPUT_NORMALIZED', 'CREATE_PLAN_INPUT_NORMALIZED', {
+        correlationId,
+        warningCount: normalizedWarnings.length,
+        warnings: normalizedWarnings
+      });
+    }
 
     const plan = this.planningManager.createPlan({
       goal,
@@ -138,7 +160,8 @@ export class PlanningTools {
         ? `Plan created with ${plan.steps.length} steps and is awaiting approval.`
         : `Plan created with ${plan.steps.length} steps and auto-approved.`,
       plan,
-      files: fileHints
+      files: fileHints,
+      normalizedWarnings
     };
   }
 
@@ -147,7 +170,9 @@ export class PlanningTools {
     if (!currentPlan || !currentPlan.steps || currentPlan.steps.length === 0) {
       return {
         success: false,
-        error: 'No active plan found. Create a plan with create_plan before handover_to_coder.'
+        error: 'No active plan found. Create a plan with create_plan before handover_to_coder.',
+        code: 'PLAN_NOT_FOUND',
+        retryable: false
       };
     }
 
@@ -156,7 +181,8 @@ export class PlanningTools {
       return {
         success: false,
         code: handoverCheck.code || 'PLAN_HANDOVER_BLOCKED',
-        error: handoverCheck.reason || 'Plan must be approved before handover_to_coder.'
+        error: handoverCheck.reason || 'Plan must be approved before handover_to_coder.',
+        retryable: false
       };
     }
 
@@ -195,7 +221,9 @@ BEGIN IMPLEMENTATION NOW.`,
     if (!planId) {
       return {
         success: false,
-        error: 'No active plan found. Create and approve a plan before update_plan_steps.'
+        error: 'No active plan found. Create and approve a plan before update_plan_steps.',
+        code: 'PLAN_NOT_FOUND',
+        retryable: false
       };
     }
 
@@ -203,7 +231,9 @@ BEGIN IMPLEMENTATION NOW.`,
     if (!plan) {
       return {
         success: false,
-        error: `Plan "${planId}" not found.`
+        error: `Plan "${planId}" not found.`,
+        code: 'PLAN_NOT_FOUND',
+        retryable: false
       };
     }
 
@@ -211,7 +241,9 @@ BEGIN IMPLEMENTATION NOW.`,
     if (rawUpdates.length === 0) {
       return {
         success: false,
-        error: 'update_plan_steps requires at least one step update in "updates".'
+        error: 'update_plan_steps requires at least one step update in "updates".',
+        code: 'PLAN_STEP_UPDATE_INVALID',
+        retryable: false
       };
     }
 
@@ -223,13 +255,17 @@ BEGIN IMPLEMENTATION NOW.`,
       if (!stepId) {
         return {
           success: false,
-          error: `updates[${index}].stepId is required.`
+          error: `updates[${index}].stepId is required.`,
+          code: 'PLAN_STEP_UPDATE_INVALID',
+          retryable: false
         };
       }
       if (!PlanningTools.STEP_STATUS_SET.has(status)) {
         return {
           success: false,
-          error: `updates[${index}].status must be one of pending|in_progress|completed|failed|skipped (received: "${status}").`
+          error: `updates[${index}].status must be one of pending|in_progress|completed|failed|skipped (received: "${status}").`,
+          code: 'PLAN_STEP_UPDATE_INVALID',
+          retryable: false
         };
       }
       updates.push({
@@ -246,6 +282,7 @@ BEGIN IMPLEMENTATION NOW.`,
         success: false,
         code: result.code || 'PLAN_STEP_UPDATE_REJECTED',
         error: result.error || 'Plan step update was rejected by runtime policy.',
+        retryable: false,
         planId: result.planId,
         planStatus: result.planStatus,
         updated: result.updated,
@@ -262,7 +299,7 @@ BEGIN IMPLEMENTATION NOW.`,
   }
 
   private validateCreatePlanInput(params: CreatePlanInput):
-    | { valid: true; goal: string; steps: Array<CreatePlanInputStep & { id: string }> }
+    | { valid: true; goal: string; steps: NormalizedCreatePlanStep[]; normalizedWarnings: string[] }
     | { valid: false; error: string } {
     const goal = (params?.goal || '').trim();
     if (!goal) {
@@ -280,21 +317,31 @@ BEGIN IMPLEMENTATION NOW.`,
       return { valid: false, error: `Too many plan steps (max ${PlanningTools.MAX_STEPS}).` };
     }
 
-    const normalizedSteps: Array<CreatePlanInputStep & { id: string }> = [];
+    const normalizedWarnings: string[] = [];
+    const normalizedSteps: NormalizedCreatePlanStep[] = [];
     const idSet = new Set<string>();
 
     for (let i = 0; i < rawSteps.length; i++) {
       const step = rawSteps[i];
-      const description = String(step?.description || '').trim();
-      const tool = this.normalizeStepToolName(String(step?.tool || '').trim());
+      const hasTitleFallback = typeof step?.description !== 'string' && typeof step?.title === 'string' && step.title.trim().length > 0;
+      let description = String(step?.description || step?.title || '').trim();
+      if (hasTitleFallback) {
+        normalizedWarnings.push(`Step ${i + 1}: using "title" as description fallback.`);
+      }
+      if (description.length > PlanningTools.MAX_DESCRIPTION_LENGTH) {
+        description = description.slice(0, PlanningTools.MAX_DESCRIPTION_LENGTH).trimEnd();
+        normalizedWarnings.push(`Step ${i + 1}: description truncated to ${PlanningTools.MAX_DESCRIPTION_LENGTH} chars.`);
+      }
+      const originalTool = String(step?.tool || '').trim();
+      const tool = this.normalizeStepToolName(originalTool);
       if (!description) {
         return { valid: false, error: `Step ${i + 1} has an empty description.` };
       }
-      if (description.length > PlanningTools.MAX_DESCRIPTION_LENGTH) {
-        return { valid: false, error: `Step ${i + 1} description is too long (max ${PlanningTools.MAX_DESCRIPTION_LENGTH} characters).` };
-      }
       if (!tool) {
         return { valid: false, error: `Step ${i + 1} has no tool name.` };
+      }
+      if (originalTool && tool !== originalTool.toLowerCase()) {
+        normalizedWarnings.push(`Step ${i + 1}: normalized tool "${originalTool}" -> "${tool}".`);
       }
       if (this.toolRegistry?.has && !this.toolRegistry.has(tool)) {
         return {
@@ -332,8 +379,25 @@ BEGIN IMPLEMENTATION NOW.`,
     }
 
     const knownIds = new Set(normalizedSteps.map((step) => step.id));
+    const resolvedDependenciesByStepId = new Map<string, string[]>();
     for (const step of normalizedSteps) {
+      const resolvedDeps: string[] = [];
       for (const dep of step.dependencies || []) {
+        let normalizedDep = dep;
+        if (!knownIds.has(normalizedDep) && /^\d+$/.test(normalizedDep)) {
+          const stepIndex = Number(normalizedDep);
+          if (Number.isInteger(stepIndex) && stepIndex >= 1 && stepIndex <= normalizedSteps.length) {
+            normalizedDep = normalizedSteps[stepIndex - 1].id;
+            normalizedWarnings.push(`Step ${step.id}: normalized numeric dependency "${dep}" -> "${normalizedDep}".`);
+          }
+        }
+        if (resolvedDeps.includes(normalizedDep)) {
+          continue;
+        }
+        resolvedDeps.push(normalizedDep);
+      }
+      resolvedDependenciesByStepId.set(step.id, resolvedDeps);
+      for (const dep of resolvedDeps) {
         if (!knownIds.has(dep)) {
           return { valid: false, error: `Step ${step.id} references unknown dependency "${dep}".` };
         }
@@ -343,14 +407,19 @@ BEGIN IMPLEMENTATION NOW.`,
       }
     }
 
-    if (this.hasDependencyCycle(normalizedSteps)) {
+    const stepsWithResolvedDeps = normalizedSteps.map((step) => ({
+      ...step,
+      dependencies: resolvedDependenciesByStepId.get(step.id) || []
+    }));
+
+    if (this.hasDependencyCycle(stepsWithResolvedDeps)) {
       return { valid: false, error: 'Plan dependencies contain a cycle. Please provide an acyclic dependency graph.' };
     }
 
-    return { valid: true, goal, steps: normalizedSteps };
+    return { valid: true, goal, steps: stepsWithResolvedDeps, normalizedWarnings };
   }
 
-  private hasDependencyCycle(steps: Array<CreatePlanInputStep & { id: string }>): boolean {
+  private hasDependencyCycle(steps: NormalizedCreatePlanStep[]): boolean {
     const graph = new Map<string, string[]>();
     for (const step of steps) {
       graph.set(step.id, [...(step.dependencies || [])]);

@@ -45,8 +45,13 @@ describe('TraditionalToolExecutor loop handling', () => {
   let performModeSwitch: ReturnType<typeof vi.fn>;
   let sendContinuationMessage: ReturnType<typeof vi.fn>;
   let sendMessageToWebview: ReturnType<typeof vi.fn>;
+  let updateConversationHistory: ReturnType<typeof vi.fn>;
   let activeContext: ChatViewContext | null;
   let executor: TraditionalToolExecutor;
+  let planningManager: {
+    getCurrentPlan: ReturnType<typeof vi.fn>;
+    prepareCodeEntry: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     executeNotification = vi.fn().mockResolvedValue(undefined);
@@ -61,17 +66,30 @@ describe('TraditionalToolExecutor loop handling', () => {
     });
     sendContinuationMessage = vi.fn().mockResolvedValue(undefined);
     sendMessageToWebview = vi.fn();
+    updateConversationHistory = vi.fn();
+
+    planningManager = {
+      getCurrentPlan: vi.fn(() => ({ id: 'plan-1', steps: [{ id: 's1' }] })),
+      prepareCodeEntry: vi.fn(async () => ({
+        ok: true,
+        code: 'CODE_ENTRY_ALLOWED',
+        reason: 'Code entry allowed for plan status "handed_over".',
+        planId: 'plan-1',
+        planStatus: 'handed_over',
+        autoHandedOver: false
+      }))
+    };
 
     const agentManager = {
       getToolManager: () => ({ executeTools }),
       getHookManager: () => ({ executeNotification, executePreHooks: vi.fn(async (_name: string, params: any) => ({ blocked: false, modifiedParams: params })), executePostHooks: vi.fn(async () => ({ failures: [] })) }),
-      getPlanningManager: () => ({ getCurrentPlan: () => ({ id: 'plan-1', steps: [{ id: 's1' }] }) })
+      getPlanningManager: () => planningManager
     } as any;
 
     executor = new TraditionalToolExecutor(
       agentManager,
       sendMessageToWebview,
-      vi.fn(),
+      updateConversationHistory,
       vi.fn().mockResolvedValue(undefined),
       performModeSwitch,
       sendContinuationMessage
@@ -159,6 +177,31 @@ describe('TraditionalToolExecutor loop handling', () => {
     });
   });
 
+  it('blocks post-tool mode switch when code entry gate rejects', async () => {
+    const context = createContext({
+      selectedMode: 'architect',
+      currentFlowId: 'flow-blocked'
+    });
+    planningManager.prepareCodeEntry = vi.fn(async () => ({
+      ok: false,
+      code: 'PLAN_APPROVAL_PENDING_EXPLICIT',
+      reason: 'Plan is awaiting explicit approval before code execution.',
+      planId: 'plan-1',
+      planStatus: 'awaiting_approval'
+    }));
+
+    await (executor as any).handlePostToolAction(context, {
+      requestedMode: 'code',
+      continuationPrompt: 'next'
+    });
+
+    expect(performModeSwitch).not.toHaveBeenCalled();
+    const statuses = sendMessageToWebview.mock.calls
+      .map((call) => call[0])
+      .filter((msg) => msg?.type === 'resilienceStatus');
+    expect(statuses.some((msg) => msg.code === 'CODE_ENTRY_BLOCKED')).toBe(true);
+  });
+
   it('routes handover_to_coder through subagent orchestrator and emits subagentStatus', async () => {
     executeTools.mockResolvedValueOnce([
       {
@@ -191,6 +234,50 @@ describe('TraditionalToolExecutor loop handling', () => {
     expect(statusCodes).toContain('SUBAGENT_MODE_SWITCHED');
     expect(statusCodes).toContain('SUBAGENT_SUMMARY_READY');
   });
+
+  it('skips post-tool continuation when stop was requested', async () => {
+    const context = createContext({
+      shouldStopStream: true,
+      shouldAbortTools: true,
+      selectedMode: 'code'
+    });
+    activeContext = context;
+
+    await (executor as any).handlePostToolAction(context, {
+      requestedMode: 'code',
+      continuationPrompt: 'continue now'
+    });
+
+    expect(sendContinuationMessage).not.toHaveBeenCalled();
+  });
+
+  it('normalizes create_plan pseudo-success without steps into strict failure contract', async () => {
+    executeTools.mockResolvedValueOnce([
+      {
+        id: 'create-plan-1',
+        result: {
+          success: true,
+          plan: { id: 'plan_x', steps: [] }
+        }
+      }
+    ]);
+
+    const context = createContext({
+      selectedMode: 'architect',
+      currentFlowId: 'flow-create-plan-guard'
+    });
+    activeContext = context;
+
+    await executor.execute([createToolCall('create-plan-1', 'create_plan', { goal: 'x', steps: [{ description: 'a', tool: 'read_file', parameters: {} }] })], 'msg-guard', context);
+
+    const toolHistoryMessages = updateConversationHistory.mock.calls
+      .map((call) => call[0])
+      .filter((msg) => msg?.role === 'tool');
+    expect(toolHistoryMessages.length).toBeGreaterThan(0);
+    const parsed = JSON.parse(String(toolHistoryMessages[0].content));
+    expect(parsed.success).toBe(false);
+    expect(parsed.code).toBe('CREATE_PLAN_RENDER_GUARD_TRIGGERED');
+  });
 });
 
 describe('ToolCallDispatcher mode desync + validation guard', () => {
@@ -204,7 +291,17 @@ describe('ToolCallDispatcher mode desync + validation guard', () => {
     const agentManager = {
       getToolManager: () => ({ executeTools: vi.fn().mockResolvedValue([]) }),
       getHookManager: () => ({ executeNotification: vi.fn().mockResolvedValue(undefined), executePreHooks: vi.fn(async (_name: string, params: any) => ({ blocked: false, modifiedParams: params })), executePostHooks: vi.fn(async () => ({ failures: [] })) }),
-      getPlanningManager: () => ({ getCurrentPlan: () => ({ id: 'plan-1', steps: [{ id: 's1' }] }) })
+      getPlanningManager: () => ({
+        getCurrentPlan: () => ({ id: 'plan-1', steps: [{ id: 's1' }] }),
+        prepareCodeEntry: vi.fn(async () => ({
+          ok: true,
+          code: 'CODE_ENTRY_ALLOWED',
+          reason: 'Code entry allowed for plan status "handed_over".',
+          planId: 'plan-1',
+          planStatus: 'handed_over',
+          autoHandedOver: false
+        }))
+      })
     } as any;
 
     const dispatcher = new ToolCallDispatcher(
@@ -241,9 +338,13 @@ describe('ToolCallDispatcher mode desync + validation guard', () => {
       };
     });
 
-    await dispatcher.handleToolCalls(toolCalls, 'msg-1', context);
+    const outcome = await dispatcher.handleToolCalls(toolCalls, 'msg-1', context);
 
     expect(context.selectedMode).toBe('architect');
+    expect(outcome).toMatchObject({
+      ok: false,
+      terminalCode: 'MODE_TOOL_BLOCKED'
+    });
     const statuses = sendMessageToWebview.mock.calls
       .map((call) => call[0])
       .filter((msg) => msg?.type === 'resilienceStatus');
